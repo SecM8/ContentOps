@@ -5,10 +5,11 @@ A copy-pasteable script for a live demo. Two acts:
 - **Act 1 — Fresh clone (≈8 min):** the adopter onboarding story, fully
   offline. No Azure, no tenant — just clone, install, and show the tool +
   the quality gates.
-- **Act 2 — Drift check (≈8 min):** the operational story against a
+- **Act 2 — Drift loop (≈8 min):** the operational story against a
   *connected* repo (one with a real `config/tenant.yml` + credentials):
-  detect repo↔tenant drift, see the field-level diff, and a live
-  pre-flight plan.
+  prove live tenant reach, then run the daily **Drift detection** workflow
+  so a portal edit is captured as a reviewable **pull request** — plus a
+  live pre-flight plan.
 
 > All commands use the `python -m contentops` form (works on locked-down
 > Windows). The bare `contentops` console script is equivalent after
@@ -40,9 +41,14 @@ For **Act 2** (the connected repo — your private operator repo or a
 configured fork):
 - `config/tenant.yml` filled in, and credentials working
   (`az login`, or a `.env` with the App Registration secret).
-- Confirm it's healthy ahead of time: `python -m contentops doctor --auth`
-  should be green. **Do this before the audience is watching** — token
-  acquisition + RBAC propagation are the usual day-of surprises.
+- Confirm it's healthy ahead of time: `python -m contentops doctor --matrix --role prod`
+  should be all green (token acquisition + per-handler tenant reads).
+  **Do this before the audience is watching** — token acquisition + RBAC
+  propagation are the usual day-of surprises.
+- Pin two browser tabs on your operator repo: **Actions** (the workflow
+  list) and **Pull requests** — Act 2 drives both from the UI.
+- Pre-run the **Drift detection** + **Conformance** workflows once so a
+  recent green run is on hand as a fallback if a live run is slow.
 - Know your prod workspace's role tag (`prod` in the examples below).
 
 Optional polish:
@@ -149,14 +155,23 @@ query, or just describe it.
 
 ---
 
-## Act 2 — Drift check on a live tenant (≈8 min)
+## Act 2 — Drift loop on a live tenant (≈8 min)
 
 > Switch to the **connected repo** (real `config/tenant.yml` + creds).
 > Story: "Git is the source of truth. The pipeline continuously proves
 > the tenant matches the repo — and shows exactly what changed when it
 > doesn't."
 
-### 2.1 Confirm reach (≈1 min)
+### 2.1 Prove live reach (≈1.5 min)
+
+```powershell
+python -m contentops doctor --matrix --role prod
+```
+
+**Expect:** all green, including `token_acquisition`, `workspace_reachable`,
+`graph_reachable`, and a **per-handler matrix** with live counts
+(`handler:sentinel_analytic — N item(s)`, `handler:defender_custom_detection
+— N`). That's the proof we're really reaching the tenant — read-only.
 
 ```powershell
 python -m contentops conformance --scope L1,L2
@@ -164,7 +179,13 @@ python -m contentops conformance --scope L1,L2
 
 **Expect:** L1 (install) + L2 (tenant config parses, GUIDs aren't
 placeholders, auth env set) green. (`conformance` with no scope runs the
-full L1–L7; keep it short for the demo.)
+full L1–L7.)
+
+**Say:** "`doctor --matrix` proves connectivity and shows the live rule
+counts. `conformance` verifies the deployment *wiring* end-to-end — install,
+config, identity, RBAC, deploy path, drift-readiness, branch protection
+(L1–L7). That's pipeline health — distinct from `lint`, which gates
+detection-*content* quality."
 
 ### 2.2 Drift check — the headline (≈2 min)
 
@@ -183,30 +204,41 @@ to the YAML in git. `new` = in the tenant but not in git (someone authored
 in the portal); `changed` = tuned in the portal; `in-sync` = matches. Zero
 drift means the tenant *is* the repo."
 
-### 2.3 Induce drift, then show the field-level diff (≈3 min)
+> Run this **before** the 2.3 portal edit — it's your clean in-sync
+> baseline. (If your tenant carries real pre-existing drift, call it out as
+> the honest starting state rather than chasing a zero.)
 
-Simulate an analyst tuning a rule. **Edit one local detection YAML** —
-e.g. change a `queryFrequency`, a threshold, or the `description` — then:
+### 2.3 Induce drift in the portal → catch it as a PR (≈3.5 min — the money shot)
 
-```powershell
-python -m contentops drift --role prod --diff
+Simulate an analyst tuning a rule **in the portal** (the real source of
+drift). Edit one rule's **KQL** and append a harmless no-op line so the
+behaviour is unchanged but the content differs from git:
+
+```kql
+| where true   // DRIFT-DEMO 2026-06-03
 ```
 
-**Expect:** that rule now reports **CHANGED**, and `--diff` prints the
-exact field-level delta (the git value vs the tenant value).
+Do this on one **Sentinel** analytics rule and (optionally) one **Defender**
+custom detection, then **Save** in the portal. (Editing the *query* is the
+robust choice — it's always part of the drift comparison, unlike fields that
+may be normalised.)
 
-**Say:** "This is the G2 diagnostic — *why* is a rule flagged? The diff
-points right at the field. In production this runs daily and opens a PR
-so a reviewer decides: accept the portal change, or let the next deploy
-restore git's version."
+**The production loop — GitHub Actions UI:**
+operator repo → **Actions** → **Drift detection** → **Run workflow** (branch
+`main`) → **Run**. It reads the live tenant (~1 min) and, when it finds
+drift, **opens a pull request** on a `drift/auto-<run_id>` branch.
 
-```powershell
-git restore detections/sentinel_analytic/<the-file-you-edited>.yml
-```
+Then: **Pull requests** → open the new drift PR → **Files changed** → point
+at your KQL edit on the Sentinel (and Defender) rule.
 
-> *(Alternative, more realistic but slower: tweak the rule in the Sentinel
-> portal instead of locally; drift then reports CHANGED from the remote
-> side. Use the local edit for a fast, reversible demo.)*
+**Say:** "A portal edit is now a *reviewable PR*, not a silent divergence.
+In production this runs daily — a reviewer accepts the portal change, or
+rejects the PR and the next deploy restores git's version. Either way it
+never drifts in the dark."
+
+> *(Fast local alternative, no portal needed: edit a local YAML —
+> `queryFrequency`, a threshold — then `python -m contentops drift --role
+> prod --diff` for the field-level delta, and `git restore` it.)*
 
 ### 2.4 Live pre-flight plan (≈2 min)
 
@@ -261,12 +293,14 @@ source-of-truth envelopes."
 |---|---|---|
 | `contentops --version` | no | Brand + version |
 | `contentops doctor` | no | L1 install health |
+| `contentops doctor --matrix --role prod` | reads | Live connectivity + per-handler rule counts |
 | `contentops --help` | no | Command surface |
 | `contentops new <asset> <id>` | no | Scaffold a detection |
-| `contentops lint --strict` | no | KQL + payload + metadata gates |
-| `contentops conformance --scope L1,L2` | reads | Install + tenant-config health |
-| `contentops drift --role prod --no-exit-on-drift` | reads | Repo ↔ tenant drift summary |
-| `contentops drift --role prod --diff` | reads | Field-level diff for CHANGED rules |
+| `contentops lint --strict` | no | KQL + payload + metadata gates (content quality) |
+| `contentops conformance --scope L1,L2` | reads | Deployment-*wiring* health (install + config) |
+| **Drift detection** workflow (Actions UI) | reads | Reads the tenant; opens a drift PR |
+| `contentops drift --role prod --no-exit-on-drift` | reads | Repo ↔ tenant drift summary (local) |
+| `contentops drift --role prod --diff` | reads | Field-level diff for CHANGED rules (local) |
 | `contentops plan --against-tenant --role prod` | reads | Live CREATE/UPDATE/NO-CHANGE/ORPHAN preview |
 | `contentops coverage` / `--gaps` | no | MITRE ATT&CK heatmap / gaps |
 
