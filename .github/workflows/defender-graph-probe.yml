@@ -1,0 +1,102 @@
+name: Defender Graph endpoint probe
+
+# Weekly probe of the deferred Defender Graph beta endpoints
+# (savedQueries, detectionTuningRules, alertSuppressionRules). When
+# Microsoft GAs one, the probe exits 2 and this workflow goes red the
+# next Tuesday morning — telling us to author the corresponding handler
+# instead of finding out months later.
+#
+# Defender-disabled tenants (no `defender:` block in tenant.yml, or
+# `defender.enabled: false`) skip cleanly and exit 0.
+#
+# P3-3 — backlog item; mirrors the audit-verify.yml and silent-rules.yml
+# scheduled-CLI patterns. Distinct cron day (Tue) so it doesn't collide
+# with the audit verify (Mon 04:00) or silent-rules report (Mon 07:00).
+
+on:
+  schedule:
+    - cron: '0 6 * * 2'  # Tuesdays 06:00 UTC
+  workflow_dispatch: {}
+  # Intentionally no `pull_request:` trigger — the probe hits the live
+  # Defender tenant, and an "endpoint became available" (probe exit 2)
+  # is a real operational signal, not a PR-blocking gate. PR changes
+  # to the probe logic are tested by the unit tests under
+  # tests/v2/test_defender_extensions_probe.py and validated by
+  # actionlint. Operators can `workflow_dispatch` to run on demand.
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: defender-graph-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Probe Defender Graph extension endpoints
+        # The probe exits 2 if any endpoint reports available — bubble
+        # that up as a workflow failure so the operator gets paged.
+        # Both artefacts (markdown + json) are always produced, even on
+        # exit 2, so the JSON-consuming tooling can still inspect the
+        # "what changed" detail when a GA happens.
+        run: |
+          # GitHub Actions runs `bash -eo pipefail` by default; `set +e`
+          # overrides errexit so we can capture each probe's exit code
+          # (which may legitimately be 2 = "endpoint available") and
+          # still produce both artefacts before deciding workflow status.
+          set +e
+          set -uo pipefail
+          contentops defender-extensions-probe \
+            --format markdown \
+            --out probe-report.md
+          rc_md=$?
+          contentops defender-extensions-probe \
+            --format json \
+            --out probe-report.json
+          rc_json=$?
+          {
+            echo "## Defender Graph extension probe"
+            echo ""
+            cat probe-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc_md" -eq 2 ] || [ "$rc_json" -eq 2 ]; then
+            echo "::error::At least one Defender Graph extension endpoint reports available. Time to author the handler."
+            exit 2
+          fi
+          # Any other non-zero exit from the probe (transient Graph 5xx,
+          # auth blip, etc.) is a real failure — surface it.
+          if [ "$rc_md" -ne 0 ] || [ "$rc_json" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload probe report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: defender-graph-probe-${{ github.run_id }}
+          path: |
+            probe-report.md
+            probe-report.json
+          if-no-files-found: ignore
+          retention-days: 7

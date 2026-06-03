@@ -1,0 +1,99 @@
+name: Lock or unlock rule
+
+# Manual workflow_dispatch wrapper around `contentops lock` and
+# `contentops unlock`. The CLI mutates a local YAML file; the workflow
+# commits the change on a branch and opens a PR so the lock state
+# is reviewable before it lands on main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "lock or unlock"
+        required: true
+        type: choice
+        options: [lock, unlock]
+      rule_id:
+        description: "Envelope id of the rule to (un)lock."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Serialise per-rule, not per-workflow. The old group keyed on
+  # github.ref (always main for workflow_dispatch), which bottlenecked
+  # unrelated rule toggles AND still let two dispatches for the SAME
+  # rule race. Keying on inputs.rule_id lets distinct rules run in
+  # parallel while same-rule dispatches serialise cleanly. Two parallel
+  # dispatches for one rule must serialise (cancel-in-progress: false)
+  # so each toggle reaches its commit + PR step cleanly.
+  group: ${{ github.workflow }}-${{ inputs.rule_id }}
+  cancel-in-progress: false
+
+jobs:
+  toggle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: automation
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Validate rule_id input
+        env:
+          RULE_ID: ${{ inputs.rule_id }}
+        run: |
+          if [ -n "$RULE_ID" ] && ! echo "$RULE_ID" | grep -qE '^[a-z0-9][a-z0-9-]*[a-z0-9]$'; then
+            echo "ERROR: rule_id contains invalid characters."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt && pip install -e .
+      - name: Run pipeline ${{ inputs.action }}
+        env:
+          PIPELINE_ACTION: ${{ inputs.action }}
+          PIPELINE_RULE_ID: ${{ inputs.rule_id }}
+        run: |
+          contentops "$PIPELINE_ACTION" "$PIPELINE_RULE_ID"
+
+      - name: Open PR if tree changed
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: detections
+          branch: lock/${{ inputs.action }}-${{ inputs.rule_id }}-${{ github.run_id }}
+          commit-message: "chore(${{ inputs.action }}): ${{ inputs.rule_id }}"
+          title: "chore(${{ inputs.action }}): ${{ inputs.rule_id }}"
+          body: |
+            Triggered by workflow_dispatch by `${{ github.actor }}`.
+
+            - Action: `${{ inputs.action }}`
+            - Rule id: `${{ inputs.rule_id }}`
+
+            The CLI rewrote the YAML envelope on disk to set / unset
+            the top-level ``localCustomization: true`` flag. Locked
+            envelopes are skipped by ``contentops apply`` unless
+            ``--force-overwrite`` is set.
+          labels: lock-state,automated
+          add-paths: "detections/**"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Step summary
+        if: always()
+        env:
+          DISPLAY_ACTION: ${{ inputs.action }}
+          DISPLAY_RULE_ID: ${{ inputs.rule_id }}
+          TREE_CHANGED: ${{ steps.auto-pr.outputs.changed }}
+        run: |
+          {
+            echo "## ${DISPLAY_ACTION} ${DISPLAY_RULE_ID}"
+            echo ""
+            echo "- Tree changed: \`${TREE_CHANGED}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

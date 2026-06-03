@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>kql_strict</AssemblyName>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+    <!--
+      Disable the apphost (the native launcher executable .NET 8
+      produces alongside the DLL). The Python caller in
+      contentops.lint.strict invokes `dotnet kql_strict.dll` directly,
+      so the apphost is dead weight. Also avoids a name collision:
+      AssemblyName=kql_strict + OUT_DIR=tools would put the apphost at
+      `tools/kql_strict`, but that path is taken by the project
+      source directory.
+    -->
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Kusto.Language" Version="12.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Copy schemas.json next to the published DLL so the wrapper finds
+      it via Path.Combine(AppContext.BaseDirectory, "schemas.json").
+      The Python caller / lint runner reads no JSON itself — the C#
+      wrapper owns the load.
+    -->
+    <Content Include="schemas.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="schemas_defender.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

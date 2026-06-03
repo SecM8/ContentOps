@@ -1,0 +1,47 @@
+# `kql_strict` (.NET wrapper) finding allowlist.
+#
+# Suppresses Kusto.Language wrapper findings (KS-prefixed) against
+# known-good patterns the wrapper doesn't model:
+#
+#   - **KS142** column-name-not-found false positives against KQL
+#     join-suffix columns (`SHA11`, `ProcessId1`), dynamic extend
+#     columns (`*_s`, `*_d`, etc.), and FileProfile() output columns.
+#   - **KS211** invoke-function-unknown for Defender-specific invokes
+#     like FileProfile() that aren't in Kusto.Language's stdlib.
+#
+# Heuristic rules (KQL001-KQL007) and the strict-mode policy (KQL101)
+# cannot be allowlisted -- only `ALLOWED_RULES` in
+# `contentops/lint/strict_allowlist.py` are honored.
+#
+# Every entry MUST carry a `reason` field so an auditor can see WHY
+# the finding is suppressed (and revisit once a wrapper update closes
+# the underlying gap).
+#
+# Copy to `config/kql_lint_allowlist.yml` to activate.
+
+schema_version: 1
+
+allowlist:
+  # KQL join-suffix columns: when two tables joined share a column
+  # name, the right-side copy gets a numeric suffix (SHA1 -> SHA11).
+  # See `contentops/lint/strict_allowlist.py` for the full taxonomy.
+  - rule: KS142
+    pattern: "\\b(SHA1|SHA256|MD5|FileName|ProcessId|Timestamp|DeviceId|AccountName|AccountObjectId|AccountUpn|InitiatingProcessId|InitiatingProcessFileName)\\d+\\b"
+    reason: "KQL join-suffix convention -- right-side duplicate columns get a numeric suffix (e.g. SHA1 -> SHA11). Wrapper doesn't model join projection."
+
+  # Dynamic extend columns from parse_json() or similar -- Log
+  # Analytics typed-suffix conventions (`_s`/`_d`/`_b`/`_g`/`_l`).
+  - rule: KS142
+    pattern: "\\b\\w+_(s|d|b|g|l|t|n)\\b"
+    reason: "Dynamic extend columns typed via Log Analytics suffix conventions (_s/_d/_b/_g/_l/_t/_n). Wrapper doesn't track dynamic extend output."
+
+  # FileProfile() output columns -- this invoke function projects
+  # ~10 well-known columns the wrapper can't see.
+  - rule: KS142
+    pattern: "\\b(GlobalPrevalence|GlobalFirstSeen|GlobalLastSeen|Signer|SignerHash|IssuerName|IssuerHash|IsCertificateValid|IsRootSignerMicrosoft|SignatureState|MalwareFamily|ThreatName|Publisher|ProfileAvailability|SoftwareName)\\b"
+    reason: "FileProfile() invoke-function output columns -- Defender-specific projection the wrapper doesn't model."
+
+  # KS211: FileProfile() invoke itself.
+  - rule: KS211
+    pattern: "\\bFileProfile\\b"
+    reason: "FileProfile() is a Defender-specific invoke function not in the Kusto.Language stdlib. Documented in Defender XDR Advanced Hunting reference."

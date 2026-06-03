@@ -1,0 +1,118 @@
+name: Tuning impact preview
+
+# NVISO Part 8 — when a PR adds a drift suppression, comment on the
+# PR with the 30-day blast-radius: how many alerts + incidents that
+# suppression would have silenced. Turns "trust me" reviews into
+# data-backed reviews.
+#
+# Fork-PR caveat: GitHub's OIDC token is unavailable on PRs from
+# forks, so the workspace query branch only runs for base-repo PRs.
+# Fork PRs still get a comment but with '—' counts — same precedent
+# as drift-pr / validate.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'detections/drift_suppressions.yml'
+
+permissions:
+  contents: read
+  # For posting the PR comment (and editing it on subsequent pushes).
+  pull-requests: write
+  # OIDC for the LA workspace query. Composite action falls through
+  # gracefully when this token isn't exchangeable (fork PR).
+  id-token: write
+
+concurrency:
+  group: tuning-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      PIPELINE_WORKSPACE_ID: ${{ vars.PIPELINE_WORKSPACE_ID }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # We need the base ref so `git show base:detections/drift_suppressions.yml`
+          # resolves. Fetch the merge base plus full history of the PR
+          # so the diff is reliable.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Detect fork PR (OIDC unavailable)
+        id: forkcheck
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "is_fork=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Fork PR — OIDC token unavailable, skipping workspace query."
+          else
+            echo "is_fork=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Azure login (base-repo PRs only)
+        if: steps.forkcheck.outputs.is_fork != 'true'
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Render impact preview
+        env:
+          BASE_REF: origin/${{ github.event.pull_request.base.ref }}
+          IS_FORK: ${{ steps.forkcheck.outputs.is_fork }}
+        run: |
+          set -euo pipefail
+          ARGS=( "preview" "--base-ref" "$BASE_REF" "--out" "tuning-preview.md" )
+          if [ "$IS_FORK" = "true" ]; then
+            ARGS+=( "--no-workspace-query" )
+          fi
+          contentops tuning "${ARGS[@]}"
+
+      - name: Post / update PR comment
+        # actions/github-script@v8 — pinned per supply-chain policy.
+        # We dedupe by header line so re-pushes update the existing
+        # comment instead of stacking new ones.
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('tuning-preview.md')) {
+              core.info('no preview file; skipping comment.');
+              return;
+            }
+            const body = fs.readFileSync('tuning-preview.md', 'utf-8');
+            const marker = '## Tuning impact preview';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: existing } = await github.rest.issues.listComments({
+              owner, repo, issue_number,
+            });
+            const mine = existing.find(c =>
+              c.user.type === 'Bot' && c.body && c.body.startsWith(marker)
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: mine.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }

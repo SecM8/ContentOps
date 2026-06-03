@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a defect in the ContentOps pipeline (CLI, workflows, lint, handlers)
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please complete the
+        sections below so a maintainer can reproduce the problem.
+
+        **Security issues do not belong here.** Use the private
+        advisory channel described in `SECURITY.md` instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: ContentOps version
+      description: Output of `contentops --version` (or the commit SHA if running from a checkout).
+      placeholder: "0.1.0 / git SHA abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is ContentOps installed?
+      options:
+        - "pip install -e . (editable from a clone)"
+        - "pip install contentops (PyPI)"
+        - "Other / custom"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: "Python 3.12.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - "Linux"
+        - "macOS"
+        - "Windows"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimum commands required to trigger the bug. Include redacted YAML if relevant.
+      placeholder: |
+        1. `contentops new sentinel_analytic example`
+        2. Edit `detections/sentinel_analytic/example.yml` to add ...
+        3. `contentops lint --strict`
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Paste the full error output (redact any tenant / subscription / workspace identifiers).
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Workflow logs, screenshots, related issues, anything else useful.

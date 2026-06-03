@@ -1,0 +1,136 @@
+name: Validate detections
+
+# Two jobs, one workflow:
+#
+# * validate — the load-bearing PR gate. Runs lint --strict (with
+#   live pre-PR schema refresh), plan, deps check, version-bump
+#   check, and references URL check on every PR touching detections.
+#
+# * lint-regression — catches lint regressions outside of PR flow:
+#   push to main (force-push / admin merge bypass), nightly cron
+#   (a tightened rule may flag previously-clean detections), and
+#   manual dispatch with --fail-on-warn for ad-hoc audits.
+#
+# Formerly two separate workflows (validate.yml + lint.yml). Merged
+# because both build the same .NET/KQL strict-lint wrapper; the
+# shared composite action (.github/actions/lint-strict) eliminates
+# the duplication.
+
+on:
+  pull_request:
+    paths:
+      - 'detections/**'
+      - 'contentops/**'
+      - 'config/**'
+      - '.github/workflows/validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'detections/**'
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      fail_on_warn:
+        description: "Fail on warnings (manual dispatch only)."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── PR gate ──────────────────────────────────────────────────────
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: automation
+    permissions:
+      contents: read
+      # OIDC token exchange for the optional pre-PR schema refresh step;
+      # the federated credential is gated on the `automation` environment
+      # so fork PRs fail-soft (continue-on-error + the CLI itself falls
+      # back to baseline on auth failure).
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      PIPELINE_WORKSPACE_ID: ${{ vars.PIPELINE_WORKSPACE_ID }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # check_version_bump.py needs the merge-base to diff against.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      # --- Kusto.Language strict-lint wrapper (G1) ----------------------
+      # Composite action: .NET 8 SDK, NuGet cache, kql_strict.dll build,
+      # optional pre-PR schema refresh, then contentops lint --strict.
+      # See .github/actions/lint-strict/action.yml.
+      - name: Lint strict (build + schema refresh + lint)
+        uses: ./.github/actions/lint-strict
+        with:
+          path: detections
+          pre-pr-refresh: 'true'
+
+      - name: contentops plan (dependency check enforced)
+        # The plan step blocks merge on dependency-graph violations.
+        # No --skip-deps-check here on purpose — that's the gate.
+        run: contentops plan --path detections/
+
+      - name: version-bump check
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          python scripts/check_version_bump.py "origin/$BASE_REF"
+
+      - name: References URL check (added URLs only)
+        # PR-time fast path: HEAD-checks ONLY URLs newly introduced by
+        # this PR's diff. The full corpus is HEAD-checked weekly by
+        # `references-check.yml`. Without this PR-time check a dead
+        # link sails through review and only fails the next Saturday.
+        # Fork PRs hit the same path (no OIDC needed — outbound HTTP only).
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          python scripts/check_references.py \
+            --diff-base "origin/$BASE_REF" \
+            --format text
+
+  # ── Post-merge / nightly / manual ────────────────────────────────
+  lint-regression:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Lint strict (build + lint)
+        uses: ./.github/actions/lint-strict
+        with:
+          path: detections
+          fail-on-warn: ${{ inputs.fail_on_warn == true && 'true' || 'false' }}

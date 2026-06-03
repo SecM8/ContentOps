@@ -1,0 +1,29 @@
+# Example tenant config for the rare case where integration is in a
+# **separate AAD tenant** from production. Copy to
+# `config/tenant.integration.yml` (gitignored) and replace placeholders.
+#
+# The common case is much simpler: keep both prod and integration as
+# *workspaces* inside the single `config/tenant.yml`, distinguished by
+# the `role:` field (prod vs integration). See DESIGN §6.
+#
+# This file is only useful when integration lives behind a different
+# AAD tenant boundary (e.g., a customer subsidiary or a separate
+# sandbox tenant). Use `PIPELINE_ENV=integration` to select it.
+tenant:
+  name: integration
+  tenantId: "REPLACE-WITH-AAD-TENANT-GUID"
+  defender:
+    enabled: true
+    # See config/tenant.yml.example for the safeguard-field semantics.
+    writeAllowed: true
+    purgeAllowed: false
+    maxDelete: 25
+  sentinelWorkspaces:
+    - role: prod  # within the integration *tenant*, this is its prod
+      subscriptionId: "REPLACE-WITH-INTEGRATION-SUBSCRIPTION"
+      resourceGroup: "rg-sentinel-integration"
+      workspaceName: "law-sentinel-integration"
+      location: westeurope
+      writeAllowed: true
+      purgeAllowed: false
+      maxDelete: 25

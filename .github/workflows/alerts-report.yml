@@ -1,0 +1,133 @@
+name: Alerts report
+
+# Daily alert pipeline: sync → rollup → health → trend.
+# - Syncs alerts into a persistent PII-free ledger (cached between runs).
+# - Computes the daily rollup, 30-day detection health, and the
+#   week-over-week trend (FP-rate / MTTR / volume time series) from the ledger.
+# - Uploads Markdown + JSON as workflow artefacts.
+# - Writes reports to GITHUB_STEP_SUMMARY for inline visibility.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: >
+          Target date (YYYY-MM-DD, "yesterday", or "today").
+          Defaults to "yesterday".
+        required: false
+        default: yesterday
+      backfill:
+        description: >
+          Force full lookback (ignore watermark). Use when the
+          ledger is missing or corrupted.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write  # OIDC federated credential
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  alerts-pipeline:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Restore alert ledger cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: |
+            alerts-reports/alert-ledger.jsonl
+            alerts-reports/alert-ledger-watermark.json
+            alerts-reports/daily-rollups.jsonl
+          key: alert-ledger-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: |
+            alert-ledger-${{ github.ref }}-
+
+      - name: Sync alerts into ledger
+        env:
+          INPUT_BACKFILL: ${{ inputs.backfill }}
+        run: |
+          set -euo pipefail
+          BACKFILL_FLAG=""
+          if [ "$INPUT_BACKFILL" = "true" ]; then
+            BACKFILL_FLAG="--backfill"
+          fi
+          contentops alerts sync $BACKFILL_FLAG
+
+      - name: Compute daily rollup
+        env:
+          INPUT_DATE: ${{ github.event.inputs.date || 'yesterday' }}
+        run: |
+          set -euo pipefail
+          mkdir -p alerts-reports
+          contentops alerts rollup \
+            --date "$INPUT_DATE" \
+            --out-md  "alerts-reports/rollup-${INPUT_DATE}.md" \
+            --out-json "alerts-reports/rollup-${INPUT_DATE}.json"
+          cat "alerts-reports/rollup-${INPUT_DATE}.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compute detection health report
+        run: |
+          set -euo pipefail
+          mkdir -p alerts-reports
+          contentops alerts health \
+            --period 30d \
+            --out-md  "alerts-reports/detection-health.md" \
+            --out-json "alerts-reports/detection-health.json" \
+            --out-badge "alerts-reports/health-badge.json"
+          {
+            echo ""
+            echo "---"
+            cat "alerts-reports/detection-health.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compute trend report
+        # The week-over-week FP-rate / MTTR / volume time series. The engine
+        # (compute_trend_report) already shipped; this wires it onto the daily
+        # cron so the "state of detections" trend is published on a cadence,
+        # not just computable on demand. Reads the same ledger the steps above
+        # populated; degrades gracefully (0 alerts) when the ledger is empty.
+        run: |
+          set -euo pipefail
+          mkdir -p alerts-reports
+          contentops alerts report --period 30d --format md \
+            --out alerts-reports/trend-30d.md
+          contentops alerts report --period 30d --format json \
+            --out alerts-reports/trend-30d.json
+          {
+            echo ""
+            echo "---"
+            cat "alerts-reports/trend-30d.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report artefacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: alerts-report-${{ github.event.inputs.date || 'yesterday' }}
+          path: alerts-reports/
+          if-no-files-found: error
+          retention-days: 30

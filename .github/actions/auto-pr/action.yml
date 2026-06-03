@@ -1,0 +1,103 @@
+# SPDX-FileCopyrightText: 2026 KustoKing / SecM8
+# SPDX-License-Identifier: Apache-2.0
+
+# Detect working-tree changes and open a PR via peter-evans/create-
+# pull-request. Extracted from the tail pattern shared by collect,
+# drift, upstream-watchers, kql-schemas-refresh, and lock-unlock.
+#
+# Callers run their CLI commands first, then hand off to this action
+# for the change-detect + PR-creation boilerplate. Anything specific
+# to the caller (supersede-close, per-asset labels, step summaries)
+# stays in the caller.
+#
+# Usage:
+#
+#   - name: Open PR if tree changed
+#     uses: ./.github/actions/auto-pr
+#     with:
+#       detect-paths: detections
+#       branch: collect/${{ github.run_id }}
+#       commit-message: "chore(collect): snapshot live tenant"
+#       title: "chore(collect): live tenant snapshot"
+#       body-path: collect_body.md
+#       labels: collect,automated
+#       add-paths: "detections/**"
+#       token: ${{ secrets.GITHUB_TOKEN }}
+
+name: auto-pr
+description: Detect working-tree changes and open a PR.
+
+inputs:
+  detect-paths:
+    description: >
+      Path filter for `git status --porcelain -- <paths>`.
+      Use '.' to detect any change in the repo.
+    required: false
+    default: '.'
+  branch:
+    description: Branch name for the PR (e.g. collect/<run_id>)
+    required: true
+  commit-message:
+    description: Git commit message for the PR commit
+    required: true
+  title:
+    description: PR title
+    required: true
+  body:
+    description: Inline PR body text (body-path takes precedence if non-empty)
+    required: false
+    default: ''
+  body-path:
+    description: Path to a file containing the PR body (takes precedence over body)
+    required: false
+    default: ''
+  labels:
+    description: Comma-separated labels for the PR
+    required: true
+  add-paths:
+    description: >
+      Newline-separated paths for peter-evans/create-pull-request
+      add-paths (determines which files are committed)
+    required: true
+  token:
+    description: GitHub token with contents:write + pull-requests:write
+    required: true
+
+outputs:
+  changed:
+    description: "'true' if working-tree changes were detected"
+    value: ${{ steps.tree.outputs.changed }}
+  pull-request-number:
+    description: PR number if one was opened (empty otherwise)
+    value: ${{ steps.cpr.outputs.pull-request-number }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect tree changes
+      id: tree
+      shell: bash
+      env:
+        DETECT_PATHS: ${{ inputs.detect-paths }}
+      run: |
+        if [ -z "$(git status --porcelain -- "$DETECT_PATHS")" ]; then
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Open PR (peter-evans/create-pull-request)
+      if: steps.tree.outputs.changed == 'true'
+      id: cpr
+      uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
+      with:
+        token: ${{ inputs.token }}
+        base: main
+        branch: ${{ inputs.branch }}
+        delete-branch: true
+        add-paths: ${{ inputs.add-paths }}
+        commit-message: ${{ inputs.commit-message }}
+        title: ${{ inputs.title }}
+        body: ${{ inputs.body }}
+        body-path: ${{ inputs.body-path }}
+        labels: ${{ inputs.labels }}

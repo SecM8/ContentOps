@@ -1,0 +1,202 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel in-progress runs on the same ref when a newer push lands.
+# Rapid `git push --force-with-lease` on a PR shouldn't burn double
+# runner minutes. Push-to-main is also covered: only the latest commit
+# needs to verify green.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        # Test deps (pytest, pytest-mock, respx, pytest-xdist) are
+        # listed under [project.optional-dependencies].dev in
+        # pyproject.toml — kept explicit here so pip-audit still
+        # scans only requirements.txt (runtime deps) and dev test
+        # deps stay out of the pip-audit report. If you add a new
+        # test dep, update both pyproject.toml and this line.
+        run: pip install -r requirements.txt 'pip-audit==2.10.0' pytest pytest-mock respx pytest-xdist
+
+      - name: pip-audit (dependency vulnerability scan)
+        # PYSEC-2025-183 / CVE-2025-45768 is a disputed advisory against
+        # `pyjwt` (transitive dep via azure-identity). The pyjwt
+        # maintainers' position: "the key length is chosen by the
+        # application that uses the library." In our case the
+        # application is azure-identity, which only verifies tokens
+        # signed by Microsoft-managed keys -- the disputed weak-key
+        # scenario does not apply. No fixed version exists; pyjwt
+        # 2.12.1 is the latest release.
+        #
+        # Review by: 2026-08-20 (3-month cadence). Re-evaluate sooner
+        # if any of these trigger:
+        #   (a) OSV.dev withdraws or updates PYSEC-2025-183,
+        #   (b) pyjwt publishes a release that claims to address it, or
+        #   (c) we start importing `jwt` directly in this codebase.
+        run: pip-audit -r requirements.txt --strict --ignore-vuln PYSEC-2025-183
+
+      - name: Install package metadata (contentops dist-info)
+        # Register the ``contentops`` distribution metadata so
+        # ``importlib.metadata.version("contentops")`` resolves at
+        # test time. Without this step, ``--version`` (Click's
+        # ``@click.version_option(package_name="contentops")`` at
+        # ``contentops/cli/root.py``) fails with ``PackageNotFoundError``
+        # in CI even though imports succeed via ``PYTHONPATH``.
+        # ``--no-deps`` keeps the resolver from re-fetching anything
+        # already installed from ``requirements.txt``, so pip-audit's
+        # report (run above against ``requirements.txt``) stays
+        # authoritative for the runtime dependency surface.
+        run: pip install -e . --no-deps
+
+      - name: pytest (parallel via xdist)
+        # ``-n auto`` autodetects CPU count (2-4 on ubuntu-latest).
+        # Worker processes have separate Python interpreters so per-
+        # test fixture state (the autouse reset in tests/conftest.py)
+        # remains isolated. Verified locally on 906 tests: ~22s
+        # parallel vs ~60s single-threaded.
+        run: pytest -n auto -q --ignore=tests/integration
+
+  cli-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Stub tenant.yml from example
+        # cli-smoke does not have access to the TENANT_CONFIG_YAML
+        # secret (and shouldn't — these checks must work for any
+        # contributor's fork). The .example file carries null GUIDs
+        # which satisfy the schema and let `doctor`, `plan`, and the
+        # other no-auth smoke commands exercise their import + parse
+        # paths. Real CI workflows (deploy / drift / etc) materialise
+        # the real file from the secret via the pipeline-setup
+        # composite action.
+        run: cp config/tenant.yml.example config/tenant.yml
+
+      - name: contentops --help
+        run: contentops --help
+
+      - name: contentops doctor (no auth)
+        # Doctor without --auth doesn't require an Azure credential and
+        # still verifies env, config, dotenv, deps, and YAML parse.
+        run: contentops doctor
+
+      - name: contentops plan --dry-run against in-repo detections
+        # Validation-only: --skip-deps-check skips the deps graph
+        # check (validate.yml owns that gate); plan failure here is a
+        # real smoke failure (envelope parse / handler init / etc).
+        run: |
+          contentops plan \
+            --path detections \
+            --skip-deps-check
+
+      - name: contentops lint --help
+        run: contentops lint --help
+
+      - name: contentops drift-pr-body --help
+        run: contentops drift-pr-body --help
+
+      - name: contentops lock --help
+        run: contentops lock --help
+
+      - name: contentops retry-failed --help
+        run: contentops retry-failed --help
+
+      # --- Phase 7 expansion: smoke-test every Phase 2-6 command ---
+      # Each --help validates the import chain + Click parses the
+      # command tree; an ImportError or top-level syntax break in
+      # any one command fails the step with a clear traceback. No
+      # auth required. See feature/phase-7-ci-refinement (Seam L
+      # from the cross-phase review).
+
+      - name: cli-smoke (config + lifecycle promote)
+        run: |
+          contentops config validate --help
+          contentops config list-workspaces --help
+          contentops lifecycle promote --help
+
+      - name: cli-smoke (audit query subcommands)
+        run: |
+          contentops audit query latest --help
+          contentops audit query failures --help
+          contentops audit query by-actor --help
+          contentops audit query rollbacks --help
+          contentops audit query timeline --help
+
+      - name: cli-smoke (state management)
+        run: |
+          contentops state show --help
+          contentops state forget --help
+          contentops state sync push --help
+          contentops state sync pull --help
+          contentops state sync status --help
+
+      - name: cli-smoke (diagnostics)
+        run: |
+          contentops sentinel-roundtrip-diff --help
+          contentops defender-roundtrip-diff --help
+          contentops explain --help
+
+      - name: cli-smoke (alerts)
+        run: |
+          contentops alerts --help
+          contentops alerts collect --help
+          contentops alerts rollup --help
+          contentops alerts report --help
+
+      - name: catalog drift gate
+        # Fails when the committed
+        # ``docs/reference/generated-catalog.md`` disagrees with what
+        # ``contentops.catalog`` would currently render. If this fires,
+        # run ``contentops catalog regenerate`` locally and commit
+        # the diff. See contentops/catalog/{inspect,render}.py.
+        run: contentops catalog check
+
+  actionlint:
+    # Phase 7: workflow-YAML lint. Catches stale references to
+    # deleted commands, malformed ${{ }} expressions, shell-script
+    # issues in run: blocks, outdated action SHAs, etc. before the
+    # workflow runs in production. <10s per CI run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: actionlint (workflow YAML lint)
+        # Pinned to the immutable SHA digest of the rhysd/actionlint
+        # 1.7.7 image (resolved via ``docker manifest inspect``).
+        # The publisher cannot overwrite an already-published digest,
+        # closing the supply-chain hole left by the previous tag-only
+        # pin. Bump SHA + version comment together when adopting a
+        # new actionlint release; review the changelog because rule
+        # tightenings between minors can surface new findings.
+        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9  # 1.7.7
+        with:
+          args: -color

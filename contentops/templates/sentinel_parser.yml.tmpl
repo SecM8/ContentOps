@@ -1,0 +1,49 @@
+id: ${id}
+version: 0.1.0
+asset: ${asset}
+status: experimental
+# Authoring lifecycle stage (T.2). See contentops/core/lifecycle_stage.py.
+lifecycleStage: concept
+metadata:
+  owner: detection-engineering@example.com
+  runbookUrl: https://example.com/runbooks/${id}
+  severity: medium
+  tactics:
+    - Discovery
+  techniques:
+    - T1083
+  expectedAlertsPerDay: 1
+  fpHandling: |
+    Parser — a reusable function. False positives are mostly upstream
+    issues in the parser's data source; review the function output before
+    using it in detection logic.
+  # Section T authoring metadata. Strict mode (tenant.yml default)
+  # escalates META002-005 to error; fill these before merging.
+  description: |
+    TODO (META002): single-paragraph summary of what this parser exposes.
+  attackDescription: |
+    TODO (META003): which attacker behaviour downstream rules will detect.
+  # TODO (META004): http(s):// URLs to data source docs / KQL examples.
+  references: []
+  # TODO (META005): scenarios where the parser returns unexpected shape.
+  falsePositives: []
+  # TODO (META006, info): events the parser can't surface.
+  blindSpots: []
+  # TODO (META007, info): how to evolve the parser when upstream changes.
+  responseActions: []
+payload:
+  displayName: "${display_name}"
+  description: |
+    TODO: describe what this parser/function returns and which data sources
+    it joins. Parsers expose reusable KQL via the functionAlias below.
+  category: Function
+  functionAlias: ${id}
+  functionParameters: ""
+  query: |
+    let ${id} = (start:datetime=ago(1h), end:datetime=now()) {
+        SecurityEvent
+        | where TimeGenerated between (start .. end)
+        | take 100
+    };
+    ${id}
+  version: 2

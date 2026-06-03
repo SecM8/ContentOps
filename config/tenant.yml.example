@@ -1,0 +1,90 @@
+# ----------------------------------------------------------------------
+# Example tenant configuration for ContentOps powered by SecM8.
+#
+# 1. Copy this file to `config/tenant.yml` (gitignored).
+# 2. Replace EVERY placeholder marked `REPLACE-WITH-*` with values from
+#    your Entra ID tenant + Microsoft Sentinel workspace(s).
+# 3. Never commit the real file. The CI workflows materialise it from
+#    a GitHub Actions secret (`TENANT_CONFIG_YAML`) at job start — see
+#    `.github/actions/pipeline-setup/action.yml`.
+#
+# Schema (v3 — single tenant, 0-1 Defender XDR, 0-N Sentinel workspaces).
+# See DESIGN §6 and `docs/operations/multi-workspace.md` for details.
+# ----------------------------------------------------------------------
+tenant:
+  name: production
+  tenantId: "00000000-0000-0000-0000-000000000000"  # REPLACE-WITH-ENTRA-ID-TENANT-GUID
+
+  # Defender XDR custom detections. Set `enabled: false` if any of:
+  #   * your tenant does not have Defender XDR licensed at all
+  #   * you only manage Sentinel content and don't deploy Defender rules
+  #   * you haven't yet granted `CustomDetection.ReadWrite.All` (Microsoft
+  #     Graph) to the App Registration — the Defender handler will fail
+  #     with 403 until that perm is granted with admin consent
+  # When `enabled: false`, conformance L4 skips the Graph perm check,
+  # L6 skips the Defender reachability probe, and the
+  # defender_custom_detection handler does not dispatch.
+  defender:
+    enabled: true
+    # ----------------------------------------------------------------
+    # Safeguard fields (same triple as each sentinelWorkspaces entry).
+    # Defaults shown — locked-down for irreversible ops, lenient for
+    # everyday writes.
+    #
+    # writeAllowed (default true): gates `contentops apply` and the
+    #   deploy.yml workflow. Set to false to put Defender XDR into
+    #   read-only mode for the pipeline (collect still works).
+    # purgeAllowed (default false): gates `contentops prune`. Must
+    #   be flipped to true to delete Defender custom detections in
+    #   bulk.
+    # maxDelete (default 25, range 0..9999): hard upper bound on
+    #   per-run deletions. The minimum of (CLI --max-deletes,
+    #   workflow input, this value) wins.
+    # ----------------------------------------------------------------
+    writeAllowed: true
+    purgeAllowed: false
+    maxDelete: 25
+
+  sentinelWorkspaces:
+    # Single-workspace minimum (most adopters). Replace placeholders.
+    - role: prod
+      subscriptionId: "00000000-0000-0000-0000-000000000000"  # REPLACE-WITH-SUBSCRIPTION-GUID
+      resourceGroup: "rg-sentinel"
+      workspaceName: "law-sentinel"
+      location: westeurope
+      # Same three safeguard fields as defender — per-workspace.
+      writeAllowed: true
+      purgeAllowed: false
+      maxDelete: 25
+
+    # Optional second workspace — uncomment + fill if you have an
+    # integration / staging Sentinel workspace. The
+    # `integration-deploy.yml` and `promote-to-integration.yml` workflows
+    # detect a `role: integration` workspace and skip themselves
+    # gracefully when none is defined.
+    # - role: integration
+    #   subscriptionId: "00000000-0000-0000-0000-000000000000"
+    #   resourceGroup: "rg-sentinel-int"
+    #   workspaceName: "law-sentinel-int"
+    #   location: westeurope
+    #   writeAllowed: true
+    #   purgeAllowed: false
+    #   maxDelete: 25
+
+  # ------------------------------------------------------------------
+  # Optional policy block (Section T) — project-level toggles.
+  #
+  # scaffoldStrict (default false when omitted):
+  #   When false or absent, META002-005 lint rules (description,
+  #   attackDescription, references, falsePositives) surface as
+  #   warnings only — CI never blocks on metadata gaps. This is
+  #   the default for new adopters and bulk content migrations.
+  #
+  #   Set to `true` once the authoring backlog is drained to
+  #   escalate META002-005 to CI-blocking errors. Fits
+  #   Fortune-500-grade authoring discipline.
+  #   META006-007 (blindSpots, responseActions) are info-only in
+  #   both modes.
+  # ------------------------------------------------------------------
+  # policy:
+  #   scaffoldStrict: false

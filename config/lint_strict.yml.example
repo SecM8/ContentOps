@@ -1,0 +1,65 @@
+# Strict-lint config (closes G1's F1.1 follow-up). Copy to
+# `config/lint_strict.yml` and tune to taste.
+#
+# `mode` controls the global wrapper behaviour:
+#   off    - wrapper not invoked. Python KQL101 still runs (catches
+#            `| take` / `| limit` in production rules at error
+#            severity). No semantic findings at all.
+#   report - wrapper runs. All wrapper findings (KS204 / KS142 /
+#            etc.) downgrade to `warning` severity so lint exits 0
+#            even when the schema has gaps. Findings still appear
+#            in lint output for the operator to triage. Recommended
+#            default for new tenants whose schemas.json /
+#            schemas_defender.json baseline isn't fully populated
+#            yet.
+#   block  - wrapper runs. Findings emit at the upstream
+#            Kusto.Language severity (typically `error`). Errors
+#            fail `lint --strict`. Flip here once the baseline is
+#            mature against the live tenant.
+
+schema_version: 1
+
+mode: report
+
+# Per-source enable. Independent of `mode` -- you can disable the
+# Defender side (e.g. if you haven't granted `ThreatHunting.Read.All`
+# on the App Registration yet) while keeping the Sentinel side on.
+#
+# When a source is disabled:
+#   * the corresponding `contentops upstream check-*` CLI no-ops
+#     with a stderr message and exits 0.
+#   * the nightly `.github/workflows/kql-schemas-refresh.yml` skips
+#     that side.
+#   * the wrapper doesn't load that schema file at startup (so
+#     references to those tables surface as KS204 -- which is
+#     downgraded to warning under `mode: report` and only blocks
+#     under `mode: block`).
+sentinel:
+  enabled: true
+
+defender:
+  enabled: true
+
+# When true, validate.yml + lint.yml fetch fresh schemas before
+# running `lint --strict`, so PRs are validated against the current
+# tenant state rather than a potentially-stale committed baseline.
+# Best-effort: a Graph / LA failure during the refresh logs a
+# warning and lint falls back to the committed schema files.
+refresh_on_pr: true
+
+# Tables to DROP from the refreshed kql_strict schema
+# (`contentops upstream check-schemas`). The Log Analytics metadata API
+# returns every table in the workspace -- including operator scratch /
+# test custom-log tables (`*_CL`) -- which would otherwise land in the
+# committed, publicly-mirrored tools/kql_strict/schemas.json. List
+# case-insensitive glob patterns here to keep them out of the schema (and
+# off the public mirror). A table you exclude is one no shipped detection
+# queries, so dropping it from the lint surface costs nothing.
+#
+# Patterns set in your operator-private config/lint_strict.yml are stripped
+# from the public mirror, so the excluded NAMES never reach adopters either.
+# Examples (uncomment + adapt to your own scratch-table naming):
+# schema_exclude_tables:
+#   - "Test*"          # TestMe_KQL_CL, TestMeAgain_KQL_CL, ...
+#   - "*_scratch_CL"   # ad-hoc scratch tables
+#   - "MyPoc_CL"       # one specific table, exact name

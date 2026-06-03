@@ -1,0 +1,161 @@
+name: SAST
+
+# Python source-code SAST. Complements `pip-audit` (which scans
+# dependencies) by analysing the project's own code for common
+# vulnerability patterns: hardcoded passwords, weak cryptographic
+# choices, subprocess(shell=True), yaml.load() instead of safe_load,
+# eval()/exec() of attacker-controlled input, and so on.
+#
+# Findings at `high` severity fail the build. `medium` and below
+# warn but do not block; over time tighten this in line with the
+# rolling baseline.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write  # upload SARIF to GitHub code scanning
+  # actions: read is required by the codeql-action SARIF uploader
+  # which calls GET /repos/.../actions/runs/{run_id} during upload
+  # to record provenance metadata.
+  actions: read
+
+concurrency:
+  group: sast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spdx-headers:
+    # Fail-fast: every Python file under contentops/, scripts/, tests/
+    # must carry SPDX-FileCopyrightText + SPDX-License-Identifier.
+    # The check script is idempotent and runs in <1s; cheap PR gate.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Check SPDX headers
+        run: python scripts/add_spdx_headers.py --check
+
+  bandit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install bandit
+        run: pip install "bandit[toml]==1.8.0"
+
+      - name: Run bandit (high severity = fail)
+        run: |
+          bandit -r contentops scripts \
+            --severity-level high \
+            --confidence-level medium \
+            --format json \
+            --output bandit.json \
+            || EXIT=$?
+          if [ "${EXIT:-0}" -ne 0 ]; then
+            echo "::error::bandit found high-severity issues. See bandit.json."
+            cat bandit.json
+            exit 1
+          fi
+
+      - name: Run bandit (full report, advisory)
+        if: always()
+        continue-on-error: true
+        run: |
+          bandit -r contentops scripts \
+            --format sarif \
+            --output bandit.sarif \
+            || true
+
+      - name: Upload bandit SARIF to GitHub code scanning
+        # `continue-on-error: true` so the job does not fail when the
+        # repository has Code Scanning disabled. SARIF still uploaded
+        # as a workflow artifact below for offline review.
+        if: always() && hashFiles('bandit.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57  # v3.36.0
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+      - name: Upload bandit SARIF as workflow artefact
+        if: always() && hashFiles('bandit.sarif') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: bandit-sarif-${{ github.run_id }}
+          path: bandit.sarif
+          retention-days: 30
+
+  semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # semgrep is pip-installed (pinned in CI). No semgrep.dev account
+    # required for OSS repos. If the repo ever goes private, set
+    # SEMGREP_APP_TOKEN as a repo secret and the rulesets below stay
+    # the same.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install semgrep
+        # `setuptools` carries the `pkg_resources` module that
+        # semgrep's opentelemetry-instrumentation-requests transitive
+        # dep imports. Python 3.12 no longer bundles setuptools, AND
+        # setuptools 81+ removed `pkg_resources` as a top-level
+        # import. Pin to the 70-80 range so both constraints hold.
+        # Upstream issue: https://github.com/semgrep/semgrep/issues/10612
+        run: pip install "semgrep==1.96.0" "setuptools>=70,<81"
+
+      - name: Run semgrep
+        run: |
+          # `--error` makes ERROR-level findings fail the build.
+          # WARNING + INFO findings still appear in PR annotations
+          # but do not gate merge. SARIF is generated for upload.
+          # `scan` (not `ci`) is used because `ci` mode insists on
+          # semgrep.dev project membership for non-error output.
+          semgrep scan \
+            --config p/python \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --severity ERROR \
+            --error \
+            --sarif --output semgrep.sarif \
+            contentops scripts tests
+
+      - name: Upload semgrep SARIF to GitHub code scanning
+        # `continue-on-error: true` so the job does not fail when the
+        # repository has Code Scanning disabled. SARIF still uploaded
+        # as a workflow artifact below for offline review.
+        if: always() && hashFiles('semgrep.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57  # v3.36.0
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Upload semgrep SARIF as workflow artefact
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: semgrep-sarif-${{ github.run_id }}
+          path: semgrep.sarif
+          retention-days: 30

@@ -1,0 +1,99 @@
+name: Upstream catalog watchers
+
+# Weekly poll of Microsoft's Sentinel catalog of Content Packages
+# (`contentPackages`) and Alert Rule Templates (`alertRuleTemplates`).
+# When either catalog has changed since the last committed manifest,
+# updates the manifest in-place + appends a markdown row to
+# `docs/whats-new/<YYYY-MM-DD>.md` and opens a PR.
+#
+# The manifests at `manifests/upstream_marketplace.json` and
+# `manifests/upstream_templates.json` are the committed baseline.
+# Operators triage the WHATSNEW row and decide whether to install /
+# adopt the newly-shipped content.
+
+on:
+  schedule:
+    - cron: '30 6 * * 1'  # Mondays 06:30 UTC (staggered from 07:00)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # commit the new manifests + whatsnew file
+  pull-requests: write     # open the upstream-changes PR
+  id-token: write          # OIDC token exchange for azure/login
+  issues: write            # notify-workflow-failure on scheduled failures
+
+concurrency:
+  group: upstream-watchers
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Check marketplace (contentPackages)
+        run: |
+          set -euo pipefail
+          contentops upstream check-marketplace --role prod --write
+
+      - name: Check templates (alertRuleTemplates)
+        run: |
+          set -euo pipefail
+          contentops upstream check-templates --role prod --write
+
+      - name: Open PR if tree changed
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          branch: upstream/auto-${{ github.run_id }}
+          commit-message: "chore(upstream): refresh marketplace + templates manifests"
+          title: "chore(upstream): catalog changes (run ${{ github.run_id }})"
+          body: |
+            Auto-opened by `.github/workflows/upstream-watchers.yml`.
+            Inspect `docs/whats-new/<date>.md` for the human-readable
+            summary; the JSON manifests are the diff baseline.
+          labels: upstream-watch,automated
+          add-paths: |
+            manifests/**
+            docs/whats-new/**
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Step summary
+        if: always()
+        run: |
+          if [ "${{ steps.auto-pr.outputs.changed }}" = "true" ]; then
+            {
+              echo "## Upstream watchers — changes detected"
+              echo ""
+              echo '```'
+              git status --porcelain
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Upstream watchers — no changes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Notify on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

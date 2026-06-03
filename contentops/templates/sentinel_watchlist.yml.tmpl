@@ -1,0 +1,45 @@
+id: ${id}
+version: 0.1.0
+asset: ${asset}
+status: experimental
+# Authoring lifecycle stage (T.2). See contentops/core/lifecycle_stage.py.
+lifecycleStage: concept
+legacy: false
+metadata:
+  owner: detection-engineering@example.com
+  runbookUrl: https://example.com/runbooks/${id}
+  severity: medium
+  tactics:
+    - Discovery
+  techniques:
+    - T1083
+  expectedAlertsPerDay: 1
+  fpHandling: |
+    Watchlist — keep contents reviewed and pruned regularly. Stale entries
+    cause false positives in dependent analytics.
+  # Section T authoring metadata. Strict mode (tenant.yml default)
+  # escalates META002-005 to error; fill these before merging.
+  description: |
+    TODO (META002): single-paragraph summary of what this watchlist holds.
+  attackDescription: |
+    TODO (META003): the attacker behaviour this watchlist supports detecting.
+  # TODO (META004): http(s):// URLs documenting the list source / rationale.
+  references: []
+  # TODO (META005): scenarios where entries become stale or noisy.
+  falsePositives: []
+  # TODO (META006, info): coverage limits of the watchlist contents.
+  blindSpots: []
+  # TODO (META007, info): how to enrich or rotate the list when stale.
+  responseActions: []
+payload:
+  displayName: "${display_name}"
+  description: |
+    TODO: describe what this watchlist contains and who owns the contents.
+  provider: Custom
+  source: Local file
+  contentType: text/csv
+  itemsSearchKey: AssetName
+  numberOfLinesToSkip: 0
+  rawContent: |
+    AssetName,Tier
+    example-asset,1

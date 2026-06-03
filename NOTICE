@@ -1,0 +1,61 @@
+ContentOps powered by SecM8
+Copyright 2026 KustoKing / SecM8
+
+Licensed under the Apache License, Version 2.0 (the "License").
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+implied. See the License for the specific language governing
+permissions and limitations under the License.
+
+----------------------------------------------------------------------
+Trademarks
+----------------------------------------------------------------------
+
+"ContentOps" and "SecM8" are trademarks of KustoKing / SecM8.
+The Apache 2.0 License (§6) does not grant permission to use these
+marks. See TRADEMARK.md for the trademark usage policy.
+
+Code use is unrestricted by the license; the brand is not. You may
+fork, modify, and redistribute the code (including commercially)
+without permission. You may NOT call your fork "ContentOps", use the
+SecM8 name, or imply SecM8 endorsement of your fork without a separate
+written agreement.
+
+----------------------------------------------------------------------
+Attribution
+----------------------------------------------------------------------
+
+Attribution is appreciated but not required. When this software is
+used in a product, presentation, blog post, conference talk, or
+article, a mention of "ContentOps powered by SecM8" with a link to
+the upstream project (https://github.com/SecM8/ContentOps) is
+welcomed and lets us know who is finding it useful.
+
+This NOTICE file deliberately frames attribution as REQUESTED, not
+REQUIRED. The Apache 2.0 License §4(d) makes NOTICE contents a hard
+obligation for redistributors, so we are careful to keep this section
+informational rather than prescriptive. Removing this section from a
+downstream NOTICE file is permitted under the License.
+
+----------------------------------------------------------------------
+Third-party components
+----------------------------------------------------------------------
+
+ContentOps depends on the following runtime libraries. Each is
+distributed under its own license; see each project for full terms.
+
+  - azure-identity         (MIT)         Microsoft Corporation
+  - httpx                  (BSD-3-Clause) Encode OSS Ltd.
+  - pydantic               (MIT)         Pydantic Services Inc.
+  - PyYAML                 (MIT)         Ingy döt Net
+  - click                  (BSD-3-Clause) Pallets
+  - python-dotenv          (BSD-3-Clause) Saurabh Kumar
+
+A complete machine-readable Software Bill of Materials (SBOM) is
+attached to every release artifact in CycloneDX JSON format. See
+.github/workflows/release.yml.

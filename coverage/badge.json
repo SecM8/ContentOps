@@ -1,0 +1,6 @@
+{
+  "color": "orange",
+  "label": "ATT&CK coverage",
+  "message": "20% techniques \u00b7 3% sub-techniques",
+  "schemaVersion": 1
+}

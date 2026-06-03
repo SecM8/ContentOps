@@ -1,0 +1,72 @@
+id: ${id}
+version: 0.1.0
+asset: ${asset}
+status: experimental
+# Authoring lifecycle stage (T.2). Start at `concept`; bump through
+# `research` -> `engineering` -> `delivery` -> `optimization` -> `feedback`
+# as the rule matures. Distinct from `status` (which drives the deploy gate).
+lifecycleStage: concept
+legacy: false
+metadata:
+  owner: detection-engineering@example.com
+  runbookUrl: https://example.com/runbooks/${id}
+  severity: medium
+  tactics:
+    - Discovery
+  techniques:
+    - T1083
+  expectedAlertsPerDay: 1
+  fpHandling: |
+    Triage with the on-call analyst. Confirm whether the activity matches a
+    known administrative or scripted task before escalating.
+  # Section T authoring metadata (Fortune 500 detection management).
+  # All optional but lint surfaces gaps via META002-META007.
+  # Strict mode (default for any tenant.yml without policy.scaffoldStrict:
+  # false) escalates META002-005 to error. Fill these out as part of the
+  # `engineering` -> `delivery` lifecycle transition.
+  description: |
+    TODO (META002): single-paragraph summary of what this rule detects.
+  attackDescription: |
+    TODO (META003): what attackers actually do — the threat context.
+    Distinct from the detection logic. First thing SOC analysts read on triage.
+  # TODO (META004): cite at least one source -- CVE / MITRE ATT&CK technique
+  # page / vendor advisory / threat-intel blog. Use http(s):// URLs.
+  # e.g. - https://attack.mitre.org/techniques/T1083/
+  references: []
+  # TODO (META005): enumerate known FP scenarios. Free-text fpHandling
+  # still applies; this is the structured complement for triage tooling.
+  # e.g. - "Vulnerability scanners during scheduled sweeps."
+  falsePositives: []
+  # TODO (META006, info): known evasion vectors / detection gaps. Empty
+  # is honest when there genuinely aren't known blind spots.
+  blindSpots: []
+  # TODO (META007, info): 3-7 concise inline response steps. Full
+  # playbook stays at runbookUrl.
+  responseActions: []
+payload:
+  kind: Scheduled
+  displayName: "${display_name}"
+  description: |
+    TODO: describe what this rule detects, the data source, and any
+    prerequisites such as required connectors or custom tables.
+  enabled: true
+  severity: Medium
+  query: |
+    SecurityEvent
+    | where TimeGenerated > ago(1h)
+    | top 100 by TimeGenerated desc
+  queryFrequency: PT1H
+  queryPeriod: PT1H
+  triggerOperator: GreaterThan
+  triggerThreshold: 0
+  # ARM 2025-07-01-preview rejects the PUT with HTTP 400
+  # "Required property 'suppressionDuration' not found in JSON"
+  # if these two fields are missing. They are required for kind=Scheduled
+  # on every API version since 2019-01-01-preview. Defaults: feature off,
+  # 5-hour window so it's a no-op until an analyst flips suppressionEnabled.
+  suppressionDuration: PT5H
+  suppressionEnabled: false
+  tactics:
+    - Discovery
+  techniques:
+    - T1083

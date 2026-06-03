@@ -1,0 +1,163 @@
+name: Retry failed deployments
+
+# Manual workflow_dispatch that runs `contentops retry-failed` against
+# the configured tenant. Reads the latest audit/*.jsonl, derives the
+# (asset, id) pairs whose status == failed, and re-applies only
+# those. Useful after a transient ARM 5xx burst or a Defender Graph
+# rate-limit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        # type: choice locks operators to the three known tenant
+        # environment slugs. `environment: ${{ inputs.env }}` below
+        # dynamically references the GitHub Environment of the same
+        # name; a free-text `type: string` here would let an operator
+        # supply a non-existent env, which on some GitHub configs
+        # silently bypasses the required-reviewer protection rule.
+        description: "Tenant env slug (selects config/tenant.<env>.yml)."
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - integration
+          - dev
+      role:
+        # Free-text string (not ``type: choice``) so the "no role"
+        # case can be expressed as an empty default. actionlint's
+        # syntax-check rule disallows empty entries in a choice
+        # ``options:`` list, and a sentinel value ("none" / "skip")
+        # would just push the empty-handling logic into the run:
+        # block. Single-workspace tenants pass an empty string and
+        # the CLI invocation skips the ``--role`` flag entirely.
+        description: "Sentinel workspace role to retry against (prod/integration/dev). Leave blank for single-workspace tenants."
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Dry-run: list the retry set without re-applying."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  # state sync pushes refs/heads/state/<env> after a non-dry-run retry
+  # so subsequent workflows see the freshly-applied entries.
+  contents: write
+
+concurrency:
+  group: ${{ inputs.env == 'prod' && 'deploy-prod' || format('retry-failed-{0}', inputs.env) }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The GitHub Environment name has to match the federated-credential
+    # subject the App Registration was issued, NOT the `--role` tenant.yml
+    # slug. Convention in this repo (matching deploy.yml + integration-
+    # deploy.yml + prune.yml after PR #251): the prod role binds to the
+    # `production` Environment. Without this mapping the OIDC step fails
+    # with AADSTS700213 "No matching federated identity record found for
+    # presented assertion subject 'repo:.../:environment:prod'". The
+    # `integration` and `dev` slugs already match their Environment names
+    # so they pass through.
+    environment: ${{ fromJSON('{"prod":"production","integration":"integration","dev":"dev"}')[inputs.env] }}
+    env:
+      PIPELINE_ENV: ${{ inputs.env }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml.
+        # PIPELINE_ENV is exported on the job env above; the
+        # composite's env-aware tenant-config path activates
+        # automatically.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          tenant-config-env-yaml: ${{ secrets.TENANT_CONFIG_ENV_YAML }}
+          role: ${{ inputs.env }}
+
+      - name: Pull state before retry
+        # Best-effort: an empty / missing state/<env> ref means the
+        # retry starts from local empty state. retry-failed reads
+        # audit/*.jsonl for the (asset, id) pairs to re-apply, not
+        # state, so an empty pull doesn't change behaviour -- but
+        # any post-retry push still wants the latest baseline.
+        run: |
+          contentops state sync pull || {
+            echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
+          }
+
+      - name: Run contentops retry-failed
+        # Route workflow_dispatch inputs through env vars before
+        # using them in the shell. Direct ``${{ inputs.role }}``
+        # interpolation would substitute the operator-supplied
+        # text BEFORE the shell parses the line -- a classic
+        # GitHub Actions expression-injection vector. With
+        # ``role`` switched to ``type: string`` (see role input
+        # above) the value is now free text; piping through env
+        # vars closes the injection surface. ``inputs.dry_run``
+        # is already safe (boolean type, schema-constrained) but
+        # routed for consistency.
+        env:
+          INPUT_ROLE: ${{ inputs.role }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS=( "--path" "detections" )
+          if [ -n "$INPUT_ROLE" ]; then
+            ARGS+=("--role" "$INPUT_ROLE")
+          fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            ARGS+=("--dry-run")
+          fi
+          contentops retry-failed "${ARGS[@]}"
+
+      - name: Push state after retry
+        # Only push when we actually re-applied. Dry-run doesn't
+        # mutate state.json.
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          if [ -f state/state.json ]; then
+            contentops state sync push
+          else
+            echo "::notice::No state/state.json written; skipping state sync push."
+          fi
+
+      - name: Upload audit JSONL
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: retry-audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Step summary
+        if: always()
+        # Same expression-injection consideration as the run step
+        # above: route inputs through env vars so the operator-
+        # supplied text isn't substituted into the shell at
+        # template-expansion time. The values are bash-quoted
+        # inside backticks for markdown rendering.
+        env:
+          INPUT_ENV: ${{ inputs.env }}
+          INPUT_ROLE: ${{ inputs.role }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## retry-failed"
+            echo "- env: \`$INPUT_ENV\`"
+            echo "- role: \`$INPUT_ROLE\`"
+            echo "- dry-run: \`$INPUT_DRY_RUN\`"
+          } >> "$GITHUB_STEP_SUMMARY"

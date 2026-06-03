@@ -1,0 +1,274 @@
+name: Drift detection
+
+# Two trigger paths, two jobs, two permission scopes (S1):
+#
+#   1. `drift-write` (schedule + workflow_dispatch) — runs
+#      `contentops drift --write` against the live tenant; opens a
+#      PR with new+changed envelopes so the repo catches up to
+#      portal-side edits. Needs `contents: write` (push branch)
+#      and `pull-requests: write` (close stale auto-PRs + open
+#      a new one). Idempotent supersede closes prior open drift
+#      PRs first.
+#
+#   2. `drift-pr` (pull_request, paths: detections/**) — runs
+#      `contentops drift` in REPORT-ONLY mode against the live
+#      tenant. Posts a comment on the PR summarising current
+#      drift state vs the live tenant. Doesn't open another PR
+#      (would loop) and doesn't fail CI (drift is unrelated to
+#      the PR's own correctness — it's just visibility for the
+#      reviewer). Needs ONLY `pull-requests: write` (commenting);
+#      `contents` stays read-only so a compromised step on the
+#      PR path can't push code to the repo.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+  pull_request:
+    paths: ['detections/**']
+
+# Default to no permissions at the workflow level — each job
+# narrows in to exactly what it needs (S1). Anything not listed
+# here is denied for jobs that don't override.
+permissions: {}
+
+concurrency:
+  # Schedule + manual share the same concurrency lane (one drift run at
+  # a time globally); PR runs get their own per-PR lane so two PRs don't
+  # block each other.
+  group: drift-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'auto-pr' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # =================================================================
+  # PR-mode — read-only against the repo. Posts an informational
+  # comment; never pushes a branch.
+  # =================================================================
+  drift-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Drift is a read-only operation against the prod tenant on both
+    # schedule and PR triggers, but it's NOT a real deployment — the
+    # `production` environment carries reviewer-approval rules that
+    # would block every PR-triggered drift run. The `automation`
+    # environment is deliberately unprotected (no required reviewers,
+    # no wait timer) and exists for read-mostly OIDC flows.
+    environment: automation
+    # Per-job least-privilege: the PR path doesn't write to the repo,
+    # so contents stays read-only. The only write is the PR comment.
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Drift setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Run drift detection (report-only)
+        id: drift
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        # PR mode: --no-write --no-exit-on-drift (report only, never
+        # mutate the working tree, never fail CI).
+        # exit 2 = drift; 0 = clean; anything else = hard error.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          contentops drift \
+            --path detections \
+            --role prod \
+            --report drift_report.json \
+            --no-exit-on-drift
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Fail on hard error
+        if: steps.drift.outcome == 'failure'
+        run: |
+          echo "contentops drift failed"
+          exit 1
+
+      - name: Render PR body and labels
+        run: |
+          contentops drift-pr-body \
+            --report drift_report.json \
+            --path detections \
+            --out drift_body.md \
+            --labels-out drift_labels.txt
+          echo "Body:"; cat drift_body.md
+
+      - name: Comment on PR with drift summary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ ! -s drift_body.md ]; then
+            echo "(no drift_body.md content; skipping comment)"
+            exit 0
+          fi
+          {
+            echo "<!-- drift-on-pr -->"
+            echo "## Drift report (informational)"
+            echo ""
+            echo "_Drift detection ran against the live tenant for visibility. This comment does NOT block merge — drift is unrelated to the PR's own correctness._"
+            echo ""
+            cat drift_body.md
+          } > drift_comment.md
+          gh pr comment "${PR_NUMBER}" --body-file drift_comment.md
+
+      - name: PR step summary
+        run: |
+          echo "## Drift detection (informational)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f drift_body.md ]; then
+            cat drift_body.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # =================================================================
+  # Schedule/manual mode — opens the auto-drift PR. Branch push +
+  # PR creation both require write permissions.
+  # =================================================================
+  drift-write:
+    # Public-mirror gate: scheduled runs only fire on the operator repo
+    # (KustoKing/SIEMContent). The mirror (SecM8/ContentOps) has no
+    # tenant secrets so a scheduled run there has nothing to do; this
+    # check prevents the mirror's daily failures from filing pipeline-
+    # alert issues. Manual `workflow_dispatch` still runs everywhere and
+    # still fails loudly on the first Azure step on the mirror, per
+    # the public-sync.yml posture ("visible failure, no destructive
+    # side-effect"). See the mirror's GH Issues 1-4 for the noise this
+    # closes off.
+    if: github.event_name != 'pull_request' && (github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: automation
+    # Per-job least-privilege: only the write path gets contents:write.
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+      # Phase 5.5b — needed by notify-workflow-failure action so a
+      # scheduled drift failure opens (or comments on) a pipeline-alert
+      # issue instead of going silent in the Actions tab.
+      issues: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Drift setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Run drift detection (write mode)
+        id: drift
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          contentops drift \
+            --path detections \
+            --role prod \
+            --report drift_report.json \
+            --write \
+            --no-exit-on-drift
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Fail on hard error
+        if: steps.drift.outcome == 'failure'
+        run: |
+          echo "contentops drift failed"
+          exit 1
+
+      - name: Detect tree changes
+        id: tree
+        run: |
+          if [ -z "$(git status --porcelain -- detections)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render PR body and labels
+        if: steps.tree.outputs.changed == 'true'
+        run: |
+          contentops drift-pr-body \
+            --report drift_report.json \
+            --path detections \
+            --out drift_body.md \
+            --labels-out drift_labels.txt
+          echo "Body:"; cat drift_body.md
+
+      - name: Close superseded auto-drift PRs
+        if: steps.tree.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -t PRS < <(gh pr list \
+            --search "head:drift/auto- is:open" \
+            --json number \
+            --jq '.[].number' || true)
+          for n in "${PRS[@]:-}"; do
+            gh pr close "$n" --comment "Superseded by a fresher drift run." || true
+          done
+
+      - name: Open PR if tree changed
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: detections
+          branch: drift/auto-${{ github.run_id }}
+          commit-message: "chore(drift): import drift from live tenant"
+          title: "chore(drift): import drift from live tenant (run ${{ github.run_id }})"
+          body-path: drift_body.md
+          labels: drift,automated
+          add-paths: "detections/**"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply per-asset-kind labels
+        if: steps.auto-pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTO_PR_NUMBER: ${{ steps.auto-pr.outputs.pull-request-number }}
+        run: |
+          # `read` returns 1 at EOF when the file has no trailing newline
+          # (drift_labels.txt is `","`.join(...) with none). Under the
+          # default `bash -e`, that non-zero aborts the whole step before
+          # any label is applied — the failure that filed issue #292.
+          # `|| true` keeps the already-populated array and lets the loop run.
+          IFS=',' read -ra LBLS < drift_labels.txt || true
+          for lbl in "${LBLS[@]}"; do
+            if [ -n "$lbl" ]; then
+              gh pr edit "$AUTO_PR_NUMBER" --add-label "$lbl" || true
+            fi
+          done
+
+      - name: Notify on scheduled failure
+        # Schedule failures (daily 06:00 UTC drift run) are load-bearing
+        # silence: drift state stops being captured. PR / dispatch
+        # failures are operator-driven, not load-bearing.
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,93 @@
+# =============================================================================
+# SENTINEL DETECTION RULE — REFERENCE TEMPLATE
+# API: Microsoft.SecurityInsights/alertRules (2025-07-01-preview)
+#
+# This is a reference document. Copy it, fill in what you need, delete the rest.
+# Only include fields that have actual values — the pipeline handles defaults.
+# =============================================================================
+
+id: ""                            # Slug ID (required, e.g., sentinel-brute-force-001)
+version: "1.0.0"                  # Semver (required)
+platform: sentinel                # Fixed value
+status: experimental              # experimental | test | production | deprecated
+
+sentinel:
+  kind: Scheduled                 # Scheduled | NRT
+  displayName: ""                 # Required
+  description: ""
+  enabled: true
+
+  alertRuleTemplateName: ""       # GUID — only if created from built-in template
+  templateVersion: ""             # a.b.c — only if tracking template version
+
+  severity: Medium                # High | Medium | Low | Informational
+
+  query: |
+    // KQL query
+
+  # --- Scheduled ONLY (delete for NRT) ---
+  queryFrequency: PT5M            # ISO 8601
+  queryPeriod: PT1H               # ISO 8601
+  triggerOperator: GreaterThan    # GreaterThan | LessThan | Equal | NotEqual
+  triggerThreshold: 0
+
+  suppressionEnabled: false
+  suppressionDuration: PT1H
+
+  # --- MITRE ATT&CK ---
+  tactics: []
+  # Reconnaissance      ResourceDevelopment  InitialAccess
+  # Execution           Persistence          PrivilegeEscalation
+  # DefenseEvasion      CredentialAccess     Discovery
+  # LateralMovement     Collection           CommandAndControl
+  # Exfiltration        Impact               PreAttack
+  # ImpairProcessControl                     InhibitResponseFunction
+  techniques: []                  # T1110, T1059
+  subTechniques: []               # T1110.001, T1059.001
+
+  # --- Entity Mappings (max 5, each max 3 field mappings) ---
+  entityMappings:
+    - entityType: Account         # Account   Host       IP         File
+      fieldMappings:              # FileHash  Process    URL        DNS
+        - identifier: Name       # AzureResource        CloudApplication
+          columnName: ""          # Mailbox   MailCluster MailMessage
+                                  # SubmissionMail       SecurityGroup
+                                  # Malware   RegistryKey RegistryValue
+
+  # --- Sentinel Entity Mappings (pre-built entity JSON column) ---
+  sentinelEntitiesMappings:
+    - columnName: Entities
+
+  # --- Custom Details ---
+  customDetails:
+    DetailName: QueryColumnName
+
+  # --- Alert Details Override ---
+  alertDetailsOverride:
+    alertDisplayNameFormat: "{{ColumnName}}"
+    alertDescriptionFormat: "{{ColumnName}}"
+    alertSeverityColumnName: ""
+    alertTacticsColumnName: ""
+    alertDynamicProperties:
+      - alertProperty: ""         # AlertLink        ConfidenceLevel
+        value: ""                 # ConfidenceScore  ExtendedLinks
+                                  # ProductName      ProviderName
+                                  # ProductComponentName
+                                  # RemediationSteps Techniques
+                                  # SubTechniques
+
+  # --- Event Grouping ---
+  eventGroupingSettings:
+    aggregationKind: SingleAlert  # SingleAlert | AlertPerResult
+
+  # --- Incident Configuration ---
+  incidentConfiguration:
+    createIncident: true
+    groupingConfiguration:
+      enabled: false
+      reopenClosedIncident: false
+      lookbackDuration: PT5H
+      matchingMethod: AllEntities # AllEntities | AnyAlert | Selected
+      groupByEntities: []         # Entity types (when Selected)
+      groupByAlertDetails: []     # DisplayName | Severity (when Selected)
+      groupByCustomDetails: []    # customDetails keys (when Selected)

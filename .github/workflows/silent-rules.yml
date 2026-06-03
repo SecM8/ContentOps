@@ -1,0 +1,127 @@
+name: Silent rules report
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      since_days:
+        description: "Lookback window in days."
+        required: false
+        default: "30"
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  # Phase 5.5b — for notify-workflow-failure action.
+  issues: write
+
+concurrency:
+  group: silent-rules
+  cancel-in-progress: false
+
+jobs:
+  silent-rules:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      PIPELINE_WORKSPACE_ID: ${{ vars.PIPELINE_WORKSPACE_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Run silent-rules telemetry report
+        # Route `inputs.since_days` through an env var so the shell
+        # sees it as a regular string. Direct `${{ inputs.since_days }}`
+        # substitution would re-evaluate the operator-supplied text at
+        # the shell parser BEFORE the run line runs — classic GHA
+        # expression-injection vector. `automation` environment has
+        # no required reviewers, so any repo writer can dispatch this.
+        env:
+          INPUT_SINCE_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.since_days || '30' }}
+        run: |
+          set -euo pipefail
+          SINCE_DAYS="$INPUT_SINCE_DAYS"
+          contentops silent-rules \
+            --since "$SINCE_DAYS" \
+            --format csv \
+            --out silent-rules.csv
+          contentops silent-rules \
+            --since "$SINCE_DAYS" \
+            --format json \
+            --out silent-rules.json
+          {
+            echo "## Silent rules report"
+            echo ""
+            echo "- Lookback: \`${SINCE_DAYS} day(s)\`"
+            echo "- CSV: \`silent-rules.csv\`"
+            echo "- JSON: \`silent-rules.json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run auto-disabled rules report
+        # NVISO Part 7 companion to silent-rules. Surfaces rules
+        # disabled by Sentinel itself (consecutive failures, ingest
+        # schema breaks) plus rules with recent query failures heading
+        # toward auto-disable. 7-day window is shorter than silent-rules
+        # (30d) because auto-disable is a sharper, more urgent signal.
+        # Prerequisite: SentinelHealth diagnostic data collection must
+        # be enabled on the workspace; see auto_disabled.py docstring.
+        # No --require-data here — schedule runs are advisory; manual
+        # operators can add the flag via workflow_dispatch when they
+        # want to verify the diagnostic is on.
+        run: |
+          set -euo pipefail
+          contentops auto-disabled-rules \
+            --since 7 \
+            --format csv \
+            --out auto-disabled-rules.csv
+          contentops auto-disabled-rules \
+            --since 7 \
+            --format json \
+            --out auto-disabled-rules.json
+          {
+            echo ""
+            echo "## Auto-disabled rules report"
+            echo ""
+            echo "- Lookback: \`7 day(s)\`"
+            echo "- CSV: \`auto-disabled-rules.csv\`"
+            echo "- JSON: \`auto-disabled-rules.json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload silent-rules report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: silent-rules-${{ github.run_id }}
+          path: |
+            silent-rules.csv
+            silent-rules.json
+            auto-disabled-rules.csv
+            auto-disabled-rules.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Notify on scheduled failure
+        # Only the WEEKLY (schedule) run notifies. Manual dispatches and
+        # the rare ad-hoc PR-mode trigger are operator-driven and the
+        # operator is already watching the run.
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

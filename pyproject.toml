@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contentops"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    # SOURCE OF TRUTH for runtime dependencies. ``requirements.txt`` is
+    # a mirror used by GitHub Actions for `pip install -r` and CI pip
+    # cache reuse; it MUST carry the same pinned versions as this list.
+    # Renovate updates both files together. When editing by hand, edit
+    # both — a CONTRIBUTING.md note + the requirements.txt banner spell
+    # out the policy. The duplication is intentional (pyproject vs
+    # requirements is two ecosystems' conventions); the canonicality
+    # lives here.
+    "azure-identity==1.25.3",
+    "httpx==0.28.1",
+    "pydantic==2.13.3",
+    "pyyaml==6.0.3",
+    "click==8.3.3",
+    "python-dotenv==1.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Dev tools are pinned to floor versions ("X or newer") rather than
+    # to exact versions: contributors with newer pytest / mypy / ruff
+    # checkouts should not be forced to downgrade. Renovate still
+    # surfaces majors.
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "respx>=0.21",
+    # ``pytest-xdist`` parallelises the suite across CPU cores via
+    # worker processes -- ~40% CI time saving on the ~900-test suite.
+    # The autouse fixtures in ``tests/conftest.py`` already isolate
+    # env vars + handler registry per test, and worker processes have
+    # separate Python interpreters so global state is naturally
+    # contained.
+    "pytest-xdist>=3.6",
+]
+
+[project.scripts]
+contentops = "contentops.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["contentops*"]
+exclude = ["tests*", "scripts*", "docs*"]
+
+[tool.setuptools.package-data]
+"contentops.templates" = ["*.tmpl"]
+"contentops.coverage.data" = ["*.json"]

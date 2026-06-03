@@ -1,0 +1,78 @@
+name: DCO check
+
+# Verifies that every commit in a pull request carries a
+# `Signed-off-by:` trailer matching the commit author. See
+# https://developercertificate.org/ for the certification.
+#
+# Bypassing the DCO is not supported — if a commit is missing the
+# sign-off, rebase locally with `git commit --amend --signoff` (or
+# `git rebase --signoff main`), force-push the branch, and re-run the
+# check.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+concurrency:
+  group: dco-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR (full history)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify Signed-off-by trailer on every commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          # Skip DCO for well-known automation accounts. Dependabot and
+          # Renovate do not add Signed-off-by trailers by default; the
+          # gain from forcing them through DCO is near-zero because the
+          # bot author is well-known and the contribution licence is
+          # implicit (the bot ships under the same Apache-2.0 terms).
+          case "$PR_AUTHOR" in
+            dependabot|renovate|github-actions|\
+            "dependabot[bot]"|"renovate[bot]"|"github-actions[bot]"|\
+            contentops-mirror|contentops-bot|siemcontent-bot)
+              echo "::notice::PR author is automation (\`$PR_AUTHOR\`); skipping DCO check."
+              exit 0
+              ;;
+          esac
+          missing=0
+          # Iterate every commit reachable from HEAD but not BASE.
+          # Merge commits are skipped (they inherit sign-off from parents).
+          for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            author="$(git log -1 --format='%an <%ae>' "$sha")"
+            trailer="$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | head -1)"
+            if [ -z "$trailer" ]; then
+              echo "::error::Commit $sha by $author is missing a Signed-off-by trailer."
+              missing=$((missing + 1))
+              continue
+            fi
+            if [ "$trailer" != "$author" ]; then
+              echo "::warning::Commit $sha sign-off ($trailer) does not match author ($author)."
+              # Warn but do not fail — common when contributors use different
+              # GitHub email / git email but it is still a valid DCO.
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo ""
+            echo "Add the trailer with: git commit --amend --signoff"
+            echo "Or rebase the whole branch: git rebase --signoff $BASE_SHA"
+            exit 1
+          fi
+          echo "All commits carry a Signed-off-by trailer."

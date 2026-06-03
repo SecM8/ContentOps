@@ -1,0 +1,157 @@
+name: E2E capability tests
+
+# End-to-end CLI capability matrix. Two jobs:
+#   * mocked  — runs on every PR that touches the CLI surface. No
+#               OIDC, no secrets; uses config/tenant.yml.example to
+#               satisfy the loader (synthetic null GUIDs).
+#   * live    — runs only on workflow_dispatch with mode=live. Uses
+#               pipeline-setup for OIDC + the real TENANT_CONFIG_YAML
+#               secret and targets the integration workspace.
+
+on:
+  pull_request:
+    paths:
+      - 'contentops/**'
+      - 'tests/e2e/**'
+      - 'scripts/run-capability-tests.ps1'
+      - 'pyproject.toml'
+      - '.github/workflows/e2e-capability-tests.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution mode (mocked or live)'
+        required: true
+        default: 'mocked'
+        type: choice
+        options:
+          - mocked
+          - live
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mocked:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'mocked')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pytest pytest-mock respx pytest-xdist
+          pip install -e . --no-deps
+
+      - name: Stub tenant.yml from example
+        # No tenant secret available on PR runs (and shouldn't be —
+        # forks must work). The .example file carries null GUIDs that
+        # satisfy the schema; the e2e sandbox writes its own tenant.yml
+        # into a tmpdir so this file is only used pre-sandbox.
+        run: cp config/tenant.yml.example config/tenant.yml
+
+      - name: Run e2e capability matrix (mocked)
+        env:
+          RUN_E2E: '1'
+        run: |
+          pytest tests/e2e/test_full_capability_matrix.py \
+            --mode=mocked \
+            --e2e-json=e2e-results.json \
+            -q -p no:cacheprovider
+
+      - name: Upload e2e results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: e2e-results-mocked
+          path: e2e-results.json
+          if-no-files-found: warn
+
+  live:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'live'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: integration
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PIPELINE_ENV: integration
+    steps:
+      # pipeline-setup is a LOCAL composite action — it must be on disk
+      # before it can be referenced, so check out first (the `mocked` job
+      # and deploy.yml do the same). Without this the run fails with
+      # "Can't find 'action.yml' ... Did you forget to run actions/checkout
+      # before running your local action?".
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Materialise tenant.yml + detect integration workspace
+        id: detect
+        env:
+          TENANT_CONFIG_YAML: ${{ secrets.TENANT_CONFIG_YAML }}
+        run: |
+          # Write tenant.yml (gitignored) from the secret so we can inspect it
+          # BEFORE pipeline-setup runs OIDC against role=integration. A tenant
+          # with no role: integration workspace has no integration environment
+          # to run the live suite against — skip gracefully (green) rather than
+          # fail. Matches integration-deploy.yml + the "no integration env must
+          # never fail the pipeline" rule. `|| echo false` keeps a yaml/parse
+          # hiccup from failing the job (it just skips).
+          if [ ! -f config/tenant.yml ] && [ -n "${TENANT_CONFIG_YAML:-}" ]; then
+            printf '%s' "$TENANT_CONFIG_YAML" > config/tenant.yml
+          fi
+          present=false
+          if [ -f config/tenant.yml ]; then
+            present=$(python -c "import yaml; t=yaml.safe_load(open('config/tenant.yml')).get('tenant',{}); print('true' if [w for w in (t.get('sentinelWorkspaces') or []) if w.get('role')=='integration'] else 'false')" || echo false)
+          fi
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
+      - name: Skip — no integration workspace configured
+        if: steps.detect.outputs.present != 'true'
+        run: |
+          echo "::notice::No Sentinel workspace with role=integration in tenant.yml — skipping the live e2e suite (no integration environment to test against)."
+          {
+            echo "## E2E capability tests (live): skipped"
+            echo ""
+            echo "tenant.yml has no \`role: integration\` workspace, so there is no integration environment to run the live matrix against."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: ./.github/actions/pipeline-setup
+        if: steps.detect.outputs.present == 'true'
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          extra-pip-packages: 'pytest pytest-mock respx pytest-xdist'
+          role: integration
+
+      - name: Run e2e capability matrix (live)
+        if: steps.detect.outputs.present == 'true'
+        env:
+          RUN_E2E: '1'
+          RUN_LIVE_TESTS: '1'
+          INTEGRATION_SUBSCRIPTION_ID: ${{ secrets.INTEGRATION_SUBSCRIPTION_ID }}
+          INTEGRATION_RESOURCE_GROUP: ${{ secrets.INTEGRATION_RESOURCE_GROUP }}
+          INTEGRATION_WORKSPACE_NAME: ${{ secrets.INTEGRATION_WORKSPACE_NAME }}
+        run: |
+          pytest tests/e2e/test_full_capability_matrix.py \
+            --mode=live \
+            --e2e-json=e2e-results.json \
+            -q -p no:cacheprovider
+
+      - name: Upload e2e results
+        if: always() && steps.detect.outputs.present == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: e2e-results-live
+          path: e2e-results.json
+          if-no-files-found: warn

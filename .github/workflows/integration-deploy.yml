@@ -1,0 +1,224 @@
+name: Deploy to integration
+
+# Deploy detection content to the integration Sentinel workspace.
+# Two trigger paths:
+#
+#   1. pull_request (paths: detections/**) — auto-fires on every PR
+#      that touches a detection. Restricts the apply to YAML changed
+#      vs the base branch, so we only test what the PR actually moves.
+#      The point: catch broken KQL / wrong column refs / authoring
+#      mistakes BEFORE they merge to main and hit prod (DESIGN §6).
+#
+#   2. workflow_dispatch — manual run for "test ALL of detections/
+#      against integration." Useful after a refactor, after merging a
+#      large reorg, before promoting to prod, or when verifying the
+#      integration workspace has parity with the repo. Defaults to
+#      dry-run so a single click is preview, not deploy.
+#
+# Both paths no-op gracefully when tenant.yml has no workspace with
+# role=integration — so a tenant that doesn't define one doesn't fail
+# CI and the manual button reports a clean "skipped" instead of an
+# auth error.
+
+on:
+  pull_request:
+    paths: ['detections/**']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run (no API writes). Default true — uncheck to actually deploy."
+        type: boolean
+        default: true
+      asset:
+        description: "Optional: restrict to one asset kind (e.g. sentinel_analytic)."
+        type: string
+        default: ""
+      changed_since:
+        description: "Optional: only apply YAML that changed vs this ref (e.g. origin/main). Empty = apply all."
+        type: string
+        default: ""
+      fail_on_rule_error:
+        description: "Fail the workflow if any rule fails to deploy. Default false — per-rule errors are warnings, not blockers (the integration workspace is a smoke test, not a hard gate)."
+        type: boolean
+        default: false
+      workspace:
+        # Phase 8: explicit workspace targeting. When tenant.yml has
+        # N>1 ``role: integration`` workspaces, this lets the
+        # operator pin one by name. Empty (default) = use ``--role
+        # integration`` (iterate every integration workspace).
+        # Workflow_dispatch only -- pull_request runs always use
+        # ``--role integration``.
+        description: "Optional Sentinel workspace name. Empty = all integration workspaces."
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+# Serialise per-PR (auto fires) and per-run-id (manual). cancel-in-progress
+# is false so an in-flight apply — which writes the audit JSONL hash chain —
+# is never killed mid-write (a cancelled apply could leave a half-written
+# audit record). This matches the integration retry path (retry-failed.yml),
+# which also uses cancel-in-progress: false. The group stays per-PR /
+# per-run-id, so unrelated PRs and manual runs still proceed in parallel.
+concurrency:
+  group: integration-deploy-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  integration-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Matches the GitHub Environment named `integration` AND the federated
+    # credential subject `repo:KustoKing/SIEMContent:environment:integration`
+    # on the App Registration. See deploy.yml for the full rationale.
+    environment: integration
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0  # need merge-base for --changed-since
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt && pip install -e .
+      - name: Materialise tenant configuration
+        # `config/tenant.yml` is gitignored — write it from the
+        # TENANT_CONFIG_YAML repository secret. Skipped if the file
+        # already exists in the workspace (local-dev path).
+        env:
+          TENANT_CONFIG_YAML: ${{ secrets.TENANT_CONFIG_YAML }}
+        run: |
+          set -euo pipefail
+          if [ ! -f config/tenant.yml ]; then
+            if [ -n "${TENANT_CONFIG_YAML:-}" ]; then
+              printf '%s' "$TENANT_CONFIG_YAML" > config/tenant.yml
+              echo "::notice::Wrote config/tenant.yml from TENANT_CONFIG_YAML secret."
+            else
+              echo "::error::TENANT_CONFIG_YAML secret is not set and config/tenant.yml is missing."
+              exit 1
+            fi
+          fi
+
+      - name: Detect integration workspace
+        id: detect
+        run: |
+          # Exit cleanly with `present=false` when no integration workspace
+          # is configured. Subsequent steps short-circuit on that flag.
+          present=$(python -c "import yaml; \
+            t = yaml.safe_load(open('config/tenant.yml'))['tenant']; \
+            ws = [w for w in t.get('sentinelWorkspaces', []) if w['role']=='integration']; \
+            print('true' if ws else 'false')")
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+          if [ "$present" = "true" ]; then
+            sub=$(python -c "import yaml; \
+              t = yaml.safe_load(open('config/tenant.yml'))['tenant']; \
+              ws = next(w for w in t['sentinelWorkspaces'] if w['role']=='integration'); \
+              print(ws['subscriptionId'])")
+            echo "::add-mask::${sub}"
+            echo "subscriptionId=$sub" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip — no integration workspace configured
+        if: steps.detect.outputs.present != 'true'
+        run: |
+          echo "::notice::No Sentinel workspace with role=integration in tenant.yml — skipping integration deploy."
+          echo "## Integration deploy: skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "tenant.yml has no \`role: integration\` workspace." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43  # v3.0.0
+        if: steps.detect.outputs.present == 'true'
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ steps.detect.outputs.subscriptionId }}
+
+      - name: Apply detections to integration workspace
+        if: steps.detect.outputs.present == 'true'
+        # PR runs: --changed-since the PR base ref + --continue-on-error
+        # (a broken rule should NOT block a PR merge — integration is a
+        # smoke test, not a hard gate). Manual runs honour the
+        # workflow_dispatch inputs; default is also --continue-on-error
+        # unless the operator explicitly checks `fail_on_rule_error`.
+        #
+        # Route operator-supplied free-text inputs through env vars
+        # (INPUT_*) before the shell sees them -- direct
+        # ``${{ inputs.* }}`` interpolation would substitute the
+        # string into the shell line BEFORE the parser ran (classic
+        # GitHub Actions expression-injection vector).
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          INPUT_CHANGED_SINCE: ${{ inputs.changed_since }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_ASSET: ${{ inputs.asset }}
+          INPUT_FAIL_ON_RULE_ERROR: ${{ inputs.fail_on_rule_error }}
+          INPUT_WORKSPACE: ${{ inputs.workspace }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # Phase 8: workflow_dispatch with an explicit workspace
+          # drops ``--role integration`` (CLI mutex). PR runs always
+          # use ``--role integration`` -- the workspace input is
+          # workflow_dispatch only.
+          if [ "$EVENT_NAME" != "pull_request" ] && [ -n "$INPUT_WORKSPACE" ]; then
+            ARGS=( "--workspace" "$INPUT_WORKSPACE" "--skip-deps-check" )
+          else
+            ARGS=( "--role" "integration" "--skip-deps-check" )
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            ARGS+=( "--changed-since" "origin/$BASE_REF" )
+            ARGS+=( "--continue-on-error" )
+          else
+            if [ -n "$INPUT_CHANGED_SINCE" ]; then
+              ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )
+            fi
+            if [ "$INPUT_DRY_RUN" = "true" ]; then
+              ARGS+=( "--dry-run" )
+            fi
+            if [ -n "$INPUT_ASSET" ]; then
+              ARGS+=( "--asset" "$INPUT_ASSET" )
+            fi
+            if [ "$INPUT_FAIL_ON_RULE_ERROR" != "true" ]; then
+              ARGS+=( "--continue-on-error" )
+            fi
+          fi
+
+          echo "Running: contentops.cli apply ${ARGS[*]}"
+          contentops apply "${ARGS[@]}"
+
+      - name: Step summary
+        if: always() && steps.detect.outputs.present == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_ASSET: ${{ inputs.asset }}
+          INPUT_CHANGED_SINCE: ${{ inputs.changed_since }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          {
+            echo "## Integration deploy"
+            echo ""
+            echo "- Trigger: \`$EVENT_NAME\`"
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "- Dry-run: \`$INPUT_DRY_RUN\`"
+              echo "- Asset filter: \`${INPUT_ASSET:-(none)}\`"
+              echo "- Changed-since: \`${INPUT_CHANGED_SINCE:-(none -- applied full tree)}\`"
+            else
+              echo "- Base ref: \`origin/$BASE_REF\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit JSONL artefact
+        if: always() && steps.detect.outputs.present == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: integration-audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -1,0 +1,12 @@
+# Enforce LF line endings on cross-platform source + workflow files.
+#
+# Eliminates the LF→CRLF auto-conversion warnings Git emits on Windows
+# checkouts when adding new files under pipeline/, tests/, .github/,
+# etc. Existing committed files are NOT renormalised — this only
+# applies going forward.
+
+*.py    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+*.sh    text eol=lf

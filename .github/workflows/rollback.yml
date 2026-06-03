@@ -1,0 +1,198 @@
+name: Rollback detection content to a SHA
+
+# Manual break-glass workflow that runs `contentops rollback <sha>` against
+# a target env — the gated counterpart to the CLI-only `rollback` command.
+# It re-applies the detection content as it existed at <sha> (incident
+# recovery / undo a bad deploy). Always starts in dry-run; the operator
+# must uncheck dry-run AND type CONFIRM to actually write. Environment
+# protection on the `production` env adds reviewer-gated approval before
+# any prod rollback, and the concurrency group is shared with deploy.yml
+# (`deploy-<env>`) so a rollback can never race a deploy of the same env.
+#
+# Posts the rollback plan as the run summary and uploads the audit JSONL so
+# every replayed write is traceable to a commit + reviewer.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Git SHA (or ref) to roll the detection content back to."
+        required: true
+        type: string
+      env:
+        # type: choice locks operators to the known tenant env slugs.
+        # `environment: ${{ inputs.env }}` below references the GitHub
+        # Environment of the same name; a free-text value could name a
+        # non-existent env, which on some GitHub configs silently bypasses
+        # the required-reviewer protection rule on production.
+        description: "Tenant env slug (selects config/tenant.<env>.yml)."
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - integration
+          - dev
+      asset:
+        description: "Optional: restrict rollback to a single asset kind (strongly recommended)."
+        required: false
+        type: string
+      rule_id:
+        description: "Optional: restrict rollback to a single envelope id (narrow, one-rule recovery)."
+        required: false
+        type: string
+      workspace:
+        description: "Optional Sentinel workspace name. Empty = resolve from --role (the env slug)."
+        required: false
+        default: ""
+        type: string
+      max_apply:
+        description: "Fail-closed if the rollback scope exceeds this many assets (blast-radius brake). Default 25."
+        required: true
+        default: "25"
+        type: string
+      dry_run:
+        description: "Dry-run mode (default true). Uncheck plus type CONFIRM to actually apply."
+        required: true
+        default: true
+        type: boolean
+      confirm:
+        description: "Type CONFIRM to allow a non-dry-run rollback. Anything else aborts."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  id-token: write
+  # state sync pushes refs/heads/state/<env> after a non-dry-run rollback so
+  # the next workflow starts from the rolled-back state.
+  contents: write
+
+# Share deploy.yml's concurrency group (deploy-prod / deploy-<env>) so a
+# rollback queues behind — and never races — a deploy of the same env.
+concurrency:
+  group: deploy-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The GitHub Environment name must match the federated-credential
+    # subject the App Registration was issued, NOT the tenant.yml --role
+    # slug. Convention (matching deploy.yml + prune.yml): the prod role
+    # binds to the `production` Environment; integration/dev match their
+    # Environment names directly.
+    environment: ${{ fromJSON('{"prod":"production","integration":"integration","dev":"dev"}')[inputs.env] }}
+    env:
+      PIPELINE_ENV: ${{ inputs.env }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # Full history so `contentops rollback` can `git show <sha>:...`
+          # the detection content at the target SHA.
+          fetch-depth: 0
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          tenant-config-env-yaml: ${{ secrets.TENANT_CONFIG_ENV_YAML }}
+          role: ${{ inputs.env }}
+
+      - name: Refuse non-dry-run without CONFIRM
+        if: ${{ inputs.dry_run == false && inputs.confirm != 'CONFIRM' }}
+        run: |
+          echo "::error::Refusing to run with dry_run=false and confirm != 'CONFIRM'."
+          echo "Re-run the workflow with confirm=CONFIRM if you actually intend to apply the rollback."
+          exit 1
+
+      - name: Pull state before rollback
+        run: |
+          contentops state sync pull || {
+            echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
+          }
+
+      - name: Run rollback
+        id: rollback
+        # Route operator-supplied free-text inputs through env vars so the
+        # shell sees them as plain strings, not via expression substitution
+        # (expression substitution re-evaluates at the shell parser before
+        # the run line — a classic GHA expression-injection vector).
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_ASSET: ${{ inputs.asset }}
+          INPUT_RULE_ID: ${{ inputs.rule_id }}
+          INPUT_WORKSPACE: ${{ inputs.workspace }}
+          INPUT_MAX_APPLY: ${{ inputs.max_apply }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          ARGS=("$INPUT_SHA" "--max-apply" "$INPUT_MAX_APPLY")
+          if [ -n "$INPUT_WORKSPACE" ]; then
+            ARGS+=("--workspace" "$INPUT_WORKSPACE")
+          else
+            ARGS+=("--role" "$PIPELINE_ENV")
+          fi
+          if [ -n "$INPUT_ASSET" ]; then
+            ARGS+=("--asset" "$INPUT_ASSET")
+          fi
+          if [ -n "$INPUT_RULE_ID" ]; then
+            ARGS+=("--rule-id" "$INPUT_RULE_ID")
+          fi
+          if [ "$INPUT_DRY_RUN" = "false" ]; then
+            ARGS+=("--no-dry-run" "--yes")
+          fi
+          contentops rollback "${ARGS[@]}" | tee rollback.log
+
+      - name: Push state after rollback
+        # Only push when we actually applied (and so wrote state.json).
+        if: ${{ inputs.dry_run == false && inputs.confirm == 'CONFIRM' }}
+        run: |
+          set -euo pipefail
+          if [ -f state/state.json ]; then
+            contentops state sync push
+          else
+            echo "::notice::No state/state.json written; skipping state sync push."
+          fi
+
+      - name: Step summary
+        if: always()
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_ENV: ${{ inputs.env }}
+          INPUT_ASSET: ${{ inputs.asset }}
+          INPUT_RULE_ID: ${{ inputs.rule_id }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## Rollback"
+            echo ""
+            echo "- target SHA: \`$INPUT_SHA\`"
+            echo "- env: \`$INPUT_ENV\`"
+            echo "- asset: \`${INPUT_ASSET:-(all)}\`"
+            echo "- rule-id: \`${INPUT_RULE_ID:-(all)}\`"
+            echo "- dry-run: \`$INPUT_DRY_RUN\`"
+            if [ -f rollback.log ]; then
+              echo ""
+              echo "### Output"
+              echo '```'
+              cat rollback.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit JSONL
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: rollback-audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: ignore
+          retention-days: 90

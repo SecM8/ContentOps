@@ -1,0 +1,99 @@
+name: ATT&CK matrix refresh
+
+# Weekly + on-demand refresh of the bundled MITRE ATT&CK Enterprise
+# matrix at `contentops/coverage/data/mitre_attack_full.json` from MITRE's
+# maintained STIX source (github.com/mitre-attack/attack-stix-data) via
+# `scripts/refresh_attack_matrix.py`.
+#
+# The coverage heatmap + `--out-badge` (coverage.extract) and
+# `coverage --gaps` (coverage.gaps) read the committed file at runtime
+# (offline — so locked-down adopters keep working); this workflow keeps it
+# from drifting. The generator normalises MITRE's non-Sentinel tactic
+# short-names (stealth / defense-impairment) back to the canonical
+# `DefenseEvasion`; tests/v2/test_attack_matrix_data.py hard-fails CI if a
+# refreshed file ever drifts off the canonical 14-tactic set.
+#
+# Cadence: Mondays 04:30 UTC (clear of public-sync 03:00, kql-schemas 03:30,
+# status-refresh 04:00). No Azure — fetches only public MITRE data.
+
+on:
+  schedule:
+    - cron: '30 4 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # commit the refreshed matrix JSON
+  pull-requests: write     # open the refresh PR
+  issues: write            # notify-workflow-failure on scheduled failures
+
+concurrency:
+  group: attack-matrix-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml / kql-schemas-refresh.yml for the rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Refresh ATT&CK matrix from MITRE STIX
+        # stdlib-only generator (urllib + json); no pip install needed.
+        run: |
+          set -euo pipefail
+          python scripts/refresh_attack_matrix.py
+
+      - name: Open PR if the matrix changed
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: contentops/coverage/data/mitre_attack_full.json
+          branch: attack-matrix/auto-${{ github.run_id }}
+          commit-message: "chore(attack-matrix): refresh MITRE ATT&CK Enterprise matrix"
+          title: "chore(attack-matrix): refresh (run ${{ github.run_id }})"
+          body: |
+            Auto-opened by `.github/workflows/attack-matrix-refresh.yml`.
+
+            Pulls the enterprise-attack STIX bundle from
+            `mitre-attack/attack-stix-data` and regenerates
+            `contentops/coverage/data/mitre_attack_full.json` (tactics +
+            parent techniques + sub-techniques), normalising MITRE's
+            non-Sentinel tactic short-names back to the canonical
+            `DefenseEvasion`. Review the tactic/technique counts in the diff;
+            `tests/v2/test_attack_matrix_data.py` gates canonical tactics.
+          labels: attack-matrix,automated
+          add-paths: |
+            contentops/coverage/data/mitre_attack_full.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Step summary
+        if: always()
+        run: |
+          if [ "${{ steps.auto-pr.outputs.changed }}" = "true" ]; then
+            {
+              echo "## ATT&CK matrix — changes detected"
+              echo ""
+              echo '```'
+              git status --porcelain -- contentops/coverage/data/mitre_attack_full.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## ATT&CK matrix — no changes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Notify on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

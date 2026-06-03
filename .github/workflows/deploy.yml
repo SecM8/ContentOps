@@ -1,0 +1,410 @@
+name: Deploy to production
+
+on:
+  push:
+    branches: [main]
+    paths: ['detections/**']
+  # Manual escape hatch for retrying after a transient failure or
+  # deploying a hotfix without a merge. Same `--role prod` semantics.
+  workflow_dispatch:
+    inputs:
+      changed_since:
+        description: "Git ref to diff against. Empty = full apply (dangerous; touches every detection). Default empty."
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Run with --dry-run (no API writes). Default false."
+        required: false
+        default: false
+        type: boolean
+      workspace:
+        # Phase 8: explicit workspace targeting. When tenant.yml has
+        # N>1 ``role: prod`` workspaces, this input lets the operator
+        # pin one specific workspace by name. Empty (default) =
+        # iterate every prod workspace via ``--role prod``. When set,
+        # the CLI's ``--role`` / ``--workspace`` mutex applies (the
+        # workflow drops ``--role prod`` from the args).
+        description: "Optional Sentinel workspace name (e.g. law-prod-eu). Empty = all prod workspaces."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  id-token: write
+  # state sync pushes refs/heads/state/<tenant-name> after apply so the
+  # next runner starts from the last successful production state.
+  contents: write
+
+# Serialise prod deploys — two simultaneous merges into main must not
+# race against the same Sentinel workspace. cancel-in-progress: false so
+# the *first* deploy completes; the next one queues.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  # Safety gate: skip the deploy when the push that triggered the
+  # workflow is a bot-generated commit from `collect` or `drift`
+  # auto-PRs. Those workflows mirror tenant state INTO the repo;
+  # deploying them BACK to prod is a no-op at best and an audit
+  # liability at worst (every collected rule gets re-PUT with the
+  # App Reg as last-modified-by). Manual workflow_dispatch always
+  # proceeds (no gate).
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 2
+      - id: check
+        name: Decide whether to proceed
+        # CI-2: even though ``github.event_name`` is a static enum
+        # (not operator-controlled), pass it through an env var to
+        # match the env-var-binding pattern used in the deploy step
+        # below. Reviewer cognitive load benefits from consistency.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — proceeding."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # On push, inspect the head commit. Bot-authored commits with
+          # `chore(collect):` / `chore(drift):` subjects mirror tenant
+          # state into the repo and must NOT trigger a deploy.
+          subj=$(git log -1 --format=%s)
+          author_email=$(git log -1 --format=%ae)
+          merged_branch=$(git log -1 --format=%s | sed -nE 's|^Merge pull request #[0-9]+ from [^/]+/(.+)$|\1|p')
+          echo "Head commit subject: $subj"
+          echo "Head commit author : $author_email"
+          echo "Merged branch (if any): ${merged_branch:-(not a merge commit)}"
+          if echo "$subj" | grep -qE '^chore\((collect|drift)\):'; then
+            echo "::notice::Head commit is a $subj. Skipping prod deploy."
+            {
+              echo "## Deploy: skipped"
+              echo ""
+              echo "Head commit subject matches \`chore(collect|drift):\` — these are tenant-mirror commits and must not be deployed back to prod. Trigger manually via workflow_dispatch if you actually intend to apply this content."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Catch human-merged collect/drift PRs via the GitHub UI: the
+          # merge commit's subject is `Merge pull request #N from
+          # <owner>/<branch>` and the source branch starts with
+          # collect/ or drift/auto-. Without this check, merging an
+          # auto-generated tenant-mirror PR through the web UI sneaks
+          # past the `chore(collect|drift):` regex above (it only sees
+          # the merge commit's subject, not the squashed source commit).
+          case "$merged_branch" in
+            collect/*|drift/auto-*)
+              echo "::notice::Merge commit from $merged_branch — skipping prod deploy."
+              {
+                echo "## Deploy: skipped"
+                echo ""
+                echo "Head commit merges branch \`$merged_branch\`, which is a tenant-mirror branch. Re-applying its content to prod would be a no-op write that inflates the audit trail. Trigger manually via workflow_dispatch if you actually intend to apply this content."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          # Skip prod deploys for known bot authors (github-actions,
+          # dependabot, renovate). Quote the bracketed literals so the
+          # `case` glob treats `[bot]` as text, not a character class.
+          case "$author_email" in
+            "41898282+github-actions[bot]@users.noreply.github.com"|\
+            "49699333+dependabot[bot]@users.noreply.github.com"|\
+            "29139614+renovate[bot]@users.noreply.github.com")
+              echo "::notice::Head commit author is a bot ($author_email). Skipping prod deploy."
+              {
+                echo "## Deploy: skipped"
+                echo ""
+                echo "Head commit was authored by a bot (\`$author_email\`). Bot commits do not auto-trigger prod deploys; use workflow_dispatch if you intend to deploy."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          echo "Proceeding with deploy."
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Matches the GitHub Environment named `production` AND the federated
+    # credential subject `repo:KustoKing/SIEMContent:environment:production`
+    # on the App Registration. All three names must agree (the GitHub
+    # Environment, this `environment:` field, and the federated credential
+    # subject) or OIDC token exchange fails with AADSTS700213.
+    environment: production
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml.
+        # fetch-depth: 2 keeps the prior commit available for
+        # `--changed-since HEAD~1`. persist-credentials stays true
+        # because the later `contentops state sync push` step needs the
+        # GITHUB_TOKEN credential to update refs/heads/state/<env>.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          fetch-depth: '2'
+          persist-credentials: 'true'
+
+      - name: Pull durable state
+        run: |
+          set -euo pipefail
+          contentops state sync pull || {
+            echo "::notice::No remote state branch yet; starting from empty local state."
+          }
+
+      - name: Apply changed detections to prod workspace(s)
+        # --role prod targets every workspace tagged role=prod in
+        # tenant.yml. --changed-since restricts the apply set to YAML
+        # that moved vs the previous main commit (cuts ARM call volume
+        # by 90%+ on a typical deploy). On manual dispatch, the operator
+        # can override the diff target.
+        #
+        # ``${{ inputs.* }}`` substitutes the operator-supplied text
+        # BEFORE the shell parses the line -- a classic GitHub Actions
+        # expression-injection vector. Routing through env vars makes
+        # the value a regular shell string (no re-evaluation).
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          INPUT_CHANGED_SINCE: ${{ inputs.changed_since }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_WORKSPACE: ${{ inputs.workspace }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # Phase 8: when an explicit workspace is given, drop
+          # ``--role prod`` (the CLI mutex enforces one or the
+          # other). Default behaviour (empty workspace) is identical
+          # to before -- iterate every prod workspace.
+          if [ -n "$INPUT_WORKSPACE" ]; then
+            ARGS=( "--workspace" "$INPUT_WORKSPACE" "--skip-deps-check" )
+          else
+            ARGS=( "--role" "prod" "--skip-deps-check" )
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_CHANGED_SINCE" ]; then
+              ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )
+            fi
+            if [ "$INPUT_DRY_RUN" = "true" ]; then
+              ARGS+=( "--dry-run" )
+            fi
+          else
+            # github.event.before is the all-zero SHA on the first push to
+            # a branch (no prior commit to diff against). Diffing against
+            # it would break; fall back to a full apply in that case.
+            if [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$EVENT_BEFORE" ]; then
+              echo '::warning::EVENT_BEFORE is zero SHA (first push); running full apply'
+            else
+              ARGS+=( "--changed-since" "$EVENT_BEFORE" )
+            fi
+          fi
+          contentops apply "${ARGS[@]}" --json-report apply-report.json
+
+      - name: Post-deploy smoke
+        # DESIGN §15 promised: after each deploy, verify the actually-applied
+        # assets are healthy on the remote. Handlers already do an inline
+        # apply-verify (PUT → GET → content-hash compare) so the
+        # ``verified`` boolean in apply-report.json is the load-bearing
+        # signal. This step turns it into a workflow gate: any failed or
+        # un-verified item fails the job and surfaces the IDs in the step
+        # summary. We also re-verify the audit chain integrity to catch
+        # the (rare) case where a crash mid-batch left a chain break.
+        #
+        # ``dry-run`` deploys skip this — there's nothing to verify.
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          set -euo pipefail
+          if [ ! -f apply-report.json ]; then
+            echo "::error::apply-report.json missing — apply step did not run to completion."
+            exit 1
+          fi
+          # Use python rather than jq to avoid a transitive install. The
+          # JSON shape is the contract from contentops/apply_report.py.
+          python - <<'PY'
+          import json, sys, pathlib
+          rpt = json.loads(pathlib.Path("apply-report.json").read_text())
+          totals = rpt.get("totals", {})
+          failed = totals.get("failed", 0)
+          unverified = totals.get("unverified", 0)
+          results = rpt.get("results", [])
+          bad = [r for r in results if r.get("status") == "failed" or r.get("verified") is False]
+          summary_lines = [
+              "## Post-deploy smoke",
+              "",
+              f"- Total applied:  {totals.get('total', 0)}",
+              f"- Successful:     {totals.get('success', 0)}",
+              f"- Failed:         {failed}",
+              f"- Unverified:     {unverified}",
+          ]
+          if bad:
+              summary_lines += ["", "### Items needing attention", ""]
+              for r in bad[:25]:
+                  why = r.get("error") or (
+                      "verified=false" if r.get("verified") is False else r.get("status")
+                  )
+                  ptr = r.get("audit_pointer") or "(no audit pointer)"
+                  summary_lines.append(
+                      f"- `{r.get('asset')}/{r.get('id')}` — {why} ({ptr})"
+                  )
+              if len(bad) > 25:
+                  summary_lines.append(f"- ... and {len(bad) - 25} more")
+          step_summary = pathlib.Path(__import__("os").environ["GITHUB_STEP_SUMMARY"])
+          step_summary.write_text(
+              (step_summary.read_text() if step_summary.exists() else "")
+              + "\n".join(summary_lines) + "\n"
+          )
+          if failed or unverified:
+              sys.exit(1)
+          PY
+          # Audit chain integrity. ``contentops audit verify`` exits 0
+          # when every record's prev_hash + record_hash + timestamp is
+          # consistent across audit/*.jsonl. The weekly audit-verify
+          # workflow runs the same check on a schedule; this is the
+          # belt-and-braces version that fails the deploy if the apply
+          # itself somehow corrupted the chain.
+          contentops audit verify --root .
+
+      - name: Push durable state
+        # Gate on success() — a failed deploy must NOT overwrite the
+        # last-known-good state on refs/heads/state/<env>. Previously
+        # ``always()`` ran the push even when the apply or audit-verify
+        # step had failed, which let a half-broken apply mint a state
+        # snapshot that reflected the partial write. Now: state advances
+        # only when every preceding step (apply, post-deploy smoke,
+        # audit verify) passed.
+        if: success() && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
+        run: |
+          set -euo pipefail
+          if [ -f state/state.json ]; then
+            contentops state sync push
+          else
+            echo "::notice::No state/state.json written; skipping state sync push."
+          fi
+
+      - name: Upload apply JSON report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: apply-report-${{ github.run_id }}
+          path: apply-report.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload audit JSONL artefact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Compact, attestable summary of the audit-chain head for the separate
+      # attest-audit job below. Only on a clean, non-dry-run deploy (success()
+      # skips it if apply / smoke / audit-verify failed). The chain is
+      # artifact-only + per-run, so this is run provenance, not a cumulative
+      # ledger -- see SECURITY.md.
+      - name: Generate audit head summary
+        if: success() && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
+        run: |
+          set -euo pipefail
+          contentops audit head --root . --out audit-head.json
+
+      - name: Upload audit head summary
+        if: success() && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: audit-head-${{ github.run_id }}
+          path: audit-head.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Step summary
+        if: always()
+        env:
+          SUMMARY_EVENT: ${{ github.event_name }}
+          SUMMARY_SHA: ${{ github.sha }}
+          SUMMARY_BEFORE: ${{ github.event.before }}
+        run: |
+          {
+            echo "## Deploy summary"
+            echo ""
+            echo "- Trigger: \`${SUMMARY_EVENT}\`"
+            echo "- Commit: \`${SUMMARY_SHA}\`"
+            if [ "$SUMMARY_EVENT" = "push" ]; then
+              echo "- Compared against: \`${SUMMARY_BEFORE}\`"
+            fi
+            if [ -d audit ]; then
+              count=$(find audit -name '*.jsonl' | wc -l)
+              echo "- Audit files written: $count"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Notarise the audit-chain head with a GitHub Artifact Attestation
+  # (Sigstore-backed, recorded in the public Rekor transparency log).
+  # SEPARATE job so attestations:write never widens the prod apply job's
+  # token (which holds the Azure OIDC token + contents:write). It consumes
+  # the audit-head.json artifact the deploy job produced. Boundary: this
+  # proves "KustoKing CI run N produced this head hash" (provenance), NOT
+  # authenticity against an attacker who controls deploy.yml, and its
+  # durability is bounded by GitHub retention -- see SECURITY.md.
+  attest-audit:
+    needs: deploy
+    if: ${{ needs.deploy.result == 'success' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # mint the OIDC token Sigstore signs with
+      attestations: write    # record the attestation
+    steps:
+      - name: Download audit head summary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: audit-head-${{ github.run_id }}
+        continue-on-error: true
+
+      - name: Determine whether a head is present
+        id: head
+        run: |
+          set -euo pipefail
+          if [ -f audit-head.json ] && [ "$(jq -r '.head_hash // "null"' audit-head.json)" != "null" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No audit head to attest (empty chain / no apply this run)."
+          fi
+
+      - name: Attest audit chain head
+        if: steps.head.outputs.present == 'true'
+        # GitHub Artifact Attestations are unavailable on user-owned
+        # PRIVATE repos ("Feature not available for user-owned private
+        # repositories"). Without this soft-fail a fully-successful prod
+        # deploy (apply + smoke + audit-verify all green) shows RED purely
+        # because of the attestation step. The attestation is best-effort
+        # provenance, not a deploy gate — it records automatically once the
+        # repo is org-owned or public. See SECURITY.md.
+        continue-on-error: true
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: audit-head.json
+
+# Audit JSONL is retained as a workflow artifact (90 days) above and is
+# tamper-evident via its own hash chain (see contentops/audit/writer.py and
+# the weekly audit-verify.yml workflow). It is intentionally NOT committed
+# back to main. Only the compact state file is pushed, and only to the
+# isolated refs/heads/state/<env> branch used by `contentops state sync`.

@@ -1,0 +1,68 @@
+# Local pre-commit hooks for ContentOps powered by SecM8.
+#
+# Install with:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Run on demand with:
+#   pre-commit run --all-files
+#
+# The same `.gitleaks.toml` config is consumed by both the local hook
+# and the CI workflow (`.github/workflows/secret-scan.yml`), so a
+# commit that passes locally will also pass in CI.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 43fae355e6fe4d99d2a7b240a224b85e2903aeb4  # v8.21.2
+    hooks:
+      - id: gitleaks
+        name: gitleaks (scan for committed secrets)
+        # Use the project config so the tenant-GUID rules + historical
+        # allowlist apply locally just like they do in CI.
+        args: ["protect", "--staged", "--config=.gitleaks.toml"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        # Detection YAMLs use the `!Multiline` custom tag from the
+        # block-scalar dumper; pre-commit's stock check-yaml chokes on
+        # it. Restrict to config + workflow YAML where that tag is
+        # never used.
+        files: ^(\.github|config|\.gitleaks\.toml).*\.ya?ml$
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+
+  - repo: local
+    hooks:
+      # Catalog drift gate (CLAUDE.md invariant #7). The generated
+      # catalog at docs/reference/generated-catalog.md is regenerated
+      # from the live codebase (CLI commands, lint rules, workflows,
+      # handlers). When a PR adds / renames / removes any of those
+      # but forgets to regenerate the catalog, this hook fails the
+      # commit with the exact remediation command. The same check
+      # runs in CI via tests/v2/test_catalog.py — wiring it as a
+      # pre-commit hook surfaces the failure 30 seconds earlier
+      # (before push, not after).
+      - id: contentops-catalog-check
+        name: contentops catalog check (regenerate if drifted)
+        entry: contentops catalog check
+        language: system
+        pass_filenames: false
+        # Run only when something the catalog inspects might have moved:
+        # CLI source, lint rules, workflows, handlers, the catalog
+        # markdown itself, or the inspector that drives it. Keeps the
+        # hook fast for content-only PRs.
+        files: |
+          (?x)^(
+            contentops/cli/.*\.py |
+            contentops/lint/.*\.py |
+            contentops/handlers/.*\.py |
+            contentops/catalog/.*\.py |
+            \.github/workflows/.*\.ya?ml |
+            docs/reference/generated-catalog\.md
+          )$

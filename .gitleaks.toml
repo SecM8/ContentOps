@@ -1,0 +1,73 @@
+# gitleaks config for ContentOps powered by SecM8.
+#
+# Inherits the gitleaks default ruleset (Azure secrets, AWS, generic
+# private keys, JWTs, etc.) and adds project-specific rules for the
+# Azure-tenant / subscription / workspace GUIDs that motivated this
+# scanner.
+#
+# The leaked production GUIDs from the 2026-05 incident (see
+# SECURITY.md "Incident history") are listed under
+# [[rules.allowlist]] so historical commits do not trip every CI
+# run. New commits that reintroduce those values will still fail
+# because the allowlist is scoped by commit SHA, not by content.
+# After the git-history scrub, the entire `[[rules.allowlist]]`
+# block can be deleted.
+#
+# Docs: https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+# --- Project-specific rules --------------------------------------------
+
+[[rules]]
+id = "azure-tenant-guid-in-tenant-yml"
+description = "Real Azure tenant/subscription GUID committed to config/tenant*.yml"
+# Match any GUID-shaped value on a tenantId / subscriptionId line in
+# a tenant config. The path filter limits scope to config/tenant*.yml
+# files. The null-placeholder GUID is excluded via the global
+# [allowlist] regexes below — RE2 (Go's regex engine, which gitleaks
+# uses) does NOT support Perl-style negative lookahead, so the
+# placeholder cannot be excluded inside the regex itself.
+regex = '''(?i)(tenantId|subscriptionId)\s*:\s*['"]?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['"]?'''
+path = '''config/tenant.*\.ya?ml'''
+
+# --- Allowlist: example file + historical leaked commits -----------------
+# Global allowlist:
+# 1. `config/tenant.yml.example` is excluded from scanning entirely.
+#    It carries only null-GUID placeholders by design; allowing the
+#    rule to fire on it would create permanent false-positives.
+#    Real values must never appear there (the file is committed; the
+#    real config lives in the gitignored `config/tenant.yml`).
+# 2. The two historical leaked-data commits are pinned by FULL
+#    40-char SHAs (gitleaks v8 does not match 7-char prefixes
+#    against full SHAs). Plus the literal leaked GUIDs as a belt-
+#    and-braces regex. After the git-history rewrite, delete the
+#    historical entries.
+[allowlist]
+description = "Null-GUID example file + historical leaked GUIDs (2026-05)"
+paths = [
+  '''config/tenant\.yml\.example$''',
+]
+commits = [
+  "52d5b136ff7571def22eb62c877d48ab25b60170",  # Multi-workspace tenant schema
+  "76fbaad97e42201c3a7ad21d018b8cac5de5dbb8",  # add integration Sentinel workspace
+]
+
+[[rules]]
+id = "tenant-yml-real-name"
+description = "config/tenant.yml is gitignored — committing it is a mistake"
+regex = '''.''' # match anything (a non-empty file)
+path = '''config/tenant\.yml$'''
+
+[[rules]]
+id = "guid-in-status-dashboard"
+# Belt to the redactor's braces. The status-refresh workflow runs
+# L3-L7 conformance and renders the result into docs/status/*.md;
+# `contentops.status.redact` strips tenant GUIDs, subscription IDs,
+# and full ARM resource paths before write. A bug in the redactor
+# would let a raw 8-4-4-4-12 hex GUID slip through, and this rule
+# catches that at commit time so the leak never reaches main.
+description = "Tenant GUID rendered into docs/status/*.md (redactor regression)"
+regex = '''[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'''
+path = '''docs/status/.*\.md$'''

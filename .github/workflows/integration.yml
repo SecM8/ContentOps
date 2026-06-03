@@ -1,0 +1,67 @@
+name: Integration tests
+
+# DANGER: this workflow hits a real Sentinel + Defender tenant. It is
+# never auto-triggered. Two ways in:
+#   1. Manual: `workflow_dispatch` with `i-know-this-hits-prod=true`
+#      to flip the I_UNDERSTAND_THIS_IS_PRODUCTION gate.
+#   2. PR: add the `run-integration` label. The conftest still requires
+#      RUN_LIVE_TESTS=1 which we set here, *and* the env file-based
+#      production-workspace guard — so accidental runs against the
+#      production workspace need an explicit `i-know-this-hits-prod`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      i-know-this-hits-prod:
+        description: "Set to true to allow the suite to run against the workspace declared in config/tenant.yml."
+        required: true
+        default: "false"
+        type: boolean
+  pull_request:
+    types: [labeled]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  # Hits real tenant -- never cancel a run mid-flight. Two parallel
+  # dispatches against the same ref serialise rather than stomp.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-integration')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # See deploy.yml for the rationale: matches the federated credential
+    # subject on the App Registration.
+    environment: integration
+    env:
+      RUN_LIVE_TESTS: "1"
+      INTEGRATION_SUBSCRIPTION_ID: ${{ secrets.INTEGRATION_SUBSCRIPTION_ID }}
+      INTEGRATION_RESOURCE_GROUP: ${{ secrets.INTEGRATION_RESOURCE_GROUP }}
+      INTEGRATION_WORKSPACE_NAME: ${{ secrets.INTEGRATION_WORKSPACE_NAME }}
+      INTEGRATION_WORKSPACE_LOCATION: ${{ secrets.INTEGRATION_WORKSPACE_LOCATION }}
+      I_UNDERSTAND_THIS_IS_PRODUCTION: ${{ inputs.i-know-this-hits-prod && 'yes' || '' }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml.
+        # `extra-pip-packages: pytest` matches the pre-composite
+        # behaviour of running pytest from a freshly-installed
+        # environment that didn't already carry it.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          extra-pip-packages: pytest
+
+      - name: Run integration suite
+        run: pytest -q tests/integration

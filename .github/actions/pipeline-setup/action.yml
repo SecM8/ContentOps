@@ -1,0 +1,201 @@
+name: Pipeline setup
+description: >
+  Shared setup for any workflow that runs `contentops`: checkout,
+  Python, install Python deps, resolve the Azure subscription ID
+  from a tenant config file, then `azure/login` via OIDC.
+
+  Used by `drift.yml`, `deploy.yml`, `collect.yml`, `prune.yml`,
+  `retry-failed.yml`, and `integration.yml`. Workflows with
+  divergent subscription-resolution logic (`integration-deploy.yml`,
+  `promote-to-integration.yml`) intentionally don't use it.
+
+  This composite does NOT touch permissions — each calling
+  workflow owns its `permissions:` block. It also doesn't run the
+  `contentops` command itself; the caller does that, so the
+  differences in how each workflow invokes `contentops …` stay in
+  the workflow file where they're visible.
+
+inputs:
+  client-id:
+    description: Azure AD application (client) ID, passed to azure/login.
+    required: true
+  tenant-id:
+    description: Azure AD tenant ID, passed to azure/login.
+    required: true
+  python-version:
+    description: Python interpreter version to install.
+    required: false
+    default: '3.12'
+  role:
+    description: >
+      Workspace role to pull the subscription from when the tenant
+      has multiple Sentinel workspaces. Defaults to `prod` because
+      every current caller targets prod for ``azure/login``'s
+      active context — contentops still reads its own per-call
+      subscription from tenant.yml when needed (see DESIGN §6).
+      Override only when a workflow has its own `role`
+      workflow_dispatch input (e.g. `collect.yml`).
+    required: false
+    default: prod
+  extra-pip-packages:
+    description: >
+      Optional space-separated list of extra packages to ``pip
+      install`` alongside ``requirements.txt``. Used by
+      ``integration.yml`` to add ``pytest``; every other caller
+      leaves this empty.
+    required: false
+    default: ''
+  fetch-depth:
+    description: >
+      Git fetch depth for ``actions/checkout``. Default ``1`` is
+      enough for any workflow that doesn't need to diff against a
+      prior commit. ``deploy.yml`` overrides to ``2`` so its
+      ``--changed-since HEAD~1`` step has the parent to diff
+      against.
+    required: false
+    default: '1'
+  persist-credentials:
+    description: >
+      Whether ``actions/checkout`` persists the GITHUB_TOKEN in
+      ``.git/config`` for subsequent steps. Default ``true``
+      (the checkout-action default). ``deploy.yml`` sets this to
+      ``false`` so the prod-deploy job doesn't leak credentials
+      to subsequent steps that don't need them.
+    required: false
+    default: 'true'
+  tenant-config-yaml:
+    description: >
+      Full YAML content for ``config/tenant.yml``. Pass
+      ``secrets.TENANT_CONFIG_YAML`` (or whatever secret name your
+      repo uses) from the calling workflow. The composite materialises
+      the file at job start because the real config carries Azure
+      tenant + subscription GUIDs and is gitignored — see the
+      project SECURITY.md for the rotation history that motivated
+      this layout. If empty AND the file is not present in the
+      workspace, the step fails with a clear error pointing at the
+      secret + template.
+
+      NOTE: do NOT write the literal expression-substitution syntax
+      in this description. Composite-action manifests are parsed by
+      the same expression engine that resolves workflow files, but
+      composite actions have no ``secrets`` context — embedding the
+      substitution syntax here breaks manifest load with
+      "Unrecognized named-value: 'secrets'".
+    required: false
+    default: ''
+  tenant-config-env-yaml:
+    description: >
+      Full YAML content for ``config/tenant.${PIPELINE_ENV}.yml``.
+      Optional; only used when ``PIPELINE_ENV`` is set in the job
+      env. Pass the matching env-specific secret (typically
+      ``secrets.TENANT_CONFIG_INTEGRATION_YAML``) from the calling
+      workflow.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+        persist-credentials: ${{ inputs.persist-credentials }}
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        EXTRA_PIP: ${{ inputs.extra-pip-packages }}
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt ${EXTRA_PIP:+$EXTRA_PIP}
+        pip install -e .
+
+    - name: Materialise tenant configuration
+      # `config/tenant.yml` is gitignored (it carries real Azure tenant +
+      # subscription GUIDs). CI writes it at job start from the
+      # `tenant-config-yaml` input, which the calling workflow wires to
+      # the TENANT_CONFIG_YAML secret. When `PIPELINE_ENV` is set,
+      # `tenant-config-env-yaml` overrides the env-specific file.
+      shell: bash
+      env:
+        TENANT_CONFIG_YAML: ${{ inputs.tenant-config-yaml }}
+        TENANT_CONFIG_ENV_YAML: ${{ inputs.tenant-config-env-yaml }}
+      run: |
+        set -euo pipefail
+        env_slug="${PIPELINE_ENV:-}"
+        if [ -n "$env_slug" ] && ! echo "$env_slug" | grep -qE '^[a-zA-Z0-9_-]{1,64}$'; then
+          echo "ERROR: PIPELINE_ENV value '$env_slug' contains invalid characters."
+          exit 1
+        fi
+        env_cfg="config/tenant.${env_slug}.yml"
+        default_cfg="config/tenant.yml"
+        if [ -n "$env_slug" ] && [ -n "${TENANT_CONFIG_ENV_YAML:-}" ]; then
+          printf '%s' "$TENANT_CONFIG_ENV_YAML" > "$env_cfg"
+          echo "::notice::Wrote $env_cfg from tenant-config-env-yaml input."
+        fi
+        if [ ! -f "$default_cfg" ]; then
+          if [ -n "${TENANT_CONFIG_YAML:-}" ]; then
+            printf '%s' "$TENANT_CONFIG_YAML" > "$default_cfg"
+            echo "::notice::Wrote $default_cfg from tenant-config-yaml input."
+          else
+            echo "::error::tenant-config-yaml input is empty and config/tenant.yml is missing."
+            echo "Pass the TENANT_CONFIG_YAML secret into the pipeline-setup composite action's tenant-config-yaml input."
+            echo "Template: config/tenant.yml.example"
+            exit 1
+          fi
+        fi
+
+    - name: Resolve subscription from tenant.yml
+      id: cfg
+      shell: bash
+      env:
+        ROLE: ${{ inputs.role }}
+      # Prefer ``config/tenant.${PIPELINE_ENV}.yml`` when the caller
+      # sets ``PIPELINE_ENV`` (collect / prune / retry-failed do
+      # this for the integration env); otherwise fall back to the
+      # default ``config/tenant.yml``. When PIPELINE_ENV is unset
+      # the env-aware path expands to ``config/tenant..yml`` which
+      # doesn't exist, so the [ -f ] guard transparently picks the
+      # default — same behaviour as the pre-composite drift /
+      # deploy / integration paths.
+      #
+      # azure/login needs a subscription-id even though contentops
+      # reads its own per-workspace from tenant.yml. We feed the
+      # selected role's workspace subscription as the active
+      # context; contentops overrides per-API-call from tenant.yml
+      # as needed. See DESIGN §6.
+      run: |
+        cfg_path="config/tenant.${PIPELINE_ENV}.yml"
+        [ -f "$cfg_path" ] || cfg_path="config/tenant.yml"
+        sub=$(CFG_PATH="$cfg_path" python -c "
+        import yaml, os, sys
+        cfg_path = os.environ['CFG_PATH']
+        t = yaml.safe_load(open(cfg_path))['tenant']
+        role = os.environ['ROLE']
+        workspaces = t.get('sentinelWorkspaces') or []
+        if not workspaces:
+            print('ERROR: tenant.yml sentinelWorkspaces list is empty', file=sys.stderr)
+            sys.exit(1)
+        ws = next((w for w in workspaces if w.get('role') == role), None)
+        if ws is None:
+            names = [w.get('role') for w in workspaces]
+            print(f'ERROR: No workspace with role={role!r} in {cfg_path}. Available: {names}', file=sys.stderr)
+            sys.exit(1)
+        print(ws['subscriptionId'])
+        ")
+        echo "::add-mask::${sub}"
+        echo "subscriptionId=$sub" >> "$GITHUB_OUTPUT"
+
+    - name: Azure login (OIDC)
+      uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43  # v3.0.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ steps.cfg.outputs.subscriptionId }}

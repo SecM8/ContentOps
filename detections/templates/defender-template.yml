@@ -1,0 +1,80 @@
+# =============================================================================
+# DEFENDER XDR CUSTOM DETECTION RULE — REFERENCE TEMPLATE
+# API: Microsoft Graph Security Beta (/security/rules/detectionRules)
+#
+# This is a reference document. Copy it, fill in what you need, delete the rest.
+# Only include fields that have actual values — the pipeline handles defaults.
+# =============================================================================
+
+id: ""                            # Slug ID (required, e.g., defender-encoded-powershell-001)
+version: "1.0.0"                  # Semver (required)
+platform: defender                # Fixed value
+status: experimental              # experimental | test | production | deprecated
+
+defender:
+  displayName: ""                 # Required
+  isEnabled: true
+
+  queryCondition:
+    queryText: |
+      // Advanced Hunting KQL
+      // DeviceProcessEvents    DeviceFileEvents      DeviceNetworkEvents
+      // DeviceLogonEvents      DeviceRegistryEvents  DeviceImageLoadEvents
+      // DeviceEvents           EmailEvents           EmailAttachmentInfo
+      // IdentityLogonEvents    CloudAppEvents
+
+  schedule:
+    period: "1H"                  # "0" (NRT) | "1H" | "3H" | "12H" | "24H"
+
+  detectionAction:
+    alertTemplate:
+      title: ""                   # Required
+      description: ""
+      severity: medium            # informational | low | medium | high
+      category: ""                # MITRE tactic (Execution, Persistence, etc.)
+      recommendedActions: ""
+      mitreTechniques: []         # T1059.001, T1027
+
+      impactedAssets:             # At least one required
+        # Device:
+        - "@odata.type": "#microsoft.graph.security.impactedDeviceAsset"
+          identifier: deviceId    # deviceId deviceName remoteDeviceName
+                                  # targetDeviceName destinationDeviceName
+        # User:
+        - "@odata.type": "#microsoft.graph.security.impactedUserAsset"
+          identifier: accountName # accountObjectId accountSid accountUpn
+                                  # accountName accountDomain
+                                  # initiatingAccountSid targetAccountUpn
+        # Mailbox (email tables only):
+        - "@odata.type": "#microsoft.graph.security.impactedMailboxAsset"
+          identifier: recipientEmailAddress
+                                  # recipientEmailAddress senderFromAddress
+                                  # accountUpn
+
+    organizationalScope: null     # null = all, or:
+    # scopeType: deviceGroup
+    # scopeNames: ["Group Name"]
+
+    responseActions: []
+    # ── Device ──
+    # isolateDeviceResponseAction         identifier: deviceId  isolationType: full|selective
+    # collectInvestigationPackageResponseAction  identifier: deviceId
+    # runAntivirusScanResponseAction      identifier: deviceId
+    # restrictAppExecutionResponseAction  identifier: deviceId
+    # initiateInvestigationResponseAction identifier: deviceId
+    #
+    # ── File ──
+    # stopAndQuarantineFileResponseAction identifier: sha1
+    # blockFileResponseAction             identifier: sha256
+    #
+    # ── User ──
+    # disableUserResponseAction           identifier: accountSid
+    # forceUserPasswordResetResponseAction identifier: accountSid
+    # markUserAsCompromisedResponseAction  identifier: accountObjectId
+    #
+    # ── Email (email tables only) ──
+    # hardDeleteResponseAction            identifier: networkMessageId
+    # softDeleteResponseAction            identifier: networkMessageId
+    # moveToJunkResponseAction            identifier: networkMessageId
+    #
+    # All @odata.type values prefixed: #microsoft.graph.security.

@@ -1,0 +1,314 @@
+name: Promote to integration
+
+# Manual workflow that snapshots the production tenant and applies the
+# resulting YAML to the integration tenant. Useful for validating
+# infrastructure changes (RG / workspace / Sentinel onboarding) plus
+# detection content end-to-end before promoting to production.
+#
+# Flow:
+#   1. Bootstrap the integration env (idempotent; no-ops if already set up).
+#   2. Run `contentops collect` against PRODUCTION to populate a scratch
+#      detections-snapshot directory.
+#   3. Run `contentops apply --env integration` against the snapshot.
+#
+# (The cross-tenant rewrite step that used to sit between collect and
+# apply was deleted alongside the workbook / metadata handlers it
+# operated on — no surviving asset kind carries cross-environment ARM
+# resource references.)
+#
+# Safety rails:
+#   * Never auto-triggers; workflow_dispatch only.
+#   * The `confirm` input must equal the literal string PROMOTE — anything
+#     else short-circuits the apply.
+#   * `--dry-run` defaults to true. Drop it via the ``apply-dry-run``
+#     input checkbox.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PROMOTE to confirm. Anything else aborts."
+        required: true
+        type: string
+      apply-dry-run:
+        description: "Run apply with --dry-run (default true). Uncheck to deploy for real."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  id-token: write
+  # state sync pushes refs/heads/state/integration after a non-dry-run
+  # apply so the next promote/retry/prune workflow starts from the
+  # last successful integration state.
+  contents: write
+
+concurrency:
+  group: promote-to-integration
+  cancel-in-progress: false
+
+jobs:
+  # Skip GRACEFULLY when the tenant has no SEPARATE integration tenant.
+  # This workflow snapshots prod -> config/tenant.integration.yml (the rare
+  # separate-AAD-tenant case). A single-tenant.yml operator (no integration
+  # secret / file) has no such target and uses integration-deploy.yml for
+  # PR-time integration testing instead. Operator rule: a missing integration
+  # environment must never FAIL the pipeline — it skips (exit 0). Detecting it
+  # in a tiny gating job keeps the promote job's `if` to a single line.
+  detect:
+    if: ${{ github.event.inputs.confirm == 'PROMOTE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: integration
+    outputs:
+      present: ${{ steps.d.outputs.present }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Detect a separate integration tenant
+        id: d
+        env:
+          TENANT_CONFIG_INTEGRATION_YAML: ${{ secrets.TENANT_CONFIG_INTEGRATION_YAML }}
+        run: |
+          if [ -n "${TENANT_CONFIG_INTEGRATION_YAML:-}" ] || [ -f config/tenant.integration.yml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No separate integration tenant configured (no TENANT_CONFIG_INTEGRATION_YAML secret / config/tenant.integration.yml) — skipping. Single-tenant.yml operators use integration-deploy.yml for PR-time integration testing."
+            {
+              echo "## Promote to integration: skipped"
+              echo ""
+              echo "No separate integration tenant (\`TENANT_CONFIG_INTEGRATION_YAML\` secret / \`config/tenant.integration.yml\`) is configured. Single-tenant.yml operators use \`integration-deploy.yml\` for PR-time integration testing."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  promote:
+    needs: detect
+    if: ${{ needs.detect.outputs.present == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # See integration-deploy.yml for the rationale: matches the
+    # federated credential subject on the App Registration.
+    environment: integration
+    env:
+      PIPELINE_LOG_LEVEL: INFO
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt && pip install -e .
+      - name: Materialise tenant configuration files
+        # Both `config/tenant.yml` (production) and
+        # `config/tenant.integration.yml` are gitignored. Write them
+        # from repository secrets. BOTH files are required for this
+        # promotion workflow — fail fast with an actionable error if
+        # either is missing AND the corresponding secret is empty.
+        env:
+          TENANT_CONFIG_YAML: ${{ secrets.TENANT_CONFIG_YAML }}
+          TENANT_CONFIG_INTEGRATION_YAML: ${{ secrets.TENANT_CONFIG_INTEGRATION_YAML }}
+        run: |
+          set -euo pipefail
+          if [ ! -f config/tenant.yml ]; then
+            if [ -n "${TENANT_CONFIG_YAML:-}" ]; then
+              printf '%s' "$TENANT_CONFIG_YAML" > config/tenant.yml
+              echo "::notice::Wrote config/tenant.yml from TENANT_CONFIG_YAML secret."
+            else
+              echo "::error::TENANT_CONFIG_YAML secret is not set and config/tenant.yml is missing."
+              echo "Configure the TENANT_CONFIG_YAML secret in this repository / environment."
+              echo "Template: config/tenant.yml.example"
+              exit 1
+            fi
+          fi
+          if [ ! -f config/tenant.integration.yml ]; then
+            if [ -n "${TENANT_CONFIG_INTEGRATION_YAML:-}" ]; then
+              printf '%s' "$TENANT_CONFIG_INTEGRATION_YAML" > config/tenant.integration.yml
+              echo "::notice::Wrote config/tenant.integration.yml from TENANT_CONFIG_INTEGRATION_YAML secret."
+            else
+              echo "::error::TENANT_CONFIG_INTEGRATION_YAML secret is not set and config/tenant.integration.yml is missing."
+              echo "Configure the TENANT_CONFIG_INTEGRATION_YAML secret for this workflow."
+              echo "Template: config/tenant.integration.yml.example"
+              exit 1
+            fi
+          fi
+
+      - name: Resolve subscription from tenant.yml
+        # See DESIGN §6. promote-to-integration touches both prod
+        # (read) and integration (write); pick the prod-role workspace's
+        # subscription as the azure/login active context.
+        id: cfg
+        run: |
+          sub=$(python -c "import yaml; \
+            t = yaml.safe_load(open('config/tenant.yml'))['tenant']; \
+            ws = next((w for w in t['sentinelWorkspaces'] if w['role']=='prod'), \
+                     t['sentinelWorkspaces'][0]); \
+            print(ws['subscriptionId'])")
+          echo "::add-mask::${sub}"
+          echo "subscriptionId=$sub" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43  # v3.0.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ steps.cfg.outputs.subscriptionId }}
+
+      - name: Reveal integration tenant config
+        run: |
+          if [ ! -f config/tenant.integration.yml ]; then
+            echo "config/tenant.integration.yml not found in repo. Copy"
+            echo "config/tenant.integration.yml.example to that path and"
+            echo "fill in the integration subscription/RG/workspace."
+            exit 1
+          fi
+          if [ ! -f config/tenant.yml ]; then
+            echo "config/tenant.yml (production) not found." >&2
+            exit 1
+          fi
+
+      - name: Step 1 — bootstrap integration tenant (idempotent)
+        env:
+          PIPELINE_ENV: integration
+        run: |
+          set -euo pipefail
+          # Read sub/rg/ws out of the integration config so we can pass
+          # them to bootstrap. Capture to a temp file first so we can
+          # mask the subscription GUID via ::add-mask:: on the normal log
+          # stream BEFORE the key=value pairs land in $GITHUB_OUTPUT —
+          # writing ::add-mask:: directly into $GITHUB_OUTPUT would not
+          # register the mask (it must reach the workflow-command stream).
+          python - <<'PY' > int_cfg.env
+          import sys, yaml, pathlib
+          cfg = yaml.safe_load(pathlib.Path('config/tenant.integration.yml').read_text())['tenant']
+          if 'sentinelWorkspaces' not in cfg or not cfg['sentinelWorkspaces']:
+              print(
+                  "ERROR: tenant.integration.yml has no sentinelWorkspaces "
+                  "list. Ensure the file uses the v3 schema with at least "
+                  "one workspace entry.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          s = cfg['sentinelWorkspaces'][0]
+          print(f"sub={s['subscriptionId']}")
+          print(f"rg={s['resourceGroup']}")
+          print(f"ws={s['workspaceName']}")
+          print(f"loc={s.get('location', 'westeurope')}")
+          PY
+          # Mask the subscription GUID before it can surface in later logs.
+          sub_val="$(sed -n 's/^sub=//p' int_cfg.env)"
+          [ -n "$sub_val" ] && echo "::add-mask::${sub_val}"
+          cat int_cfg.env >> "$GITHUB_OUTPUT"
+          rm -f int_cfg.env
+        id: int-cfg
+
+      - name: bootstrap integration
+        # Route step outputs through env vars rather than interpolating
+        # ${{ steps.* }} directly in the shell, matching the
+        # expression-injection-avoidance pattern used elsewhere.
+        env:
+          PIPELINE_ENV: integration
+          INT_SUB: ${{ steps.int-cfg.outputs.sub }}
+          INT_RG: ${{ steps.int-cfg.outputs.rg }}
+          INT_WS: ${{ steps.int-cfg.outputs.ws }}
+          INT_LOC: ${{ steps.int-cfg.outputs.loc }}
+        run: |
+          contentops bootstrap \
+            --subscription "$INT_SUB" \
+            --resource-group "$INT_RG" \
+            --workspace "$INT_WS" \
+            --location "$INT_LOC" \
+            --env integration
+
+      - name: Step 2 — collect from production
+        env:
+          PIPELINE_ENV: prod
+        run: |
+          mkdir -p .snapshot
+          contentops collect --path .snapshot
+
+      - name: Lint gate — fail before apply on lint errors
+        # Validate the production snapshot before applying it to
+        # integration. The Kusto.Language strict wrapper
+        # (tools/kql_strict.dll) is not built in this workflow, so
+        # --strict runs the Python strict-policy rules and prints an
+        # advisory in place of the semantic KQL layer (see
+        # contentops/lint/commands/lint.py --strict help). This gate
+        # catches structural / envelope regressions; a non-zero exit
+        # fails the job so a broken snapshot never reaches the apply
+        # step below.
+        env:
+          PIPELINE_ENV: integration
+        run: |
+          set -euo pipefail
+          contentops lint --strict --path .snapshot
+
+      - name: Pull integration state before apply
+        # Best-effort: an empty / missing state/integration ref means
+        # we start from local empty state (collected snapshot
+        # round-trips will reach steady state on the second run).
+        env:
+          PIPELINE_ENV: integration
+        run: |
+          contentops state sync pull || {
+            echo "::notice::No remote state/integration branch yet; starting from empty local state."
+          }
+
+      - name: Step 3 — apply to integration
+        env:
+          PIPELINE_ENV: integration
+          INPUT_APPLY_DRY_RUN: ${{ github.event.inputs.apply-dry-run }}
+        run: |
+          if [ "$INPUT_APPLY_DRY_RUN" = "true" ]; then
+            contentops apply \
+              --path .snapshot \
+              --dry-run \
+              --skip-deps-check
+          else
+            contentops apply \
+              --path .snapshot \
+              --skip-deps-check
+          fi
+
+      - name: Push integration state after apply
+        # Only push when we actually deployed. Dry-run apply doesn't
+        # write state/state.json; the file-existence check below
+        # short-circuits cleanly.
+        if: ${{ github.event.inputs.apply-dry-run != 'true' }}
+        env:
+          PIPELINE_ENV: integration
+        run: |
+          set -euo pipefail
+          if [ -f state/state.json ]; then
+            contentops state sync push
+          else
+            echo "::notice::No state/state.json written; skipping state sync push."
+          fi
+
+      - name: Upload audit JSONL artefact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: promote-audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Step summary
+        if: always()
+        env:
+          SUMMARY_CONFIRM: ${{ github.event.inputs.confirm }}
+          SUMMARY_DRY_RUN: ${{ github.event.inputs.apply-dry-run }}
+        run: |
+          {
+            echo "## Promote prod -> integration"
+            echo ""
+            echo "- Confirm: \`${SUMMARY_CONFIRM}\`"
+            echo "- Apply dry-run: \`${SUMMARY_DRY_RUN}\`"
+            if [ -d .snapshot ]; then
+              n=$(find .snapshot -name '*.yml' | wc -l)
+              echo "- Snapshot files: $n"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,27 @@
+id: defender-test-rule-001
+version: "1.0.0"
+platform: defender
+status: production
+
+defender:
+  displayName: "Test Defender Rule"
+  isEnabled: true
+  queryCondition:
+    queryText: |
+      DeviceProcessEvents
+      | where FileName == "cmd.exe"
+  schedule:
+    period: "1H"
+  detectionAction:
+    alertTemplate:
+      title: "Test Alert"
+      description: "Test alert description"
+      severity: medium
+      category: Execution
+      mitreTechniques:
+        - T1059
+      impactedAssets:
+        - "@odata.type": "#microsoft.graph.security.impactedDeviceAsset"
+          identifier: deviceId
+    organizationalScope: null
+    responseActions: []

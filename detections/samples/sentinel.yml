@@ -1,0 +1,60 @@
+id: sentinel-brute-force-001
+version: "1.0.0"
+platform: sentinel
+status: production
+
+sentinel:
+  kind: Scheduled
+  displayName: "Brute Force Attack Detection"
+  description: "Detects multiple failed login attempts from a single IP address indicating a potential brute force attack"
+  enabled: true
+  severity: Medium
+  query: |
+    SecurityEvent
+    | where TimeGenerated > ago(1h)
+    | where EventID == 4625
+    | summarize
+        FailedAttempts = count(),
+        Accounts = make_set(TargetAccount, 10)
+      by IpAddress, Computer
+    | where FailedAttempts > 10
+    | extend AccountList = tostring(Accounts)
+  queryFrequency: PT5M
+  queryPeriod: PT1H
+  triggerOperator: GreaterThan
+  triggerThreshold: 0
+  suppressionEnabled: false
+  suppressionDuration: PT1H
+  tactics:
+    - CredentialAccess
+  techniques:
+    - T1110
+  subTechniques:
+    - T1110.001
+    - T1110.003
+  entityMappings:
+    - entityType: IP
+      fieldMappings:
+        - identifier: Address
+          columnName: IpAddress
+    - entityType: Host
+      fieldMappings:
+        - identifier: HostName
+          columnName: Computer
+  customDetails:
+    FailedAttemptCount: FailedAttempts
+    TargetedAccounts: AccountList
+  alertDetailsOverride:
+    alertDisplayNameFormat: "Brute Force Attack from {{IpAddress}}"
+    alertDescriptionFormat: "{{FailedAttempts}} failed login attempts detected from {{IpAddress}} on {{Computer}}"
+  eventGroupingSettings:
+    aggregationKind: AlertPerResult
+  incidentConfiguration:
+    createIncident: true
+    groupingConfiguration:
+      enabled: true
+      reopenClosedIncident: false
+      lookbackDuration: PT5H
+      matchingMethod: Selected
+      groupByEntities:
+        - IP

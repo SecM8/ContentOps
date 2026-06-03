@@ -1,0 +1,35 @@
+# CODEOWNERS — automatic reviewer assignment.
+#
+# Every PR that touches a path matched below requires approval from the listed
+# owner(s) before it can be merged into a protected branch. Combined with
+# branch protection's "Require review from Code Owners" setting, this enforces
+# maintainer sign-off on detection content, pipeline code, and CI workflows.
+#
+# Syntax reference:
+#   https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-customization/customizing-your-repository/about-code-owners
+#
+# Patterns are matched in declaration order; the LAST matching pattern wins.
+# Edit the team handles below to match your organisation. Until your real
+# teams exist, the default routes everything to the repo owner.
+
+# --- Default ----------------------------------------------------------------
+*                                          @KustoKing
+
+# --- Detection content (per-asset routing) ----------------------------------
+# The six supported asset kinds (contentops/core/asset.py). Historical kinds
+# live in git history and are deliberately not routed here.
+detections/sentinel_analytic/**            @KustoKing
+detections/sentinel_hunting/**             @KustoKing
+detections/sentinel_watchlist/**           @KustoKing
+detections/sentinel_parser/**              @KustoKing
+detections/sentinel_data_connector/**      @KustoKing
+detections/defender_custom_detection/**    @KustoKing
+
+# --- Pipeline + workflows (platform) ----------------------------------------
+contentops/**                              @KustoKing
+scripts/**                                 @KustoKing
+.github/**                                 @KustoKing
+config/**                                  @KustoKing
+docs/**                                    @KustoKing
+tests/**                                   @KustoKing
+SECURITY.md                                @KustoKing

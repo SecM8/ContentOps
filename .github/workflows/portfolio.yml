@@ -1,0 +1,119 @@
+name: Portfolio report
+
+# Renders the per-detection portfolio CSV + JSON. Posts a summary and
+# uploads both artefacts. Manual + nightly cron so the latest report is
+# always one workflow run away.
+#
+# Telemetry (`--with-telemetry`) is always on: the report carries the
+# F20 telemetry columns (alerts_30d, incidents_30d, closed_fp_30d,
+# fp_rate) sourced via the workspace KQL helper. The workspace ID
+# auto-derives from config/tenant.yml's prod entry via ARM
+# (`resolve_workspace_id`); the `PIPELINE_WORKSPACE_ID` Actions
+# variable is only an optional explicit override. OIDC credentials and
+# a valid tenant.yml are therefore always required (azure/login always
+# runs in pipeline-setup below).
+
+on:
+  schedule:
+    - cron: '30 7 * * *'  # daily 07:30 UTC (staggered from 07:00)
+  workflow_dispatch:
+    inputs:
+      cohort:
+        description: "Optional cohort filter."
+        required: false
+        type: string
+
+permissions:
+  id-token: write       # OIDC token for azure/login when --with-telemetry is on
+  contents: read
+  # For notify-workflow-failure action on scheduled failures.
+  issues: write
+
+concurrency:
+  # Nightly rollup; don't cancel a scheduled run mid-flight.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  portfolio:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # `automation` environment matches drift.yml / silent-rules.yml for
+    # read-mostly OIDC flows (no required reviewers).
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      PIPELINE_WORKSPACE_ID: ${{ vars.PIPELINE_WORKSPACE_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Render portfolio
+        # Route operator-supplied input through env vars so the shell
+        # parser sees it as a regular string (same pattern as
+        # silent-rules.yml). Direct ${{ inputs.cohort }} substitution
+        # would be evaluated by the shell parser BEFORE the run line
+        # executes — classic GHA expression-injection vector.
+        env:
+          INPUT_COHORT: ${{ github.event_name == 'workflow_dispatch' && inputs.cohort || '' }}
+        run: |
+          set -euo pipefail
+          # Telemetry now always on -- workspace ID auto-derives from
+          # config/tenant.yml's prod entry via ARM (no separate
+          # PIPELINE_WORKSPACE_ID variable required since PR-J).
+          ARGS=( --path detections --out-csv portfolio.csv --out-json portfolio.json
+                 --with-telemetry --telemetry-since 30 )
+          if [ -n "${INPUT_COHORT:-}" ]; then
+            ARGS+=( --cohort "$INPUT_COHORT" )
+          fi
+          contentops portfolio "${ARGS[@]}"
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: portfolio-${{ github.run_id }}
+          path: |
+            portfolio.csv
+            portfolio.json
+          retention-days: 90
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## Portfolio report"
+            echo ""
+            if [ -f portfolio.csv ]; then
+              rows=$(($(wc -l < portfolio.csv) - 1))
+              echo "- Rows: $rows"
+            fi
+            # Telemetry is always on as of PR-J (auto-derive from tenant.yml).
+            # Leave the conditional in case auto-derive fails -- the CLI
+            # gracefully degrades to inputs-only mode in that case.
+            if [ -n "${PIPELINE_WORKSPACE_ID:-}" ]; then
+              echo "- Telemetry: on (workspace var set)"
+            else
+              echo "- Telemetry: off (PIPELINE_WORKSPACE_ID unset)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify on scheduled failure
+        # Only the daily (schedule) run notifies. Manual dispatches are
+        # operator-driven and the operator is already watching the run.
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

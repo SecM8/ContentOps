@@ -1,0 +1,17 @@
+id: sentinel-test-nrt-001
+version: "1.0.0"
+platform: sentinel
+status: production
+
+sentinel:
+  kind: NRT
+  displayName: "Test NRT Rule"
+  description: "A test NRT rule"
+  enabled: true
+  severity: Medium
+  query: |
+    SecurityEvent
+    | where EventID == 4688
+    | where Process == "cmd.exe"
+  tactics:
+    - Execution

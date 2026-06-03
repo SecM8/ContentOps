@@ -1,0 +1,46 @@
+name: Spelling
+
+# Per NVISO Part 3 of the Detection-as-Code series. Catches typos in
+# author-controlled prose (envelope `metadata.description`,
+# `falsePositives`, `responseActions`, narrative docs, Python source)
+# before they reach reviewers. Config lives at `.codespellrc`; ignore
+# list there documents the security-domain false positives.
+
+on:
+  pull_request:
+    paths:
+      - 'detections/**'
+      - 'contentops/**'
+      - 'docs/**'
+      - 'scripts/**'
+      - '.codespellrc'
+      - '.github/workflows/spelling.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codespell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install codespell
+        # Codespell is a dev-only tooling dep, kept out of pyproject.toml
+        # to preserve the lean six-package runtime posture. The pattern
+        # mirrors actionlint, bandit, semgrep — each installed inline by
+        # its own workflow rather than carried in dev-extras.
+        run: pip install codespell==2.3.0
+
+      - name: Run codespell
+        run: codespell

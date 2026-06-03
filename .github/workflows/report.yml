@@ -1,0 +1,112 @@
+name: Detection inventory report
+
+# SOC-grade detection inventory report.
+# - Weekly Monday cron + workflow_dispatch.
+# - Generates reports/latest.html + reports/<date>.html + reports/latest.md
+#   + reports/badge.json.
+# - Uploads as workflow artifact on every run.
+# - On push-to-main: commits the regenerated files back to main via the
+#   github-actions[bot] identity (same pattern as coverage.yml).
+
+on:
+  schedule:
+    # Monday 08:00 UTC (staggered from 06:00 to avoid Monday cluster).
+    - cron: '0 8 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - "detections/**"
+      - "contentops/report/**"
+      - "contentops/cli/commands/report.py"
+      - ".github/workflows/report.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write    # push-to-main job commits the regenerated report
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: reporting
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # report.yml's first step computes git-log merge dates per
+          # YAML file. A shallow checkout (default depth=1) would
+          # report HEAD's commit for every file regardless of when
+          # the file actually landed. Full history makes the merge-
+          # date column actually meaningful.
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Restore alert ledger cache (read-only)
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: |
+            alerts-reports/alert-ledger.jsonl
+            alerts-reports/alert-ledger-watermark.json
+            alerts-reports/daily-rollups.jsonl
+          key: alert-ledger-${{ github.ref }}-readonly
+          restore-keys: |
+            alert-ledger-${{ github.ref }}-
+
+      - name: Generate report
+        run: |
+          mkdir -p reports
+          UNIFIED_FLAG=""
+          if [ -f alerts-reports/alert-ledger.jsonl ]; then
+            UNIFIED_FLAG="--unified"
+            echo "alert ledger found — will generate unified report"
+          fi
+          python -m contentops report \
+            --out-html reports/latest.html \
+            --out-md   reports/latest.md \
+            --out-badge reports/badge.json \
+            --out-json reports/latest.json \
+            $UNIFIED_FLAG
+          # Dated snapshots live alongside latest.* so adopters can diff
+          # week-over-week without losing the rolling view. The JSON
+          # form is the structured substrate the next run reads to
+          # compute the delta phrase in the executive summary.
+          DATE=$(date -u +%Y-%m-%d)
+          cp reports/latest.html "reports/${DATE}.html"
+          cp reports/latest.json "reports/${DATE}.json"
+          ls -la reports/
+
+      - name: Upload report artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Detection inventory report
+          path: reports/
+          if-no-files-found: error
+
+      - name: Commit refreshed report (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          if git diff --staged --quiet; then
+            echo "no report drift to commit"
+            exit 0
+          fi
+          git commit \
+            -m "chore(report): refresh detection inventory snapshot" \
+            -s
+          git push origin HEAD:main

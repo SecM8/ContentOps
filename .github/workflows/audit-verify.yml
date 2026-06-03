@@ -1,0 +1,113 @@
+name: Audit chain verify
+
+# Weekly verification of the audit JSONL hash chain. Fails the
+# workflow on any chain corruption, so a tampered or accidentally
+# rewritten audit file surfaces as a red workflow status the next
+# Monday rather than the next time a regulator asks.
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'  # Mondays 04:00 UTC
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - 'audit/**'
+      - '.github/workflows/audit-verify.yml'
+
+permissions:
+  contents: read
+  # notify-workflow-failure opens / comments on a dedup'd issue when the
+  # weekly run fails. Scoped to issues only.
+  issues: write
+  # Download the audit JSONL artifact from the latest deploy run. audit/ is
+  # gitignored + artifact-only (see docs/reference/audit-trail.md), so a
+  # checkout has nothing to verify; this lets the weekly run verify the
+  # real chain the last deploy produced.
+  actions: read
+
+concurrency:
+  # PR runs get a per-PR group that cancels superseded runs; the weekly
+  # cron and manual dispatch share a single group with cancel-in-progress
+  # off so a push/PR run can never kill the load-bearing scheduled scan.
+  group: >-
+    ${{ github.event_name == 'pull_request'
+        && format('audit-verify-pr-{0}', github.event.pull_request.number)
+        || 'audit-verify-auto' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Restore the latest deploy's audit artifact (best-effort)
+        id: audit_artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # audit/ is gitignored and NEVER committed (docs/reference/audit-trail.md):
+          # the durable copy is the per-run, 90-day artifact deploy.yml uploads
+          # as `audit-<run_id>`. Pull the most recent SUCCESSFUL deploy's
+          # artifact so this weekly run verifies a real cumulative-for-that-run
+          # chain instead of the empty checkout.
+          run_id=$(gh run list --workflow=deploy.yml --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // ""')
+          if [ -z "$run_id" ]; then
+            echo "::notice::no successful deploy run found; structural check only."
+            echo "have_artifact=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p audit
+          tmp="$(mktemp -d)"
+          # Copy only chain files (*.jsonl, not *.jsonl.orphan) and flatten so
+          # we're robust to however upload-artifact stored the path prefix.
+          if gh run download "$run_id" --name "audit-${run_id}" --dir "$tmp"; then
+            find "$tmp" -name '*.jsonl' -exec cp -f {} audit/ \;
+          else
+            echo "::notice::deploy run ${run_id} has no audit artifact (no-op deploy or retention expired)."
+          fi
+          if ls audit/*.jsonl >/dev/null 2>&1; then
+            echo "Verifying audit chain restored from deploy run ${run_id}."
+            echo "have_artifact=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::no audit chain available to verify; structural check only."
+            echo "have_artifact=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify audit hash chain
+        # With the latest deploy's artifact restored, enforce a
+        # --require-min-files floor so a wiped/truncated chain hard-fails (the
+        # gate `contentops audit verify` was built for). With no artifact
+        # available (quiet week / retention expired), fall back to a structural
+        # check that exits 0 on the empty tree rather than false-RED a state
+        # that is artifact-only by design.
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.audit_artifact.outputs.have_artifact }}" = "true" ]; then
+            contentops audit verify --root . --require-min-files 1
+          else
+            contentops audit verify --root .
+          fi
+
+      - name: Notify on scheduled failure
+        # Open / comment on a pipeline-alert issue when the WEEKLY run
+        # fails. PR / dispatch failures don't notify (those are noisy
+        # by design — a PR touching audit/ correctly fails verify; an
+        # operator dispatching a run is already watching).
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

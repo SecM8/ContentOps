@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":pinDependencies"],
+  "pinDigests": true,
+  "pre-commit": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "groupName": "github-actions"
+    },
+    {
+      "matchManagers": ["pip_requirements"],
+      "groupName": "python-deps",
+      "schedule": ["before 6am on monday"]
+    },
+    {
+      "matchManagers": ["pre-commit"],
+      "pinDigests": true,
+      "groupName": "pre-commit-hooks"
+    }
+  ]
+}

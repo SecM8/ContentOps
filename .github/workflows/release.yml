@@ -1,0 +1,140 @@
+name: Release
+
+# Triggered by pushing a `v*` tag. Builds a source tarball + wheel,
+# generates a CycloneDX Software Bill of Materials (SBOM), generates
+# in-toto provenance attestations, renders a changelog from PR titles
+# since the previous tag, and creates the GitHub Release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write       # create the release
+  id-token: write       # generate the attestation
+  attestations: write   # store the attestation on the release
+
+concurrency:
+  # Tag-triggered release; never cancel mid-flight. Two tags pushed
+  # back-to-back serialise rather than stomp.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Gate releases behind the `release` GitHub Environment so the
+    # tag-triggered build can carry required reviewers / protection rules.
+    environment: release
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0  # need full history to walk between tags
+
+      - name: Verify tagged commit is on main
+        # A `v*` tag can be pushed from any branch. Refuse to release a
+        # commit that isn't an ancestor of origin/main so a tag on an
+        # unreviewed branch can't mint a release.
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || {
+            echo '::error::Tagged commit is not on main — aborting release'
+            exit 1
+          }
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Audit pinned dependencies for known vulnerabilities
+        # Fail the release if any pinned runtime dependency has a known
+        # advisory. --strict treats any vulnerability as a hard error.
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt pip-audit==2.10.0
+          pip-audit -r requirements.txt --strict
+
+      - name: Build source tarball + wheel
+        run: |
+          python -m pip install "build==1.2.2"
+          python -m build
+          ls -l dist/
+
+      - name: Generate CycloneDX SBOM
+        # SBOM is generated from the pinned `requirements.txt` so it
+        # reflects what a downstream consumer gets when they
+        # `pip install contentops`, not the runner's baseline
+        # environment (which carries pip, setuptools, wheel, build,
+        # and various GHA helpers as noise). Emitted in CycloneDX 1.5
+        # JSON; scan with `grype`, `trivy`, or `osv-scanner`.
+        run: |
+          python -m pip install "cyclonedx-bom==4.6.0"
+          cyclonedx-py requirements requirements.txt \
+            --output-format json \
+            --output-file dist/sbom.cdx.json \
+            --spec-version 1.5
+          # Sanity check: SBOM lists at least the six runtime deps.
+          # A malformed SBOM (zero components) is a build failure,
+          # not a release artefact.
+          python -c "import json; d=json.load(open('dist/sbom.cdx.json')); \
+            comps=d.get('components', []); \
+            assert len(comps) >= 6, f'SBOM has only {len(comps)} components'"
+          echo "SBOM components:"
+          python -c "import json; d=json.load(open('dist/sbom.cdx.json')); \
+            [print(f\"  {c['name']} {c.get('version','?')}\") for c in d.get('components', [])]"
+
+      - name: Attest release artefacts
+        # GitHub Artifact Attestations are unavailable on user-owned PRIVATE
+        # repos ("Feature not available for user-owned private repositories")
+        # — soft-fail so a tag release still publishes instead of going red
+        # on the attestation step alone. Records automatically once the repo
+        # is org-owned or public. See SECURITY.md.
+        continue-on-error: true
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: 'dist/*'
+
+      - name: Render changelog from PRs since previous tag
+        id: changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          THIS_TAG="${GITHUB_REF##refs/tags/}"
+          PREV_TAG="$(git describe --tags --abbrev=0 "${THIS_TAG}^" 2>/dev/null || true)"
+
+          {
+            echo "## Changes since ${PREV_TAG:-the beginning}"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              git log "${PREV_TAG}..${THIS_TAG}" \
+                --pretty=format:"- %s" \
+                --no-merges \
+                | grep -v '^- chore(audit):' || true
+            else
+              git log "${THIS_TAG}" \
+                --pretty=format:"- %s" \
+                --no-merges \
+                | grep -v '^- chore(audit):' || true
+            fi
+            echo ""
+            echo ""
+            echo "## Supply-chain artefacts"
+            echo ""
+            echo "- Source tarball + wheel built from \`${THIS_TAG}\`"
+            echo "- CycloneDX SBOM attached as \`sbom.cdx.json\` (scan with grype / trivy / osv-scanner)"
+            echo "- In-toto build provenance attestation (verify with \`gh attestation verify\`)"
+          } > changelog.md
+          echo "Changelog rendered:"
+          cat changelog.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          body_path: changelog.md
+          files: dist/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc.') || contains(github.ref_name, '-beta.') }}

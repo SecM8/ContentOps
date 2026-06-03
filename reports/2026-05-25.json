@@ -1,0 +1,1208 @@
+{
+  "generated_at": "2026-05-25T06:11:44Z",
+  "rules": [
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "a-user-added-an-account-to-a-privileged-role",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "a-user-registered-an-mfa-device-while-being-at-risk",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "a-user-registred-a-new-mfa-device",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-administrator-modified-the-retention-time",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-azure-active-directory-hybrid-health-ad-fs-new-server",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-azure-active-directory-hybrid-health-ad-fs-service-delete",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-azure-active-directory-hybrid-health-ad-fs-suspicious-application",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-azure-vm-run-command-operation-executed-during-suspicious-login-window",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-light-house-connection-has-modified",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-mass-cloud-resource-deletions-time-series-anomaly",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-new-cloudshell-user",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-rare-subscription-level-operations-in-azure",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-suspicious-granting-of-permissions-to-an-account",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-ti-map-email-entity-to-azureactivity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aa-ti-map-ip-entity-to-azureactivity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-a-user-used-pim-to-request-permisisons-outside-office-hours",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-a-user-used-sspr-outside-office-hours",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-account-created-and-deleted-in-longer-timeframe",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-account-created-and-deleted-in-short-timeframe",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-account-created-or-deleted-by-non-approved-user",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-admin-promotion-after-role-management-application-permission-grant",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-anomalous-sign-in-location-by-user-account-and-authenticating-application",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-attempts-to-sign-in-to-disabled-accounts",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-azure-active-directory-powershell-accessing-non-aad-resources",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-azure-ad-role-management-permission-grant",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-brute-force-attack-against-azure-portal",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-bulk-changes-to-privileged-account-permissions",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-correlate-unfamiliar-sign-in-properties-and-atypical-travel-alerts",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-credential-added-after-admin-consented-to-application",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-detect-pim-alert-disabling-activity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-external-guest-invitations-by-default-guest-followed-by-azure-ad-powershell",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-failed-login-attempts-to-azure-portal",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-failed-mfa",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-first-access-credential-added-to-application-or-service-principal-where-no-c",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-mail-read-permissions-granted-to-application",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-mfa-disabled-for-a-user",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-modified-domain-federation-trust-settings",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-new-access-credential-added-to-application-or-service-principal",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-new-legacy-app",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-new-security-device-registered",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-pim-elevation-request-rejected",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-rare-application-consent",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-successfull-signin-from-an-ip-address-which-blocked-an-account-before",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-suspicious-application-consent-for-offline-access",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-suspicious-application-consent-similar-to-o365-attack-toolkit",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-suspicious-application-consent-similar-to-pwnauth",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-ti-map-email-entity-to-signinlogs",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-ti-map-ip-entity-to-signinlogs",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-user-added-to-azure-active-directory-privileged-groups",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-user-added-to-highly-privileged-role",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-user-added-to-the-partner-tier2-support-role",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "aad-user-assigned-privileged-role",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "advanced-multistage-attack-detection",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "create-incidents-based-on-azure-active-directory-identity-protection-alerts",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "create-incidents-based-on-azure-defender-alerts",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "detection-of-account-disabling-by-computer-accounts",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-attempts-to-disable-microsoft-defender",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-connections-to-newly-registered-domains-devicenetworkevents",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-connections-to-newly-registered-domains-urlclickevents",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-hidden-powershell-child-process-performing-network-activity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-hidden-powershell-network-activity-for-potential-tool-transfer",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-high-volume-of-unique-dns-queries-within-one-hour",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-low-prevalence-dll-sideloading-attempts-in-onedrive-directory",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-malicious-process-injection-events-with-untrusted-or-rare-initiatin",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-microsoft-defender-disabling",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-outbound-post-requests-with-unusual-characteristics",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-process-injection-via-mavinject-exe",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-remote-wmi-shadow-copy-deletion",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-rundll32-exe-execution-without-arguments",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-runonce-exe-spawning-child-processes",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-application-reading-clipboard",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-certificate-file-creation-by-scripting-and-utility-tools",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-dll-injections-via-inprocserver32-registry-modifications",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-file-creation-by-ntoskrnl-exe",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-ldap-searches-by-non-system-processes",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-or-unsigned-applications-accessing-cloud-storage-apis",
+      "severity": "informational",
+      "status": "deprecated",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-outbound-mshta-traffic",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "detection-of-suspicious-outbound-mshta-traffic",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-outbound-wscript-or-cscript-network-activity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-psexec-service-executing-files",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-user-account-creation-outside-of-domain-controllers",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-suspicious-wmi-activity-over-rpc",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-unauthorized-modifications-to-the-hosts-file",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-unusual-connections-to-domain-controllers-over-kerberos-port-88",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "detection-of-unusual-connections-to-domain-controllers-over-kerberos-port-88",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-unusual-processes-taking-screenshots",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "detection-of-winrm-connections-over-port-5985",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "dev-processes-spawned-by-vmware-tools-vmtoolsd-exe",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "dev-remote-thread-execution-via-queueuserapc-api-call",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "dev-service-creation-from-a-network-share",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "dev-vmware-command-execution-from-hypervisor",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "dev-wmi-provider-host-spawning-high-risk-executables",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "dummy-detction",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "dxbp-d0a0h1-mde-asr-executable-office-content",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_hunting",
+      "rule_id": "example-suspicious-process-tree",
+      "severity": "medium",
+      "status": "experimental",
+      "tactics": [
+        "Execution",
+        "DefenseEvasion"
+      ],
+      "techniques": [
+        "T1059.001",
+        "T1218"
+      ]
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "gebruiker-heeft-mfa-device-geregistreerd",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "honeytokens-keyvault-honeytoken-diagnostic-settings-deleted-or-changed",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "honeytokens-keyvault-honeytoken-key-accessed",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "honeytokens-keyvault-honeytoken-secret-accessed",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "kw001-ad-multiple-user-account-deleted",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "mfa-registration-while-at-risk",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-anomalous-login-followed-by-teams-action",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-azure-vm-run-command-operations-executing-a-unique-powershell-script-91f8b586",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-azure-vm-run-command-operations-executing-a-unique-powershell-script-fba46ec6",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-detecting-impossible-travel-with-mailbox-permission-tampering-privilege-escal",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-dev-0322-serv-u-related-iocs-july-2021",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-known-barium-ip",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-known-iridium-ip",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-known-phosphorus-group-domains-ip",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-log4j-vulnerability-exploit-aka-log4shell-ip-ioc",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-malformed-user-agent",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-multiple-password-reset-by-user",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-nobelium-domain-and-ip-iocs-march-2021",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-sourgum-actor-ioc-july-2021",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-suspicious-number-of-resource-creation-or-deployment-activities",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-user-agent-search-for-log4j-exploitation-attempt",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "ms-workspace-deletion-attempt-from-an-infected-device",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-client-side-forwarding-rule-from-new-ip-address",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-exchange-auditlog-disabled",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-exchange-workflow-mailitemsaccessed-operation-anomaly",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-external-user-added-and-removed-in-short-timeframe",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-known-manganese-ip-and-useragent-activity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-multiple-teams-deleted-by-a-single-user",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-multiple-users-email-forwarded-to-same-destination",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-office-policy-tampering",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-possible-strontium-attempted-credential-harvesting-oct-2020-7b515f8d",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-possible-strontium-attempted-credential-harvesting-oct-2020-ab8adcf6",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-possible-strontium-attempted-credential-harvesting-sept-2020",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-rare-and-potentially-high-risk-office-operations",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-sharepointfileoperation-via-devices-with-previously-unseen-user-agents",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-sharepointfileoperation-via-previously-unseen-ips",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-ti-map-email-entity-to-officeactivity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-ti-map-ip-entity-to-officeactivity",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "o365-ti-map-url-entity-to-officeactivity-data",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "out-of-date-microsoft-security-intelligence-updates-detection",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "preview-microsoft-threat-intelligence-analytics",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "registry-key-analysis-for-potential-lolbas-persistence",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "scheduled-task-created-to-launch-suspicious-file-extension",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "successful-login-post-url-click-detection",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "successful-login-post-url-click-detection-1",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "suspicious-commands-over-wmi",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "suspicious-ldap-queries",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "suspicious-ldap-search-performed",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "suspicisadfasous-process-injection-detected",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "t1018-remote-system-discovery",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "t1087-001-account-discovery-local-account",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "defender_custom_detection",
+      "rule_id": "t1087-002-account-discovery-domain-account",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    },
+    {
+      "asset_kind": "sentinel_analytic",
+      "rule_id": "test",
+      "severity": "informational",
+      "status": "production",
+      "tactics": [],
+      "techniques": []
+    }
+  ],
+  "schema_version": 1,
+  "summary": {
+    "coverage_sub_techniques_covered": 16,
+    "coverage_sub_techniques_total": 475,
+    "coverage_tactics_covered": 11,
+    "coverage_tactics_total": 15,
+    "coverage_techniques_covered": 45,
+    "coverage_techniques_total": 222,
+    "deprecated": 1,
+    "experimental": 1,
+    "production": 146,
+    "total": 148
+  }
+}

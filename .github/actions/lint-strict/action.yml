@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 KustoKing / SecM8
+# SPDX-License-Identifier: Apache-2.0
+
+# Kusto.Language strict-lint wrapper (G1).
+# Builds tools/kql_strict.dll, optionally refreshes schemas from the
+# live tenant, then runs `contentops lint --strict`.
+#
+# Extracted from validate.yml + lint.yml — those workflows now call
+# this composite instead of duplicating the .NET SDK + NuGet + build
+# + lint steps.
+#
+# Callers:
+#   - validate.yml (PR gate, pre-pr-refresh: true)
+#   - validate.yml lint-regression job (push/schedule/dispatch)
+
+name: lint-strict
+description: Build kql_strict.dll and run contentops lint --strict.
+
+inputs:
+  path:
+    description: Detection directory to lint
+    required: false
+    default: 'detections'
+  fail-on-warn:
+    description: Promote warnings to errors
+    required: false
+    default: 'false'
+  pre-pr-refresh:
+    description: >
+      Run pre-PR schema refresh from live Sentinel + Defender XDR
+      sources (needs OIDC). Failures are swallowed — lint falls
+      back to the committed baseline schemas.
+    required: false
+    default: 'false'
+  sentinel-schemas:
+    description: Path to the Sentinel schemas JSON file (used by pre-pr-refresh only)
+    required: false
+    default: 'tools/kql_strict/schemas.json'
+  defender-schemas:
+    description: Path to the Defender XDR schemas JSON file (used by pre-pr-refresh only)
+    required: false
+    default: 'tools/kql_strict/schemas_defender.json'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up .NET 8 SDK
+      uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # v5.2.0
+      with:
+        dotnet-version: 8.0.x
+        global-json-file: tools/kql_strict/global.json
+
+    - name: Cache NuGet packages
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+      with:
+        path: ~/.nuget/packages
+        key: nuget-kql-strict-${{ hashFiles('tools/kql_strict/**/*.csproj', 'tools/kql_strict/global.json') }}
+        restore-keys: |
+          nuget-kql-strict-
+
+    - name: Build kql_strict wrapper
+      shell: bash
+      run: bash scripts/build_kql_strict.sh
+
+    - name: Pre-PR schema refresh (best-effort)
+      if: inputs.pre-pr-refresh == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        SENTINEL_SCHEMAS: ${{ inputs.sentinel-schemas }}
+        DEFENDER_SCHEMAS: ${{ inputs.defender-schemas }}
+      run: |
+        contentops upstream pre-pr-refresh \
+          --sentinel-schemas "$SENTINEL_SCHEMAS" \
+          --defender-schemas "$DEFENDER_SCHEMAS"
+
+    - name: contentops lint --strict
+      shell: bash
+      env:
+        LINT_PATH: ${{ inputs.path }}
+        FAIL_ON_WARN: ${{ inputs.fail-on-warn }}
+      run: |
+        ARGS=( "--path" "$LINT_PATH" "--strict" )
+        if [ "$FAIL_ON_WARN" = "true" ]; then
+          ARGS+=("--fail-on-warn")
+        fi
+        contentops lint "${ARGS[@]}"

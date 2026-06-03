@@ -1,0 +1,26 @@
+id: sentinel-test-scheduled-001
+version: "1.0.0"
+platform: sentinel
+status: production
+
+sentinel:
+  kind: Scheduled
+  displayName: "Test Scheduled Rule"
+  description: "A test Scheduled rule"
+  enabled: true
+  severity: High
+  query: |
+    SecurityEvent
+    | where EventID == 4625
+    | summarize count() by IpAddress
+  queryFrequency: PT5M
+  queryPeriod: PT1H
+  triggerOperator: GreaterThan
+  triggerThreshold: 0
+  tactics:
+    - CredentialAccess
+  entityMappings:
+    - entityType: IP
+      fieldMappings:
+        - identifier: Address
+          columnName: IpAddress

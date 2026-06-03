@@ -1,0 +1,70 @@
+name: References URL check
+
+# Weekly HEAD-check every URL in detection metadata (`references[]`,
+# `runbookUrl`). Per NVISO Part 3 — references rot quietly, and
+# without periodic verification a citation can age into a 404
+# without anyone noticing until an analyst follows the link mid-triage.
+#
+# Manual dispatch supports an `--allow` substring (passed via input)
+# to skip known-flaky hostnames during incident windows.
+
+on:
+  schedule:
+    # Saturday 06:00 UTC. Off the silent-rules + status-refresh cadence
+    # so the operator's Monday morning dashboard view isn't competing
+    # with three reports landing simultaneously.
+    - cron: '0 6 * * 6'
+  workflow_dispatch:
+    inputs:
+      allow:
+        description: "Substring to skip during this run (e.g. login.microsoftonline.com)."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  # For the failure-notification action on scheduled runs (matches
+  # silent-rules.yml pattern).
+  issues: write
+
+concurrency:
+  group: references-check
+  cancel-in-progress: false
+
+jobs:
+  check-references:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: HEAD-check every URL
+        # Route `inputs.allow` through an env var so the shell sees it
+        # as a regular string (same expression-injection pattern as
+        # silent-rules.yml).
+        env:
+          INPUT_ALLOW: ${{ github.event_name == 'workflow_dispatch' && inputs.allow || '' }}
+        run: |
+          set -euo pipefail
+          ARGS=( "--format" "summary" )
+          if [ -n "$INPUT_ALLOW" ]; then
+            ARGS+=( "--allow" "$INPUT_ALLOW" )
+          fi
+          python scripts/check_references.py "${ARGS[@]}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

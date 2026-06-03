@@ -1,0 +1,20 @@
+# Runtime dependencies for ContentOps powered by SecM8.
+#
+# *** Mirror of pyproject.toml [project.dependencies] — DO NOT DIVERGE. ***
+#
+# `pyproject.toml` is the source of truth; this file is the
+# `pip install -r` mirror that GitHub Actions and the pip cache key
+# off (`setup-python` with `cache: pip` hashes this file). Renovate
+# updates both files in lockstep. When editing by hand:
+#   1. Edit pyproject.toml first (the canonical list).
+#   2. Mirror the version pins here, byte-for-byte.
+#   3. Commit both. CI's pip-audit fails the build if either file
+#      carries an unsuppressed advisory; the duplication is intentional
+#      so neither ecosystem's tooling needs to fall back.
+# See CONTRIBUTING.md for the policy.
+azure-identity==1.25.3
+httpx==0.28.1
+pydantic==2.13.3
+pyyaml==6.0.3
+click==8.3.3
+python-dotenv==1.2.2

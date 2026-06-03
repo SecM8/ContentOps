@@ -1,0 +1,92 @@
+name: Status refresh
+
+# Regenerates docs/status/configuration.md and docs/status/deployments.md
+# from the current repo state (full L1-L7 conformance, state/state.json,
+# audit/*.jsonl, detections/) and commits any diff directly to main.
+#
+# L3-L7 conformance hits real Azure: OIDC tokens (L3), Graph permissions
+# (L4), RBAC + Sentinel onboarding (L5), functional reach (L6), GitHub
+# repo (L7). Auth is the same OIDC + pipeline-setup composite drift.yml
+# uses. Every rendered detail / remediation cell flows through
+# `contentops.status.redact` before landing in the committed markdown,
+# so subscription IDs, full ARM resource paths, and GUID-shaped tenant
+# / object IDs never reach the repo. A `.gitleaks.toml` rule on
+# `docs/status/*.md` is the belt to the redactor's braces.
+#
+# Cadence chosen to stay out of the way of other dailies:
+#   03:00 UTC -- Public mirror sync
+#   04:00 UTC -- this workflow
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # daily at 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit the refreshed status pages directly to main
+  id-token: write   # OIDC token exchange for azure/login (L3-L7)
+
+concurrency:
+  group: status-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Federated credential subject path matches the `automation`
+    # environment (same as drift.yml -- read-mostly OIDC flows).
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action handles checkout (persist-credentials: true so
+        # the later push works), python 3.12, requirements install,
+        # tenant.yml materialisation from secret, and azure/login via
+        # OIDC. See .github/actions/pipeline-setup/action.yml.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Regenerate status pages (L1-L7)
+        # --scope all runs every conformance layer. L1-L2 are local;
+        # L3-L7 hit Azure (read-only) using the OIDC token acquired
+        # above. The redactor strips tenant identifiers from the
+        # rendered output before commit.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m contentops status all --scope all
+
+      - name: Commit and push (skip when no diff)
+        run: |
+          set -euo pipefail
+          git config user.name 'contentops-bot[bot]'
+          git config user.email 'noreply@kustoking.com'
+          git add docs/status/
+          if git diff --cached --quiet; then
+            echo "No changes -- status pages already current."
+            echo "## Status refresh -- no changes" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          today=$(date -u +%Y-%m-%d)
+          git commit -s -m "chore(status): refresh ${today}"
+          git push origin HEAD:main
+          {
+            echo "## Status refresh -- pushed"
+            echo ""
+            echo "Date: \`${today}\`"
+            echo ""
+            echo '```'
+            git show --stat HEAD
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

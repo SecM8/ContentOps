@@ -1,0 +1,108 @@
+name: Production promotion check
+
+on:
+  pull_request:
+    paths:
+      - "detections/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-promotions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base ref
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch origin "$BASE_REF"
+
+      - name: Decide whether to gate this PR
+        # Skip the promotion gate when the PR's HEAD commit is a
+        # `chore(collect):` or `chore(drift):` snapshot. Collected
+        # content is a tenant→git mirror of already-promoted rules;
+        # drift PRs are bot-authored reconciliation. Neither
+        # represents a NEW human-initiated promotion that needs the
+        # `contentops lifecycle promote` stamp.
+        #
+        # Mirrors the same prefix-based skip in deploy.yml's gate
+        # step (see invariant in CONTRIBUTING / OPERATOR_GUIDE about
+        # auto-deploy short-circuits for bot-mirror commits).
+        #
+        # Limitation: this only checks the HEAD commit subject. A
+        # PR that mixes a chore(collect) commit with a real
+        # human-authored promotion in a separate commit would
+        # currently skip — that mixed shape isn't expected, and a
+        # reviewer can require a clean PR. If it becomes a real
+        # problem, the script can be taught to per-rule diff against
+        # only the human-authored commits in the PR range.
+        id: gate
+        run: |
+          subj=$(git log -1 --format=%s)
+          echo "Head commit subject: $subj"
+          if echo "$subj" | grep -qE '^chore\((collect|drift)\):'; then
+            echo "::notice::Head commit is a $subj — collected/drifted content, not a human-initiated promotion. Skipping promotion gate."
+            {
+              echo "## Production promotion check: skipped"
+              echo ""
+              echo "Head commit subject \`$subj\` matches \`chore(collect|drift):\`. Collected and drift-reconciliation content is a snapshot of already-promoted rules in the tenant — the lifecycle.promotedAt gate does not apply."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install PyYAML
+        if: steps.gate.outputs.skip != 'true'
+        run: pip install pyyaml
+
+      - name: Detect production promotions
+        if: steps.gate.outputs.skip != 'true'
+        # The script writes the Markdown report to promotions.md
+        # regardless of exit code, then exits 1 when any detected
+        # promotion lacks a fresh ``lifecycle.promotedAt`` stamp written
+        # by ``contentops lifecycle promote``. Promotions stamped by the
+        # CLI pass; direct YAML edits flipping status fail the check.
+        # The sticky comment + step summary still publish (see ``if:
+        # always()`` below) so reviewers can read the per-rule reason
+        # even when the check is red.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set +e
+          python scripts/detect_production_promotions.py \
+            --base "origin/$BASE_REF" \
+            --head HEAD \
+            --out promotions.md
+          script_rc=$?
+          cat promotions.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$script_rc"
+
+      - name: Post sticky PR comment
+        # always() so the comment lands even when the gate exit-1's —
+        # the comment is how the reviewer sees WHICH rule is missing
+        # the stamp. Skipped runs don't post a comment because there
+        # are no per-rule details to report.
+        if: always() && steps.gate.outputs.skip != 'true'
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
+        with:
+          header: production-promotions
+          path: promotions.md

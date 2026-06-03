@@ -1,0 +1,153 @@
+name: Deployment conformance
+
+# Weekly read-only check that the entire ContentOps deployment is
+# wired correctly end-to-end: OIDC token acquisition, Microsoft Graph
+# permissions on the App Registration, Azure RBAC + Sentinel
+# onboarding on every configured workspace, live read reach against
+# ARM + Graph, and GitHub repo secrets + branch protection.
+#
+# Read-only by construction (no PUT / PATCH / DELETE issued anywhere).
+# Safe against production.
+#
+# Verifies BOTH App Registrations (separation of duties): a matrix runs
+# the check once per identity, each authenticating AS that identity via
+# its own OIDC federated credential —
+#   * read  — the automation identity (Sentinel/LA Reader +
+#     CustomDetection.Read.All); the `read` profile also asserts the write
+#     grants are ABSENT. Runs in the `automation` environment. Scoped
+#     L1-L6 (L7 GitHub-repo checks are identity-independent).
+#   * write — the deploy identity (Sentinel Contributor +
+#     CustomDetection.ReadWrite.All). Runs in the `conformance`
+#     environment (operator-created, no reviewer, AZURE_CLIENT_ID scoped
+#     to the write App Reg + a federated credential on it for
+#     `repo:<owner>/<repo>:environment:conformance`). Runs all layers
+#     incl. L7.
+#
+# On a failed scheduled run, a dedup'd pipeline-alert issue is
+# opened / commented via the existing notify-workflow-failure action,
+# so a broken App Registration / RBAC change / branch-protection
+# regression surfaces by Monday morning at the latest.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'  # Mondays 05:00 UTC (staggered from 07:00)
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Layers to run (e.g. 'all', 'L1-L4', 'L1,L2,L6'). Empty = per-identity default (read: L1-L6, write: all)."
+        required: false
+        default: ''
+        type: string
+      exit-zero:
+        description: "Always exit 0 — useful when you want the report without failing the workflow"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write          # OIDC token exchange for azure/login
+  issues: write            # notify-workflow-failure may open/comment an issue
+  # NB: the GITHUB_TOKEN cannot be granted `administration` scope, so L7's
+  # branch_protection check can't READ the rule and SKIPs (see conformance.py)
+  # — it would need an admin-scoped PAT / GitHub App token to verify.
+
+concurrency:
+  # Scheduled weekly run; don't cancel a Monday probe mid-flight just
+  # because someone dispatched a manual rerun.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  conformance:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # Check both identities even if one fails — a write-identity gap
+      # shouldn't hide a read-identity SoD regression, or vice versa.
+      fail-fast: false
+      matrix:
+        include:
+          # Read/automation identity. The `automation` environment's
+          # env-scoped AZURE_CLIENT_ID = the read App Reg. L7 (GitHub repo)
+          # is identity-independent and runs in the write job, so the read
+          # job is scoped L1-L6.
+          - identity: read
+            gh_environment: automation
+            default_scope: "L1-L6"
+          # Write/deploy identity. Operator-created `conformance`
+          # environment (no reviewer) with AZURE_CLIENT_ID = the write App
+          # Reg + a federated credential for its environment subject. Runs
+          # all layers incl. L7.
+          - identity: write
+            gh_environment: conformance
+            default_scope: "all"
+    environment: ${{ matrix.gh_environment }}
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          role: prod
+
+      - name: Run contentops conformance (${{ matrix.identity }} identity)
+        env:
+          INPUT_IDENTITY: ${{ matrix.identity }}
+          # Empty dispatch input → per-identity default scope from the matrix.
+          INPUT_SCOPE: ${{ inputs.scope || matrix.default_scope }}
+          INPUT_EXIT_ZERO: ${{ inputs.exit-zero || 'false' }}
+          # Auto-populated by Actions, but spelling it out lets L7 (write
+          # job) pick up the repo without needing .contentops-conformance.yml.
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # GH_TOKEN lets the conformance L7 layer call `gh api` for
+          # secret-name enumeration and branch-protection inspection.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          exit_flag=""
+          if [ "$INPUT_EXIT_ZERO" = "true" ]; then
+            exit_flag="--exit-zero"
+          fi
+          contentops conformance \
+            --identity "$INPUT_IDENTITY" \
+            --scope "$INPUT_SCOPE" \
+            --format text \
+            $exit_flag \
+            | tee "conformance-report-${INPUT_IDENTITY}.txt"
+          # Always also emit the machine-readable sidecar so the
+          # uploaded artifact is useful regardless of pass/fail.
+          contentops conformance \
+            --identity "$INPUT_IDENTITY" \
+            --scope "$INPUT_SCOPE" \
+            --format json \
+            --exit-zero \
+            --out "conformance-report-${INPUT_IDENTITY}.json"
+
+      - name: Upload conformance report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: conformance-report-${{ matrix.identity }}
+          path: |
+            conformance-report-${{ matrix.identity }}.txt
+            conformance-report-${{ matrix.identity }}.json
+          if-no-files-found: warn
+
+      - name: Notify on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }} (${{ matrix.identity }})
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

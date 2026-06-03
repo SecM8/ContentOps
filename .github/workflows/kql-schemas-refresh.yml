@@ -1,0 +1,119 @@
+name: KQL schemas refresh
+
+# Nightly + on-demand refresh of `tools/kql_strict/schemas.json` from
+# the live Log Analytics workspace metadata API. Sentinel tables AND
+# Defender XDR pseudo-tables (surfaced via the M365 Defender connector)
+# both come from a single `/v1/workspaces/<id>/metadata` fetch.
+#
+# The C# strict-lint wrapper at `tools/kql_strict/` loads this JSON at
+# startup; with a fresh schema it can promote KS204 / KS142 findings
+# back to upstream severity (instead of always-warning). When this file
+# falls out of sync, the wrapper still works in no-schema mode (logs an
+# advisory + downgrades to warning).
+#
+# Cadence: 03:30 UTC nightly (10 minutes before status-refresh's 04:00
+# slot so the two scheduled OIDC flows don't collide).
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # commit the updated schemas.json + WHATSNEW file
+  pull-requests: write     # open the schema-refresh PR
+  id-token: write          # OIDC token exchange for azure/login
+  issues: write            # notify-workflow-failure on scheduled failures
+
+concurrency:
+  group: kql-schemas-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: automation
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      PIPELINE_WORKSPACE_ID: ${{ vars.PIPELINE_WORKSPACE_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Check workspace schemas (Sentinel side, LA metadata)
+        # Workspace-id resolution order: the `PIPELINE_WORKSPACE_ID`
+        # env var (set in the job `env:` block from the Actions
+        # variable) is an explicit override; when it is empty the id
+        # auto-derives from config/tenant.yml's prod entry via ARM
+        # (`resolve_workspace_id(role='prod')`, PR-J). Pass
+        # --workspace-id on the CLI to override per-step.
+        run: |
+          set -euo pipefail
+          contentops upstream check-schemas --write
+
+      - name: Check Defender XDR schemas (Graph Advanced Hunting)
+        # Refreshes tools/kql_strict/schemas_defender.json by running
+        # `<table> | getschema` per vendored table via Graph
+        # runHuntingQuery. Requires ThreatHunting.Read.All on the App
+        # Registration; fail-loud message points at
+        # docs/operations/authentication-setup.md if missing.
+        # Honours `config/lint_strict.yml: defender.enabled` (and the
+        # master `mode: off`).
+        run: |
+          set -euo pipefail
+          contentops upstream check-defender-schema --write
+
+      - name: Open PR if tree changed
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          branch: kql-schemas/auto-${{ github.run_id }}
+          commit-message: "chore(kql-schemas): refresh from LA workspace metadata"
+          title: "chore(kql-schemas): refresh (run ${{ github.run_id }})"
+          body: |
+            Auto-opened by `.github/workflows/kql-schemas-refresh.yml`.
+            Pulls table + column metadata from
+            `/v1/workspaces/<id>/metadata` and writes the result to
+            `tools/kql_strict/schemas.json`. Review the diff in
+            `docs/whats-new/<date>-schemas.md` for the human summary.
+          labels: kql-schemas,automated
+          add-paths: |
+            tools/kql_strict/schemas.json
+            tools/kql_strict/schemas_defender.json
+            docs/whats-new/**
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Step summary
+        if: always()
+        run: |
+          if [ "${{ steps.auto-pr.outputs.changed }}" = "true" ]; then
+            {
+              echo "## KQL schemas — changes detected"
+              echo ""
+              echo '```'
+              git status --porcelain
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## KQL schemas — no changes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Notify on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

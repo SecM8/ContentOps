@@ -1,0 +1,204 @@
+# Emergency disable workflow — break-glass path for SOC on-call.
+#
+# Wall-clock target: <=5 minutes from dispatch to opened PR.
+#
+# Flow:
+#   workflow_dispatch -> branch -> `contentops disable` -> commit -> PR
+#
+# This workflow ONLY opens a pull request. It DOES NOT auto-merge and it
+# DOES NOT call `contentops apply`. A human reviewer must approve and merge
+# the PR; the regular `deploy.yml` workflow then deploys on push to main.
+#
+# Auto-merge was removed in PR 13 because it cannot be enabled safely
+# without documented branch-protection rules and a separate dedicated
+# review (see docs/emergency-disable-workflow.md → "Future hardening").
+#
+# Bot identity: siemcontent-bot via the default GITHUB_TOKEN.
+
+name: Emergency disable
+
+on:
+  workflow_dispatch:
+    inputs:
+      rule_id:
+        description: "Envelope id of the rule to disable (e.g. sentinel-noisy-foo). Single rule only."
+        required: true
+        type: string
+      reason:
+        description: "Why are you disabling this? Recorded in the YAML and PR body. REQUIRED."
+        required: true
+        type: string
+      confirm:
+        description: 'Type the literal string "DISABLE" to confirm.'
+        required: true
+        type: string
+
+permissions:
+  contents: write           # create branch + commit
+  pull-requests: write      # open PR
+  # Intentionally NOT requested: actions:write, id-token:write, deployments:write.
+  # No Azure auth happens here — the workflow only edits a YAML file and opens a PR.
+
+concurrency:
+  # Serialize per-rule so two operators can't fight over the same file.
+  group: emergency-disable-${{ inputs.rule_id }}
+  cancel-in-progress: false
+
+jobs:
+  disable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate confirmation string
+        env:
+          INPUT_CONFIRM: ${{ inputs.confirm }}
+          INPUT_REASON: ${{ inputs.reason }}
+        run: |
+          if [ "$INPUT_CONFIRM" != "DISABLE" ]; then
+            echo "::error::confirm input must be the literal string DISABLE"
+            exit 1
+          fi
+          if [ -z "$INPUT_REASON" ]; then
+            echo "::error::reason input must be non-empty"
+            exit 1
+          fi
+
+      - name: Validate rule_id format
+        env:
+          INPUT_RULE_ID: ${{ inputs.rule_id }}
+        run: |
+          # Mirrors the EnvelopeV2.id regex: ^[a-z0-9][a-z0-9\-]*[a-z0-9]$.
+          if ! [[ "$INPUT_RULE_ID" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$ ]]; then
+            echo "::error::rule_id must match ^[a-z0-9][a-z0-9-]*[a-z0-9]$ — wildcards and broad patterns are forbidden."
+            exit 1
+          fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+      - name: Configure git identity
+        run: |
+          git config user.name "siemcontent-bot"
+          git config user.email "siemcontent-bot@users.noreply.github.com"
+
+      - name: Create emergency branch
+        id: branch
+        env:
+          RULE_ID: ${{ inputs.rule_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          BRANCH="emergency-disable/${RULE_ID}-${RUN_NUMBER}"
+          git checkout -b "$BRANCH"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Run contentops disable (single rule, content-only)
+        env:
+          RULE_ID: ${{ inputs.rule_id }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          contentops disable "$RULE_ID" --reason "$REASON"
+
+      - name: Verify exactly one detection YAML changed
+        run: |
+          if git diff --quiet -- detections; then
+            echo "::error::No diff produced under detections/ — rule '${{ inputs.rule_id }}' not found or already deprecated."
+            exit 1
+          fi
+          # Disallow accidental changes outside detections/ — except the
+          # break-glass audit record, which `contentops disable` appends to
+          # audit/*.jsonl and which MUST be committed alongside the YAML to
+          # keep the hash chain intact.
+          if ! git diff --quiet -- ':!detections' ':!audit'; then
+            echo "::error::Unexpected changes outside detections/ and audit/. Aborting."
+            git --no-pager diff --name-status -- ':!detections' ':!audit'
+            exit 1
+          fi
+          # Disallow multi-file blast radius — disable should touch one file.
+          changed=$(git diff --name-only -- detections | wc -l)
+          if [ "$changed" -ne 1 ]; then
+            echo "::error::Expected exactly 1 detection file to change, got $changed"
+            git --no-pager diff --name-status -- detections
+            exit 1
+          fi
+
+      - name: Show diff (audit)
+        run: git --no-pager diff -- detections
+
+      - name: Commit (detections)
+        env:
+          RULE_ID: ${{ inputs.rule_id }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # audit/*.jsonl is gitignored (artifact-only, per-run chain — see
+          # SECURITY.md), so it must NOT be staged: `git add -- audit` aborts
+          # with "paths are ignored by .gitignore" and kills the commit
+          # (break-glass never opened a PR). Stage only the detection YAML;
+          # the audit record `contentops disable` wrote stays local/ephemeral.
+          git add -- detections
+          git commit --signoff -m "chore(soc): emergency disable ${RULE_ID}" \
+            -m "Reason: ${REASON}" \
+            -m "Triggered by: @${ACTOR} via emergency-disable.yml run ${{ github.run_id }}" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+
+      - name: Push branch
+        run: git push --set-upstream origin "${{ steps.branch.outputs.name }}"
+
+      - name: Open PR (manual merge required)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RULE_ID: ${{ inputs.rule_id }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # S3 — write the PR body to a file and pass --body-file rather
+        # than interpolating ${REASON} into a shell heredoc. The
+        # `reason` input is operator-supplied free text; a value
+        # containing backticks, $-substitutions, or unbalanced quotes
+        # would otherwise be interpreted by the shell before `gh`
+        # sees it. Writing to a file via the env binding sidesteps
+        # the shell entirely.
+        run: |
+          set -euo pipefail
+          {
+            echo "Emergency disable triggered via workflow_dispatch by @${ACTOR}."
+            echo
+            echo "**Rule:** \`${RULE_ID}\`"
+            echo "**Reason:** ${REASON}"
+            echo "**Run:** ${RUN_URL}"
+            echo
+            echo "This PR was generated by \`emergency-disable.yml\`. It must be reviewed and merged by an authorized human; automatic merging is intentionally disabled. After merge, \`deploy.yml\` will roll the change to the tenant on push-to-main."
+          } > emergency_pr_body.md
+          gh pr create \
+            --title "[EMERGENCY] disable ${RULE_ID}" \
+            --body-file emergency_pr_body.md \
+            --label emergency \
+            --base main \
+            --head "${{ steps.branch.outputs.name }}"
+
+      - name: Audit summary
+        env:
+          RULE_ID: ${{ inputs.rule_id }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          {
+            echo "## Emergency disable triggered"
+            echo ""
+            echo "- Rule: \`${RULE_ID}\`"
+            echo "- Reason: ${REASON}"
+            echo "- Branch: \`${{ steps.branch.outputs.name }}\`"
+            echo "- Triggered by: @${ACTOR}"
+            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "PR opened. Awaiting human review/merge — automatic merging disabled by design."
+          } >> "$GITHUB_STEP_SUMMARY"

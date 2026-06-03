@@ -1,0 +1,171 @@
+name: Collect detections
+
+# Weekly snapshot: runs `contentops collect --full` against the live
+# tenant, opens a PR with the diff. Distinct from drift.yml — drift
+# opens a PR per-asset-kind on a daily cadence; collect is the
+# weekly "everything" snapshot.
+
+on:
+  schedule:
+    - cron: '30 5 * * 1'  # Mondays 05:30 UTC (staggered from 06:00)
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Optional tenant env slug. Leave blank for the single-tenant case (config/tenant.yml). Set to e.g. 'integration' only if you maintain a separate config/tenant.integration.yml file (multi-tenant deployments). Default blank."
+        required: false
+        default: ""
+        type: string
+      role:
+        description: "Sentinel workspace role to collect from (prod / integration / dev). Defender XDR is tenant-level and always collected regardless. Default prod."
+        required: false
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - integration
+          - dev
+      full:
+        description: "Run with --full (include fan-out handlers)."
+        required: true
+        default: true
+        type: boolean
+      since:
+        description: "Optional ISO 8601 timestamp; collect only items modified since this point."
+        required: false
+        default: ""
+        type: string
+      workers:
+        description: "Parallel handler workers."
+        required: true
+        default: "4"
+        type: string
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # When `inputs.env` is blank (single-tenant default), serialise as
+  # `collect-default`. When set, use the env-specific lane.
+  group: collect-${{ inputs.env || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # See drift.yml for the full rationale.
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: automation
+    env:
+      # PIPELINE_ENV may be blank — contentops.config.resolve_config_path
+      # treats blank/unset as "use config/tenant.yml" (the single-tenant
+      # default). DESIGN §6.
+      PIPELINE_ENV: ${{ inputs.env }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml.
+        # `role:` picks up the workflow_dispatch input so the
+        # collect runs against the requested role's workspace;
+        # PIPELINE_ENV is already exported on the job env above,
+        # so the composite's env-aware tenant-config path
+        # (config/tenant.${PIPELINE_ENV}.yml fallback to
+        # config/tenant.yml) activates automatically.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          tenant-config-env-yaml: ${{ secrets.TENANT_CONFIG_ENV_YAML }}
+          role: ${{ inputs.role || 'prod' }}
+
+      - name: Run contentops collect
+        # Route operator-supplied free-text inputs through env vars
+        # so the shell sees them as regular strings rather than via
+        # template substitution (which would re-evaluate the value
+        # at the shell parser BEFORE the run line ran -- classic
+        # expression-injection vector).
+        env:
+          INPUT_WORKERS: ${{ inputs.workers || '8' }}
+          INPUT_ROLE: ${{ inputs.role || 'prod' }}
+          INPUT_FULL: ${{ inputs.full }}
+          INPUT_SINCE: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+          ARGS=(
+            "--path" "detections"
+            "--workers" "$INPUT_WORKERS"
+            "--role" "$INPUT_ROLE"
+          )
+          if [ "$INPUT_FULL" = "false" ]; then
+            ARGS+=("--no-full")
+          fi
+          if [ -n "$INPUT_SINCE" ]; then
+            ARGS+=("--since" "$INPUT_SINCE")
+          fi
+          contentops collect "${ARGS[@]}"
+
+      # The "Sync legacy-detection allowlist" step that previously sat
+      # here was deleted: ``scripts/check_legacy_detection_allowlist.py``
+      # and ``config/legacy_detections_allowlist.txt`` were both removed
+      # in Phase 1's v1-legacy purge (PR #125). The doc-side cleanup
+      # landed in PR #147 but the workflow step itself was missed --
+      # the weekly cron would have failed on the first run. Removed
+      # here as part of the Phase 7 actionlint sweep.
+
+      - name: Render PR body
+        env:
+          PIPELINE_ENV_DISPLAY: ${{ env.PIPELINE_ENV }}
+          INPUT_WORKERS: ${{ inputs.workers || '8' }}
+          INPUT_FULL: ${{ inputs.full }}
+          INPUT_SINCE: ${{ inputs.since }}
+        run: |
+          {
+            echo "## Collect snapshot — $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "- Env: \`$PIPELINE_ENV_DISPLAY\`"
+            echo "- Workers: \`$INPUT_WORKERS\`"
+            echo "- Full: \`$INPUT_FULL\`"
+            echo "- Since: \`${INPUT_SINCE:-(none)}\`"
+            echo ""
+            echo "Files changed:"
+            echo '```'
+            git status --porcelain -- detections | head -200
+            echo '```'
+          } > collect_body.md
+
+      - name: Open PR if tree changed
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: detections
+          branch: collect/${{ github.run_id }}
+          commit-message: "chore(collect): snapshot live tenant"
+          title: "chore(collect): live tenant snapshot ${{ github.run_id }}"
+          body-path: collect_body.md
+          labels: collect,automated
+          add-paths: "detections/**"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Step summary
+        if: always()
+        # Route values through env vars rather than interpolating
+        # ${{ ... }} directly in the shell — matches the safe pattern
+        # used in the "Run contentops collect" step above.
+        env:
+          COLLECT_ENV: ${{ env.PIPELINE_ENV }}
+          COLLECT_CHANGED: ${{ steps.auto-pr.outputs.changed }}
+        run: |
+          {
+            echo "## Collect"
+            echo ""
+            echo "- Env: \`$COLLECT_ENV\`"
+            echo "- Tree changed: \`$COLLECT_CHANGED\`"
+          } >> "$GITHUB_STEP_SUMMARY"

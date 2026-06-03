@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: 2026 KustoKing / SecM8
+# SPDX-License-Identifier: Apache-2.0
+
+# Open (or comment on) a GitHub issue when a scheduled / load-bearing
+# workflow fails. Deduplicates by title so a workflow failing N weeks
+# in a row produces ONE issue with N comments, not N issues.
+#
+# Wired into the three load-bearing scheduled workflows whose silent
+# failure would be the worst case:
+#
+#   - audit-verify.yml — weekly chain integrity check. A red run is a
+#     compliance-grade signal; missing it is the worst case.
+#   - drift.yml (scheduled job only — drift-pr-mode failures are
+#     informational and do NOT page).
+#   - silent-rules.yml — weekly silent-rule report. A failure means
+#     no operator visibility into rules with zero alerts.
+#
+# Uses GITHUB_TOKEN — no external webhook required. Issues are labelled
+# `pipeline-alert` so they can be filtered out of normal triage.
+#
+# Usage:
+#
+#   - name: Notify on failure
+#     if: failure() && github.event_name == 'schedule'
+#     uses: ./.github/actions/notify-workflow-failure
+#     with:
+#       workflow-name: ${{ github.workflow }}
+#       run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+#
+# Why "if: failure() && github.event_name == 'schedule'": PR-triggered
+# runs of these workflows are not load-bearing — a PR that touches
+# audit/ correctly fails audit-verify; opening an issue every time
+# would create churn. Schedule failures are the load-bearing signal.
+
+name: notify-workflow-failure
+description: Open or comment on a GitHub issue when a scheduled workflow fails.
+
+inputs:
+  workflow-name:
+    description: github.workflow value
+    required: true
+  run-url:
+    description: URL of the failing workflow run
+    required: true
+  github-token:
+    description: 'Token with `issues: write` scope (GITHUB_TOKEN is sufficient)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Open or update pipeline-alert issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        RUN_URL: ${{ inputs.run-url }}
+      run: |
+        set -euo pipefail
+
+        TITLE="[pipeline-alert] ${WORKFLOW_NAME} scheduled run failed"
+        TS="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        BODY=$(cat <<EOF
+        Scheduled run of \`${WORKFLOW_NAME}\` failed at ${TS}.
+
+        - Run: ${RUN_URL}
+        - Workflow file: \`.github/workflows/${WORKFLOW_NAME}.yml\` (best guess; see the run link for the canonical path)
+
+        Recovery guidance:
+
+        - \`audit-verify\` failure → see \`docs/operations/audit-recovery.md\`.
+        - \`drift\` failure → check tenant.yml secrets are current and the
+          App Reg federated credential subjects still match the GitHub
+          Environment names.
+        - \`silent-rules\` failure → verify \`PIPELINE_WORKSPACE_ID\` is set
+          and the Log Analytics Query API is reachable.
+
+        Close this issue once the next scheduled run is green; reopen
+        if it goes red again. New failures of the same workflow comment
+        on this issue rather than creating a new one (dedup by title).
+        EOF
+        )
+
+        # Look up an open issue with the canonical title. Using
+        # ``--search 'in:title'`` keeps the query precise — we don't
+        # want partial-title matches.
+        existing=$(gh issue list \
+          --state open \
+          --label pipeline-alert \
+          --search "in:title \"${TITLE}\"" \
+          --json number \
+          --jq '.[0].number // empty')
+
+        if [ -n "${existing:-}" ] && [[ "${existing}" =~ ^[0-9]+$ ]]; then
+          echo "Existing pipeline-alert issue: #${existing} — adding comment."
+          gh issue comment "${existing}" \
+            --body "Another failure at ${TS}. Run: ${RUN_URL}"
+        elif [ -n "${existing:-}" ]; then
+          echo "::warning::Unexpected issue number format '${existing}', skipping comment."
+        else
+          echo "Opening new pipeline-alert issue."
+          # ensure the label exists (idempotent — gh swallows the 422
+          # if the label is already there)
+          gh label create pipeline-alert \
+            --description "Auto-opened by .github/actions/notify-workflow-failure on scheduled-workflow failure." \
+            --color "d93f0b" \
+            --force >/dev/null 2>&1 || true
+          gh issue create \
+            --title "${TITLE}" \
+            --label pipeline-alert \
+            --body "${BODY}"
+        fi

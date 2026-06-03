@@ -1,0 +1,55 @@
+id: ${id}
+version: 0.1.0
+asset: ${asset}
+status: experimental
+# Authoring lifecycle stage (T.2). See contentops/core/lifecycle_stage.py.
+lifecycleStage: concept
+legacy: false
+metadata:
+  owner: detection-engineering@example.com
+  runbookUrl: https://example.com/runbooks/${id}
+  severity: medium
+  tactics:
+    - Discovery
+  techniques:
+    - T1083
+  expectedAlertsPerDay: 1
+  fpHandling: |
+    Triage via the Defender XDR portal — confirm the impacted device or
+    user before escalating.
+  # Section T authoring metadata. Strict mode (tenant.yml default)
+  # escalates META002-005 to error; fill these before merging.
+  description: |
+    TODO (META002): single-paragraph summary of what this rule detects.
+  attackDescription: |
+    TODO (META003): what attackers actually do — threat context.
+  # TODO (META004): http(s):// URLs to CVE / MITRE / vendor advisory.
+  references: []
+  # TODO (META005): enumerated FP scenarios.
+  falsePositives: []
+  # TODO (META006, info): known evasion vectors or detection gaps.
+  blindSpots: []
+  # TODO (META007, info): 3-7 concise inline response steps.
+  responseActions: []
+payload:
+  displayName: "${display_name}"
+  isEnabled: true
+  queryCondition:
+    queryText: |
+      DeviceProcessEvents
+      | where Timestamp > ago(1h)
+      | take 100
+  schedule:
+    period: "1H"
+  detectionAction:
+    alertTemplate:
+      title: "${display_name}"
+      description: TODO describe what this detection finds and recommended response.
+      severity: medium
+      category: Discovery
+      mitreTechniques:
+        - T1083
+      impactedAssets:
+        - "@odata.type": "#microsoft.graph.security.impactedDeviceAsset"
+          identifier: deviceId
+    responseActions: []

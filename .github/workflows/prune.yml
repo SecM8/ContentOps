@@ -1,0 +1,206 @@
+name: Prune orphaned rules
+
+# Manual workflow that runs `contentops prune` against a target env. Always
+# starts in dry-run mode; the operator must explicitly disable it AND
+# confirm with `--yes` to actually delete. Environment protection on the
+# `production` env adds reviewer-gated approval before any prod deletion.
+#
+# Posts the prune plan as the workflow run summary; uploads the audit
+# JSONL artefact so every deletion is traceable to a commit + reviewer.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        # type: choice locks operators to the three known tenant
+        # environment slugs. `environment: ${{ inputs.env }}` below
+        # dynamically references the GitHub Environment of the same
+        # name; a free-text `type: string` here would let an operator
+        # supply a non-existent env, which on some GitHub configs
+        # silently bypasses the required-reviewer protection rule on
+        # production deletes. The choice constraint makes the bypass
+        # impossible.
+        description: "Tenant env slug (selects config/tenant.<env>.yml)."
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - integration
+          - dev
+      asset:
+        description: "Optional: restrict to a single asset kind."
+        required: false
+        type: string
+      dry_run:
+        description: "Dry-run mode (default true). Uncheck plus type CONFIRM to actually delete."
+        required: true
+        default: true
+        type: boolean
+      max_deletes:
+        description: "Fail-closed if the orphan list exceeds this. Default 25."
+        required: true
+        default: "25"
+        type: string
+      include_locked:
+        description: "Include locked assets. Default false."
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "Type CONFIRM to allow non-dry-run deletes. Anything else aborts."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  id-token: write
+  # state sync pushes refs/heads/state/<env> after a non-dry-run prune
+  # so the next workflow starts from the post-prune state (entries
+  # removed via state.forget()).
+  contents: write
+
+concurrency:
+  group: prune-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The GitHub Environment name has to match the federated-credential
+    # subject the App Registration was issued, NOT the `--role` tenant.yml
+    # slug. Convention in this repo (matching deploy.yml + integration-
+    # deploy.yml): the prod role binds to the `production` Environment.
+    # Without this mapping the OIDC step fails with AADSTS700213
+    # "No matching federated identity record found for presented assertion
+    # subject 'repo:.../:environment:prod'". The `integration` and `dev`
+    # slugs already match their Environment names so they pass through.
+    environment: ${{ fromJSON('{"prod":"production","integration":"integration","dev":"dev"}')[inputs.env] }}
+    env:
+      PIPELINE_ENV: ${{ inputs.env }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action — see .github/actions/pipeline-setup/action.yml.
+        # PIPELINE_ENV is exported on the job env above; the
+        # composite's env-aware tenant-config path activates
+        # automatically (config/tenant.${PIPELINE_ENV}.yml with
+        # fallback to config/tenant.yml).
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          tenant-config-env-yaml: ${{ secrets.TENANT_CONFIG_ENV_YAML }}
+          role: ${{ inputs.env }}
+
+      - name: Refuse non-dry-run without CONFIRM
+        if: ${{ inputs.dry_run == false && inputs.confirm != 'CONFIRM' }}
+        run: |
+          echo "::error::Refusing to run with dry_run=false and confirm != 'CONFIRM'."
+          echo "Re-run the workflow with confirm=CONFIRM if you actually intend to delete."
+          exit 1
+
+      - name: Pull state before prune
+        # Best-effort: starting from an empty local state.json is fine
+        # — prune re-derives orphans from (git, remote) and writes
+        # state.forget() for each deletion.
+        run: |
+          contentops state sync pull || {
+            echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
+          }
+
+      - name: Run prune
+        id: prune
+        # Route operator-supplied free-text inputs (`max_deletes`,
+        # `asset`, `env`) through env vars so the shell sees them as
+        # regular strings rather than via expression substitution
+        # (which would re-evaluate the value at the shell parser
+        # BEFORE the run line runs -- classic GHA expression-injection
+        # vector).
+        env:
+          INPUT_ENV: ${{ inputs.env }}
+          INPUT_MAX_DELETES: ${{ inputs.max_deletes }}
+          INPUT_ASSET: ${{ inputs.asset }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_INCLUDE_LOCKED: ${{ inputs.include_locked }}
+        run: |
+          set -euo pipefail
+          # Scope to the env's Sentinel workspace by role. PIPELINE_ENV only
+          # selects the tenant CONFIG file; on a multi-workspace tenant the
+          # handler still needs --role to pick which workspace to list/delete
+          # (without it, list_remote raises "specify --role / --workspace" and
+          # prune now fail-closes). Matches rollback.yml / deploy.yml, which
+          # pass --role. --role is a no-op on a single-workspace tenant.
+          ARGS=(
+            "--path" "detections"
+            "--role" "$INPUT_ENV"
+            "--max-deletes" "$INPUT_MAX_DELETES"
+            "--json"
+          )
+          if [ -n "$INPUT_ASSET" ]; then
+            ARGS+=("--asset" "$INPUT_ASSET")
+          fi
+          if [ "$INPUT_DRY_RUN" = "false" ]; then
+            ARGS+=("--no-dry-run" "--yes")
+          fi
+          if [ "$INPUT_INCLUDE_LOCKED" = "true" ]; then
+            ARGS+=("--include-locked")
+          fi
+          contentops prune "${ARGS[@]}" | tee prune.json
+
+      - name: Push state after prune
+        # Only push when we actually deleted (and so wrote state.json).
+        # Dry-run doesn't mutate state; skip the push to keep the
+        # orphan branch's history meaningful.
+        if: ${{ inputs.dry_run == false && inputs.confirm == 'CONFIRM' }}
+        run: |
+          set -euo pipefail
+          if [ -f state/state.json ]; then
+            contentops state sync push
+          else
+            echo "::notice::No state/state.json written; skipping state sync push."
+          fi
+
+      - name: Step summary
+        if: always()
+        # Same env-var routing as the run step above. Even though the
+        # output lands in $GITHUB_STEP_SUMMARY, the echo lines execute
+        # in the shell first — a crafted backtick in `inputs.env`
+        # would otherwise run during summary rendering.
+        env:
+          INPUT_ENV: ${{ inputs.env }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_MAX_DELETES: ${{ inputs.max_deletes }}
+          INPUT_INCLUDE_LOCKED: ${{ inputs.include_locked }}
+        run: |
+          {
+            echo "## Prune"
+            echo ""
+            echo "- env: \`$INPUT_ENV\`"
+            echo "- dry-run: \`$INPUT_DRY_RUN\`"
+            echo "- max-deletes: \`$INPUT_MAX_DELETES\`"
+            echo "- include-locked: \`$INPUT_INCLUDE_LOCKED\`"
+            if [ -f prune.json ]; then
+              echo ""
+              echo "### Plan"
+              echo '```json'
+              # Strip the leading dry-run banner line if present.
+              sed -n '/^{/,$p' prune.json
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit JSONL
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: prune-audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: ignore
+          retention-days: 90
