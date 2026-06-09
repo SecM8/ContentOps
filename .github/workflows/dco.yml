@@ -57,6 +57,17 @@ jobs:
           # Merge commits are skipped (they inherit sign-off from parents).
           for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
             author="$(git log -1 --format='%an <%ae>' "$sha")"
+            author_email="$(git log -1 --format='%ae' "$sha")"
+            # Skip commits authored by the upstream mirror account (KustoKing /
+            # SecM8 bot). These arrive via `--allow-unrelated-histories` stitches
+            # and were never authored through this repo's DCO gate.
+            case "$author_email" in
+              *kustoking*|75278885+KustoKing@users.noreply.github.com|\
+              contentops-mirror@*|siemcontent-bot@*)
+                echo "::notice::Commit $sha by $author is from upstream mirror; skipping DCO."
+                continue
+                ;;
+            esac
             trailer="$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | head -1)"
             if [ -z "$trailer" ]; then
               echo "::error::Commit $sha by $author is missing a Signed-off-by trailer."

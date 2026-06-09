@@ -44,8 +44,50 @@ from the commit history.
 - `scripts/add_spdx_headers.py` plus SPDX headers on every Python file
   in `pipeline/`, `scripts/`, and `tests/`.
 
+### Fixed
+
+- **e2e capability matrix: mocked mode is now hermetic.** Token
+  acquisition goes over `requests` (azure-identity/MSAL), which respx
+  cannot intercept, so the mocked leg's synthetic `AZURE_CLIENT_SECRET`
+  drove a real AAD request, failed, fell back to a credential-less
+  `DefaultAzureCredential`, and every Azure-touching command died at
+  the auth flow before a single mocked route was exercised. Lenient
+  `expect_exit` values masked the degradation until prune's
+  fail-closed blind guard (#349) turned it into a hard
+  `prune.dry_run` failure on every PR touching the CLI surface. The
+  e2e conftest now pre-seeds `contentops.utils.auth`'s credential
+  cache with an `AccessToken`-shaped fake in offline + mocked modes,
+  so the matrix actually flows through the respx routes + in-memory
+  stores (51/51 PASS, and the mocked leg drops from ~60 s to ~2 s —
+  the old runtime was credential-chain timeouts).
+- **`dco.yml` no longer fails fork upstream-sync PRs.** Commits authored
+  by the upstream mirror account arrive on downstream sync branches
+  (via the one-time `--allow-unrelated-histories` stitch) without
+  `Signed-off-by` trailers — they never passed through the fork's DCO
+  gate. The per-commit loop now skips upstream-mirror-authored commits,
+  mirroring the existing PR-author bypass for Dependabot/Renovate. The
+  rebase the failure hint used to suggest (`git rebase --signoff`) is
+  destructive on a sync branch: it rewrites the stitch merge.
+
 ### Changed
 
+- **Fork-sync documentation hardened from a real downstream
+  onboarding:**
+  - `docs/operations/upstream-sync.md` gained §4 "One-time stitch —
+    fork with unrelated history": the
+    `git merge --signoff --allow-unrelated-histories -X theirs`
+    procedure, the true-merge-commit requirement (squash/rebase
+    destroys the stitch), the DCO interaction, and the post-stitch
+    routine-merge loop. The README's upstream-pull section now lists
+    it as the fourth sync workflow.
+  - `docs/operations/github-actions-setup.md` gained §6 "Scheduled
+    workflows — re-point the repo-slug gate" (eleven workflows gate
+    cron runs on the operator slug and silently no-op on forks), a
+    fork caveat on the "Require linear history" branch-protection
+    recommendation, and two new troubleshooting rows (silent
+    schedules, DCO failures on sync PRs). Cross-linked from
+    `workflow-schedule.md`, the operationalization-paths maturity
+    ladder, and the `dco.yml` row in `workflows.md`.
 - `docs/reference/workflows.md` re-aligned with the actual workflow
   inventory: ten previously undocumented workflows added to the index
   (`alerts-report`, `attack-matrix-refresh`, `kql-schemas-refresh`,

@@ -611,6 +611,30 @@ payload:
 # ---------------------------------------------------------------------------
 
 
+class _E2EFakeCredential:
+    """AccessToken-shaped credential for offline + mocked modes.
+
+    Token acquisition cannot be mocked through respx: azure-identity /
+    MSAL issue their token POST over ``requests``, not ``httpx``, so the
+    synthetic ``AZURE_CLIENT_SECRET`` env vars used to drive a *real*
+    request to login.microsoftonline.com (AADSTS failure on a tenant of
+    zeros), fall back to ``DefaultAzureCredential``, and fail outright on
+    a credential-less CI runner. Every Azure-touching command then died
+    at the auth flow before respx saw a single request — lenient
+    ``expect_exit`` values masked it for most capabilities until prune's
+    fail-closed blind guard (#349) made it visible.
+
+    Pre-seeding ``contentops.utils.auth``'s credential cache with this
+    fake keeps the whole token layer in-process so mocked mode exercises
+    the respx routes + in-memory stores it was built around.
+    """
+
+    def get_token(self, *scopes: str, **kwargs: object):
+        from azure.core.credentials import AccessToken
+
+        return AccessToken("mock.access.token.for.e2e", int(time.time()) + 3600)
+
+
 @pytest.fixture
 def scoped_env(sandbox: Sandbox, mode: str,
                monkeypatch: pytest.MonkeyPatch) -> None:
@@ -628,15 +652,18 @@ def scoped_env(sandbox: Sandbox, mode: str,
     # otherwise look for config/tenant.<env>.yml.
     monkeypatch.delenv("PIPELINE_ENV", raising=False)
 
-    # Synthetic AAD creds in offline + mocked modes so:
-    #   * conformance L2 ``auth_env`` check sees env vars set,
-    #   * DefaultAzureCredential in mocked mode walks past
-    #     EnvironmentCredential without prompting.
-    # In live mode we leave the operator's real creds untouched.
+    # Synthetic AAD creds in offline + mocked modes so the conformance
+    # L2 ``auth_env`` check sees env vars set. In live mode we leave
+    # the operator's real creds untouched.
     if mode in ("offline", "mocked"):
         monkeypatch.setenv("AZURE_CLIENT_ID", "00000000-0000-0000-0000-000000000099")
         monkeypatch.setenv("AZURE_TENANT_ID", "00000000-0000-0000-0000-000000000099")
         monkeypatch.setenv("AZURE_CLIENT_SECRET", "mock-secret-not-used")
+        # Short-circuit get_credential() — see _E2EFakeCredential. The
+        # monkeypatch reverts the cache after each capability so live
+        # mode (and the unit suite) never see the fake.
+        import contentops.utils.auth as _auth
+        monkeypatch.setattr(_auth, "_credential_cache", _E2EFakeCredential())
 
     # Redirect the config loader to the sandbox tenant.yml.
     import contentops.config as _config

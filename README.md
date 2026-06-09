@@ -217,7 +217,7 @@ git push origin --tags
 ### Pulling updates from upstream
 
 The public mirror is rebuilt nightly, so a weekly sync is usually plenty.
-Three workflows, fully documented in
+Four workflows, fully documented in
 [`docs/operations/upstream-sync.md`](docs/operations/upstream-sync.md):
 
 - **New install** — clone the mirror, rewire remotes, install (the GHE
@@ -233,6 +233,11 @@ Three workflows, fully documented in
 - **Full reset (pristine)** — force `main` to match the mirror exactly,
   discarding fork-local changes: `git reset --hard upstream/main` then
   `git push --force-with-lease origin main`.
+- **One-time stitch (unrelated histories)** — if your repo was not born
+  as a clone of the mirror, the first merge fails with
+  `fatal: refusing to merge unrelated histories`. Fix once with an
+  [`--allow-unrelated-histories` stitch merge](docs/operations/upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history),
+  and land that PR as a **true merge commit** — never squash/rebase it.
 
 > **Heads-up: `git clean -fdx` deletes `config/tenant.yml` and `.venv/`.**
 > The `-x` flag ignores `.gitignore` **and** `.git/info/exclude`, so it

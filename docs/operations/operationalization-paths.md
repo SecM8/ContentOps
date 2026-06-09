@@ -192,6 +192,14 @@ buys you nothing. Workflow triggers + permissions:
 | **4 — Optimize & watch upstream** | Lint schemas, ATT&CK matrix, and Microsoft catalogs stay fresh; tuning PRs carry blast-radius data | `kql-schemas-refresh.yml`, `attack-matrix-refresh.yml`, `upstream-watchers.yml`, `tuning-impact-preview.yml`, `defender-graph-probe.yml`, `e2e-capability-tests.yml` |
 | **Break-glass** (wire at Stage 2, hope never) | Reviewer-gated undo, rapid silence, recovery | `emergency-disable.yml`, `rollback.yml`, `retry-failed.yml`, `lock-unlock.yml`, `prune.yml` (leave `purgeAllowed: false` until the day you need it) |
 
+> **Fork gotcha — Stage 3+ runs on a schedule, and schedules are
+> slug-gated.** Eleven workflows gate their cron runs on
+> `github.repository == 'KustoKing/SIEMContent'` and silently no-op
+> everywhere else, including your fork (manual dispatch still works).
+> Re-point the gate to your own `<org>/<repo>` before expecting
+> Stage 3/4 to run unattended:
+> [`github-actions-setup.md` §6](github-actions-setup.md#6-scheduled-workflows--re-point-the-repo-slug-gate).
+
 Break-glass drills are rehearsable without an incident:
 [`emergency-disable-workflow.md`](../emergency-disable-workflow.md)
 and [`rollback-drill.md`](rollback-drill.md).

@@ -166,13 +166,56 @@ job names; spelling matters):
 - `production-promotion-check` — gates human-authored promotions
 
 Plus:
-- Require linear history
+- Require linear history — **only on the operator repo.** Forks that
+  pull from the public mirror via the merge flow in
+  [`upstream-sync.md`](upstream-sync.md) must leave this **off**:
+  sync PRs (and especially the one-time
+  [unrelated-histories stitch](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history))
+  must land as true merge commits, and linear-history protection
+  forces squash/rebase, which destroys the stitch.
 - Do not allow force pushes
 - Do not allow deletions
 - Require signed commits (recommended)
 - Require pull request before merging (1+ reviewer)
 
-## 6. Verification — does this work?
+## 6. Scheduled workflows — re-point the repo-slug gate
+
+Eleven workflows gate their **cron runs** on the operator's repo slug
+so nightly automation never fires on the public code-only mirror:
+
+```yaml
+if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+```
+
+That gate also skips **your fork**: enable `drift.yml`, `collect.yml`,
+`conformance.yml`, etc. and the scheduled runs will queue, evaluate
+the gate, and silently no-op. (Manual `workflow_dispatch` runs are
+unaffected — which is why a workflow can "work when I click it" yet
+never fire on cron.)
+
+One-time fix — replace the slug with your own repo across the
+workflow files:
+
+```powershell
+# PowerShell, from the repo root
+Get-ChildItem .github/workflows/*.yml | ForEach-Object {
+  (Get-Content $_ -Raw) -replace 'KustoKing/SIEMContent', '<org>/<repo>' |
+    Set-Content $_ -NoNewline
+}
+```
+
+```bash
+# bash / zsh
+grep -rl "KustoKing/SIEMContent" .github/workflows/ \
+  | xargs sed -i 's#KustoKing/SIEMContent#<org>/<repo>#g'
+```
+
+Commit with `--signoff` and push. **Re-apply after any upstream sync
+that overwrites workflow files** — the `-X theirs` stitch merge in
+[`upstream-sync.md` §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history)
+does exactly that.
+
+## 7. Verification — does this work?
 
 After §1–§4 are wired:
 
@@ -198,6 +241,8 @@ For the full picture (L1–L7), drop the `--scope` flag.
 | `Error: tenant-config-yaml input is empty and config/tenant.yml is missing.` | `TENANT_CONFIG_YAML` secret unset or set on the wrong repo | `Get-Content config\tenant.yml -Raw \| gh secret set TENANT_CONFIG_YAML --repo <org>/<repo>` |
 | `AADSTS700213` from azure/login step | Federated credential subject doesn't match the workflow's `environment:` value | Compare the GitHub Environment name, workflow yaml `environment:`, and federated credential `subject` — all three must match exactly. |
 | Workflow run says success but skipped everything | Workspace not configured (e.g. no `integration` workspace in `tenant.yml`) | This is graceful skip, not failure — see the workflow's step summary. |
+| Scheduled workflow never fires on your fork (manual dispatch works) | Cron runs are gated on the operator repo slug (`github.repository == 'KustoKing/SIEMContent'`) | Re-point the gate to your own `<org>/<repo>` — see [§6](#6-scheduled-workflows--re-point-the-repo-slug-gate). |
+| DCO check fails on an upstream-sync PR with commits you didn't author | Upstream mirror commits carry no `Signed-off-by`; an old `dco.yml` predates the mirror-author skip | Sync `dco.yml` from upstream (it skips mirror-authored commits). **Never** `git rebase --signoff` a sync branch — it destroys the stitch merge ([upstream-sync.md §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history)). |
 | `gitleaks` fails with "missing license" on org repo | `GITLEAKS_LICENSE` not set | Either set the secret once the license email arrives, OR remove `secret-scan.yml` if your org has GitHub Advanced Security covering the same ground. |
 | Workflow can't see secret defined at environment level | The workflow doesn't declare `environment:` matching that env | Either move the secret to repo-level (visible to all workflows), or add `environment: <env>` to the workflow's job-level config. |
 
