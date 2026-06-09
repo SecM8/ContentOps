@@ -73,7 +73,7 @@ jobs:
           labels: attack-matrix,automated
           add-paths: |
             contentops/coverage/data/mitre_attack_full.json
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Step summary
         if: always()

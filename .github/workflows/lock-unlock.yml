@@ -83,7 +83,7 @@ jobs:
             ``--force-overwrite`` is set.
           labels: lock-state,automated
           add-paths: "detections/**"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Step summary
         if: always()

@@ -28,6 +28,19 @@ from the commit history.
 
 ### Added
 
+- **`AUTO_PR_TOKEN` escape hatch for org-blocked PR creation.** Org
+  policies commonly disable "Allow GitHub Actions to create and approve
+  pull requests", which kills all seven PR-opening workflows (`collect`,
+  `drift`, `kql-schemas-refresh`, `attack-matrix-refresh`,
+  `upstream-watchers`, `lock-unlock`, `emergency-disable`) at the PR
+  step. Those workflows now accept an optional `AUTO_PR_TOKEN` secret
+  (fine-grained PAT, Contents + Pull requests RW, this repo only) and
+  fall back to the built-in `GITHUB_TOKEN` when it's unset — zero
+  behaviour change for repos where the toggle is on. Side benefit:
+  PAT-opened PRs trigger `on: pull_request` CI, which
+  `GITHUB_TOKEN`-opened PRs never do. Documented in the
+  `github-actions-setup.md` secrets table + troubleshooting matrix and
+  the operationalization-paths org gotcha callout.
 - **`identity_mode: single` in `.contentops-conformance.yml`** — first-class
   support for single-App-Registration deployments. The conformance `read`
   leg previously hard-coded least-privilege expectations (require

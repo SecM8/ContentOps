@@ -93,7 +93,7 @@ jobs:
             tools/kql_strict/schemas.json
             tools/kql_strict/schemas_defender.json
             docs/whats-new/**
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Step summary
         if: always()

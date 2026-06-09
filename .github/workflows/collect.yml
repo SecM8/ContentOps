@@ -152,7 +152,7 @@ jobs:
           body-path: collect_body.md
           labels: collect,automated
           add-paths: "detections/**"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Step summary
         if: always()

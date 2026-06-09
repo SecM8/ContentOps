@@ -13,7 +13,10 @@
 # without documented branch-protection rules and a separate dedicated
 # review (see docs/emergency-disable-workflow.md → "Future hardening").
 #
-# Bot identity: siemcontent-bot via the default GITHUB_TOKEN.
+# Bot identity: siemcontent-bot via the default GITHUB_TOKEN. On org
+# repos where policy blocks GITHUB_TOKEN from creating PRs, set the
+# AUTO_PR_TOKEN secret (fine-grained PAT) and the PR is opened as the
+# PAT owner instead — see docs/operations/github-actions-setup.md §2.
 
 name: Emergency disable
 
@@ -155,7 +158,7 @@ jobs:
 
       - name: Open PR (manual merge required)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
           RULE_ID: ${{ inputs.rule_id }}
           REASON: ${{ inputs.reason }}
           ACTOR: ${{ github.actor }}

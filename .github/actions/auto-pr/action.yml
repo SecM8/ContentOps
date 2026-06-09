@@ -22,7 +22,7 @@
 #       body-path: collect_body.md
 #       labels: collect,automated
 #       add-paths: "detections/**"
-#       token: ${{ secrets.GITHUB_TOKEN }}
+#       token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
 name: auto-pr
 description: Detect working-tree changes and open a PR.
@@ -60,7 +60,14 @@ inputs:
       add-paths (determines which files are committed)
     required: true
   token:
-    description: GitHub token with contents:write + pull-requests:write
+    description: >
+      GitHub token with contents:write + pull-requests:write. Callers
+      pass the AUTO_PR_TOKEN secret with a GITHUB_TOKEN fallback: on
+      org repos where "Allow GitHub Actions to create and approve pull
+      requests" is disabled by policy, the default GITHUB_TOKEN cannot
+      open the PR, so a fine-grained PAT (Contents + Pull requests, RW)
+      stored as AUTO_PR_TOKEN takes over. PAT-opened PRs also trigger
+      on:pull_request CI, which GITHUB_TOKEN-opened PRs never do.
     required: true
 
 outputs:

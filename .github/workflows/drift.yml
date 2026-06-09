@@ -242,7 +242,7 @@ jobs:
           body-path: drift_body.md
           labels: drift,automated
           add-paths: "detections/**"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Apply per-asset-kind labels
         if: steps.auto-pr.outputs.pull-request-number != ''

@@ -200,6 +200,15 @@ buys you nothing. Workflow triggers + permissions:
 > Stage 3/4 to run unattended:
 > [`github-actions-setup.md` §6](github-actions-setup.md#6-scheduled-workflows--re-point-the-repo-slug-gate).
 
+> **Org gotcha — Stage 3/4 workflows open PRs, and many orgs block
+> that.** If your org disables "Allow GitHub Actions to create and
+> approve pull requests", every auto-PR workflow (`collect`, `drift`,
+> `kql-schemas-refresh`, …) fails at the PR step with
+> `GitHub Actions is not permitted to create or approve pull requests`.
+> Either flip the toggle or set the `AUTO_PR_TOKEN` secret — see the
+> [secrets table](github-actions-setup.md#2-secrets) and the
+> troubleshooting row in `github-actions-setup.md`.
+
 Break-glass drills are rehearsable without an incident:
 [`emergency-disable-workflow.md`](../emergency-disable-workflow.md)
 and [`rollback-drill.md`](rollback-drill.md).

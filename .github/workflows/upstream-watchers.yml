@@ -73,7 +73,7 @@ jobs:
           add-paths: |
             manifests/**
             docs/whats-new/**
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Step summary
         if: always()
