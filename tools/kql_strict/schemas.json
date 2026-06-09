@@ -44143,6 +44143,811 @@
           "type": "datetime"
         },
         {
+          "name": "EventType",
+          "type": "string"
+        },
+        {
+          "name": "CustomerIdString",
+          "type": "string"
+        },
+        {
+          "name": "Nonce",
+          "type": "string"
+        },
+        {
+          "name": "AgentIdString",
+          "type": "string"
+        },
+        {
+          "name": "ExternalApiType",
+          "type": "string"
+        },
+        {
+          "name": "PolicyId",
+          "type": "string"
+        },
+        {
+          "name": "Severity",
+          "type": "string"
+        },
+        {
+          "name": "SeverityName",
+          "type": "string"
+        },
+        {
+          "name": "UserName",
+          "type": "string"
+        },
+        {
+          "name": "Tactic",
+          "type": "string"
+        },
+        {
+          "name": "Technique",
+          "type": "string"
+        },
+        {
+          "name": "ProcessId",
+          "type": "string"
+        },
+        {
+          "name": "ComputerName",
+          "type": "string"
+        },
+        {
+          "name": "MD5String",
+          "type": "string"
+        },
+        {
+          "name": "ParentProcessId",
+          "type": "string"
+        },
+        {
+          "name": "FileName",
+          "type": "string"
+        },
+        {
+          "name": "FilePath",
+          "type": "string"
+        },
+        {
+          "name": "CommandLine",
+          "type": "string"
+        },
+        {
+          "name": "DeviceId",
+          "type": "string"
+        },
+        {
+          "name": "RuleId",
+          "type": "string"
+        },
+        {
+          "name": "RuleName",
+          "type": "string"
+        },
+        {
+          "name": "SourceVendors",
+          "type": "string"
+        },
+        {
+          "name": "SourceProducts",
+          "type": "string"
+        },
+        {
+          "name": "DataDomains",
+          "type": "string"
+        },
+        {
+          "name": "Status",
+          "type": "string"
+        },
+        {
+          "name": "EventUuid",
+          "type": "string"
+        },
+        {
+          "name": "Cid",
+          "type": "string"
+        },
+        {
+          "name": "Eid",
+          "type": "string"
+        },
+        {
+          "name": "UserId",
+          "type": "string"
+        },
+        {
+          "name": "UserIp",
+          "type": "string"
+        },
+        {
+          "name": "OperationName",
+          "type": "string"
+        },
+        {
+          "name": "ServiceName",
+          "type": "string"
+        },
+        {
+          "name": "Success",
+          "type": "bool"
+        },
+        {
+          "name": "ApiClientId",
+          "type": "string"
+        },
+        {
+          "name": "RequestAccept",
+          "type": "string"
+        },
+        {
+          "name": "RequestMethod",
+          "type": "string"
+        },
+        {
+          "name": "RequestPath",
+          "type": "string"
+        },
+        {
+          "name": "RequestContentType",
+          "type": "string"
+        },
+        {
+          "name": "StatusCode",
+          "type": "string"
+        },
+        {
+          "name": "ElapsedTime",
+          "type": "string"
+        },
+        {
+          "name": "ElapsedMicroseconds",
+          "type": "string"
+        },
+        {
+          "name": "ReceivedTime",
+          "type": "datetime"
+        },
+        {
+          "name": "UserAgent",
+          "type": "string"
+        },
+        {
+          "name": "RequestUriLength",
+          "type": "string"
+        },
+        {
+          "name": "TraceId",
+          "type": "string"
+        },
+        {
+          "name": "Produces",
+          "type": "string"
+        },
+        {
+          "name": "Consumes",
+          "type": "string"
+        },
+        {
+          "name": "Scopes",
+          "type": "string"
+        },
+        {
+          "name": "Message",
+          "type": "string"
+        },
+        {
+          "name": "Source",
+          "type": "string"
+        },
+        {
+          "name": "SourceIp",
+          "type": "string"
+        },
+        {
+          "name": "AuditKeyValues",
+          "type": "string"
+        },
+        {
+          "name": "AppId",
+          "type": "string"
+        },
+        {
+          "name": "AuditEventType",
+          "type": "string"
+        },
+        {
+          "name": "Offset",
+          "type": "string"
+        },
+        {
+          "name": "Partition",
+          "type": "string"
+        },
+        {
+          "name": "AccountId",
+          "type": "string"
+        },
+        {
+          "name": "PolicyStatement",
+          "type": "string"
+        },
+        {
+          "name": "CloudProvider",
+          "type": "string"
+        },
+        {
+          "name": "CloudService",
+          "type": "string"
+        },
+        {
+          "name": "EventAction",
+          "type": "string"
+        },
+        {
+          "name": "EventSource",
+          "type": "string"
+        },
+        {
+          "name": "UserSourceIp",
+          "type": "string"
+        },
+        {
+          "name": "Region",
+          "type": "string"
+        },
+        {
+          "name": "ResourcesId",
+          "type": "string"
+        },
+        {
+          "name": "ResourceIdType",
+          "type": "string"
+        },
+        {
+          "name": "ResourcesName",
+          "type": "string"
+        },
+        {
+          "name": "ResourceCreateTime",
+          "type": "datetime"
+        },
+        {
+          "name": "CloudPlatform",
+          "type": "string"
+        },
+        {
+          "name": "Disposition",
+          "type": "string"
+        },
+        {
+          "name": "ResourceUrl",
+          "type": "string"
+        },
+        {
+          "name": "Finding",
+          "type": "string"
+        },
+        {
+          "name": "ResourceAttributes",
+          "type": "string"
+        },
+        {
+          "name": "Tags",
+          "type": "string"
+        },
+        {
+          "name": "ReportUrl",
+          "type": "string"
+        },
+        {
+          "name": "NotificationId",
+          "type": "string"
+        },
+        {
+          "name": "Highlights",
+          "type": "string"
+        },
+        {
+          "name": "MatchedTimestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "RuleTopic",
+          "type": "string"
+        },
+        {
+          "name": "RulePriority",
+          "type": "string"
+        },
+        {
+          "name": "ItemId",
+          "type": "string"
+        },
+        {
+          "name": "ItemType",
+          "type": "string"
+        },
+        {
+          "name": "ItemPostedTimestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "SessionId",
+          "type": "string"
+        },
+        {
+          "name": "HostnameField",
+          "type": "string"
+        },
+        {
+          "name": "EndTimestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "StartTimestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "UserUuid",
+          "type": "string"
+        },
+        {
+          "name": "ExecutionId",
+          "type": "string"
+        },
+        {
+          "name": "ReportId",
+          "type": "string"
+        },
+        {
+          "name": "ReportName",
+          "type": "string"
+        },
+        {
+          "name": "ReportType",
+          "type": "string"
+        },
+        {
+          "name": "ReportFileReference",
+          "type": "string"
+        },
+        {
+          "name": "StatusMessage",
+          "type": "string"
+        },
+        {
+          "name": "ProcessStartTime",
+          "type": "datetime"
+        },
+        {
+          "name": "ProcessEndTime",
+          "type": "datetime"
+        },
+        {
+          "name": "Hostname",
+          "type": "string"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "Description",
+          "type": "string"
+        },
+        {
+          "name": "SHA256String",
+          "type": "string"
+        },
+        {
+          "name": "SHA1String",
+          "type": "string"
+        },
+        {
+          "name": "LogonDomain",
+          "type": "string"
+        },
+        {
+          "name": "FalconHostLink",
+          "type": "string"
+        },
+        {
+          "name": "AgentId",
+          "type": "string"
+        },
+        {
+          "name": "CompositeId",
+          "type": "string"
+        },
+        {
+          "name": "LocalIp",
+          "type": "string"
+        },
+        {
+          "name": "MACAddress",
+          "type": "string"
+        },
+        {
+          "name": "Objective",
+          "type": "string"
+        },
+        {
+          "name": "PatternDispositionDescription",
+          "type": "string"
+        },
+        {
+          "name": "PatternDispositionValue",
+          "type": "string"
+        },
+        {
+          "name": "PatternDispositionFlags",
+          "type": "string"
+        },
+        {
+          "name": "ParentImageFileName",
+          "type": "string"
+        },
+        {
+          "name": "ParentCommandLine",
+          "type": "string"
+        },
+        {
+          "name": "GrandParentImageFileName",
+          "type": "string"
+        },
+        {
+          "name": "GrandParentCommandLine",
+          "type": "string"
+        },
+        {
+          "name": "HostGroups",
+          "type": "string"
+        },
+        {
+          "name": "PatternId",
+          "type": "string"
+        },
+        {
+          "name": "AggregateId",
+          "type": "string"
+        },
+        {
+          "name": "ParentImageFilePath",
+          "type": "string"
+        },
+        {
+          "name": "GrandParentImageFilePath",
+          "type": "string"
+        },
+        {
+          "name": "LocalIpv6",
+          "type": "string"
+        },
+        {
+          "name": "PlatformId",
+          "type": "string"
+        },
+        {
+          "name": "PlatformName",
+          "type": "string"
+        },
+        {
+          "name": "MitreAttack",
+          "type": "string"
+        },
+        {
+          "name": "CloudIndicator",
+          "type": "string"
+        },
+        {
+          "name": "RiskScore",
+          "type": "string"
+        },
+        {
+          "name": "CustomerId",
+          "type": "string"
+        },
+        {
+          "name": "Ipv",
+          "type": "string"
+        },
+        {
+          "name": "ConnectionDirection",
+          "type": "string"
+        },
+        {
+          "name": "Flags",
+          "type": "string"
+        },
+        {
+          "name": "IcmpCode",
+          "type": "string"
+        },
+        {
+          "name": "IcmpType",
+          "type": "string"
+        },
+        {
+          "name": "ImageFileName",
+          "type": "string"
+        },
+        {
+          "name": "LocalAddress",
+          "type": "string"
+        },
+        {
+          "name": "LocalPort",
+          "type": "string"
+        },
+        {
+          "name": "MatchCount",
+          "type": "string"
+        },
+        {
+          "name": "MatchCountSinceLastReport",
+          "type": "string"
+        },
+        {
+          "name": "NetworkProfile",
+          "type": "string"
+        },
+        {
+          "name": "Pid",
+          "type": "string"
+        },
+        {
+          "name": "PolicyName",
+          "type": "string"
+        },
+        {
+          "name": "Protocol",
+          "type": "string"
+        },
+        {
+          "name": "RemoteAddress",
+          "type": "string"
+        },
+        {
+          "name": "RemotePort",
+          "type": "string"
+        },
+        {
+          "name": "RuleAction",
+          "type": "string"
+        },
+        {
+          "name": "RuleDescription",
+          "type": "string"
+        },
+        {
+          "name": "RuleFamilyId",
+          "type": "string"
+        },
+        {
+          "name": "RuleGroupName",
+          "type": "string"
+        },
+        {
+          "name": "TreeId",
+          "type": "string"
+        },
+        {
+          "name": "Hash",
+          "type": "string"
+        },
+        {
+          "name": "SourceEndpointName",
+          "type": "string"
+        },
+        {
+          "name": "SourceEndpointIp",
+          "type": "string"
+        },
+        {
+          "name": "DestinationEndpointName",
+          "type": "string"
+        },
+        {
+          "name": "DestinationEndpointIp",
+          "type": "string"
+        },
+        {
+          "name": "AuthenticationProtocol",
+          "type": "string"
+        },
+        {
+          "name": "SpreadCount",
+          "type": "string"
+        },
+        {
+          "name": "FirstSeen",
+          "type": "datetime"
+        },
+        {
+          "name": "LastSeen",
+          "type": "datetime"
+        },
+        {
+          "name": "IncidentDescription",
+          "type": "string"
+        },
+        {
+          "name": "Category",
+          "type": "string"
+        },
+        {
+          "name": "IncidentType",
+          "type": "string"
+        },
+        {
+          "name": "StartTime",
+          "type": "datetime"
+        },
+        {
+          "name": "EndTime",
+          "type": "datetime"
+        },
+        {
+          "name": "EndpointName",
+          "type": "string"
+        },
+        {
+          "name": "EndpointIp",
+          "type": "string"
+        },
+        {
+          "name": "NumbersOfAlerts",
+          "type": "string"
+        },
+        {
+          "name": "NumberOfCompromisedEntities",
+          "type": "string"
+        },
+        {
+          "name": "State",
+          "type": "string"
+        },
+        {
+          "name": "IdentityProtectionIncidentId",
+          "type": "string"
+        },
+        {
+          "name": "ContextTimeStamp",
+          "type": "datetime"
+        },
+        {
+          "name": "SourceAccountDomain",
+          "type": "string"
+        },
+        {
+          "name": "SourceAccountName",
+          "type": "string"
+        },
+        {
+          "name": "SourceAccountUpn",
+          "type": "string"
+        },
+        {
+          "name": "SourceAccountObjectSid",
+          "type": "string"
+        },
+        {
+          "name": "CurrentPrivileges",
+          "type": "string"
+        },
+        {
+          "name": "PreviousPrivileges",
+          "type": "string"
+        },
+        {
+          "name": "AddedPrivileges",
+          "type": "string"
+        },
+        {
+          "name": "IncidentStartTime",
+          "type": "datetime"
+        },
+        {
+          "name": "IncidentEndTime",
+          "type": "datetime"
+        },
+        {
+          "name": "FineScore",
+          "type": "string"
+        },
+        {
+          "name": "LateralMovement",
+          "type": "string"
+        },
+        {
+          "name": "IncidentId",
+          "type": "string"
+        },
+        {
+          "name": "HostId",
+          "type": "string"
+        },
+        {
+          "name": "SensorId",
+          "type": "string"
+        },
+        {
+          "name": "MobileDetectionId",
+          "type": "string"
+        },
+        {
+          "name": "TacticId",
+          "type": "string"
+        },
+        {
+          "name": "TechniqueId",
+          "type": "string"
+        },
+        {
+          "name": "TacticIds",
+          "type": "string"
+        },
+        {
+          "name": "Tactics",
+          "type": "string"
+        },
+        {
+          "name": "TechniqueIds",
+          "type": "string"
+        },
+        {
+          "name": "Techniques",
+          "type": "string"
+        },
+        {
+          "name": "Author",
+          "type": "string"
+        },
+        {
+          "name": "XdrType",
+          "type": "string"
+        },
+        {
+          "name": "SHA256Hashes",
+          "type": "string"
+        },
+        {
+          "name": "SensorIds",
+          "type": "string"
+        },
+        {
+          "name": "SourceSystem",
+          "type": "string"
+        },
+        {
+          "name": "Type",
+          "type": "string"
+        },
+        {
+          "name": "_IsBillable",
+          "type": "string"
+        },
+        {
+          "name": "_BilledSize",
+          "type": "real"
+        }
+      ],
+      "name": "CrowdStrikeAuditEvents"
+    },
+    {
+      "columns": [
+        {
+          "name": "TenantId",
+          "type": "string"
+        },
+        {
+          "name": "TimeGenerated",
+          "type": "datetime"
+        },
+        {
           "name": "Id",
           "type": "string"
         },
