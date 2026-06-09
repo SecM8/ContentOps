@@ -251,6 +251,7 @@ Once you're past Day-1, these are the docs to bookmark.
 - [`docs/quickstart.md`](docs/quickstart.md) — deploy your first detection in 15 minutes.
 - [`docs/glossary.md`](docs/glossary.md) — pipeline vocabulary on one page.
 - [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — daily flow, when-things-break decision tree.
+- [`docs/operations/operationalization-paths.md`](docs/operations/operationalization-paths.md) — choose your operating model (local-only / GitOps / hybrid), the workflow maturity ladder, and how to validate each path.
 - [`docs/operations/authentication-setup.md`](docs/operations/authentication-setup.md) — App Registration + OIDC first-timer primer.
 - [`docs/operations/tenant-config-modes.md`](docs/operations/tenant-config-modes.md) — three tenant-config layouts (committed, secret, vars+secrets).
 - [`docs/operations/multi-workspace.md`](docs/operations/multi-workspace.md) — single tenant, N Sentinel workspaces; integration vs. prod.

@@ -25,7 +25,10 @@ work after `pip install -e .`.
 Architectural detail: [`reference/architecture.md`](reference/architecture.md).
 Tenant configuration setup: [`operations/tenant-config-modes.md`](operations/tenant-config-modes.md).
 Workflows index: [`reference/workflows.md`](reference/workflows.md) —
-which of the 33 GitHub Actions workflows fires when.
+which GitHub Actions workflow fires when.
+Standing the pipeline up for the first time? Pick an operating model
+in [`operations/operationalization-paths.md`](operations/operationalization-paths.md)
+before wiring anything.
 Terminology: [`glossary.md`](glossary.md) — every term that recurs
 in CLI output and PR comments, on one page.
 When something breaks in CI or production, start at
@@ -700,6 +703,7 @@ governance evidence can grep for missing or stale runbook URLs.
 
 ### Operations
 
+- [`operations/operationalization-paths.md`](operations/operationalization-paths.md) — choose the operating model (local-only / GitOps / hybrid): the five decisions, the workflow maturity ladder, and the validation matrix.
 - [`operations/authentication-setup.md`](operations/authentication-setup.md) — Azure App Registration + OIDC walkthrough. First-timer-friendly; TL;DR up top for the experienced.
 - [`operations/tenant-config-modes.md`](operations/tenant-config-modes.md) — the three supported `tenant.yml` layouts (committed / secret / vars+secrets) and the `policy.scaffoldStrict` flag.
 - [`operations/collect.md`](operations/collect.md) — pulling live state (`--clear`, `--role`).

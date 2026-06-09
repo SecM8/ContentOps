@@ -28,6 +28,13 @@ from the commit history.
 
 ### Added
 
+- `docs/operations/operationalization-paths.md` — decision guide for
+  standing the pipeline up: the five operationalization decisions
+  (repo topology, execution model A/B/C, identity, tenant-config
+  mode, workspace topology), a workflow maturity ladder (which of
+  the GitHub Actions workflows to enable at each stage), and a
+  read-only validation matrix per path. Linked from `README.md` and
+  the Operator Guide doc index.
 - `LICENSE` (Apache 2.0).
 - `NOTICE` (copyright + attribution-appreciated guidance).
 - `TRADEMARK.md` (policy for the `ContentOps` and `SecM8` marks).
@@ -39,6 +46,15 @@ from the commit history.
 
 ### Changed
 
+- `docs/reference/workflows.md` re-aligned with the actual workflow
+  inventory: ten previously undocumented workflows added to the index
+  (`alerts-report`, `attack-matrix-refresh`, `kql-schemas-refresh`,
+  `references-check`, `report`, `rollback`, `spelling`,
+  `status-refresh`, `tuning-impact-preview`, `upstream-watchers`),
+  the stale "26 workflows" / "33 workflows" counts dropped from the
+  index and the Operator Guide, and the category map updated
+  (`rollback` is a real workflow now, not CLI-only). The generated
+  catalog remains the authoritative list.
 - **Lint policy revision: production-status no longer auto-escalates
   META002-005.** Severity for the four authoring-metadata rules
   (`metadata.description`, `metadata.attackDescription`,

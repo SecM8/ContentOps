@@ -1,6 +1,6 @@
 # Workflows index
 
-> One table for the 26 GitHub Actions workflows in `.github/workflows/`.
+> One table for every GitHub Actions workflow in `.github/workflows/`.
 > Use this when you can't remember which one fires on what trigger,
 > what permissions it needs, or how long it usually takes.
 >
@@ -29,16 +29,20 @@ but lose the operator's "which workflow do I click" mental model.
 | Category | Workflows |
 |---|---|
 | Deploy & apply | `deploy.yml`, `integration-deploy.yml`, `promote-to-integration.yml`, `retry-failed.yml` |
-| Read-only PR gates | `ci.yml`, `validate.yml`, `dco.yml`, `sast.yml`, `secret-scan.yml` |
-| Operational | `prune.yml`, `lock-unlock.yml`, `emergency-disable.yml`, `rollback` (CLI only) |
-| Continuous monitoring | `drift.yml`, `collect.yml`, `silent-rules.yml`, `coverage.yml`, `portfolio.yml`, `conformance.yml`, `audit-verify.yml`, `defender-graph-probe.yml` |
+| Read-only PR gates | `ci.yml`, `validate.yml`, `dco.yml`, `sast.yml`, `secret-scan.yml`, `spelling.yml`, `tuning-impact-preview.yml` |
+| Operational | `prune.yml`, `lock-unlock.yml`, `emergency-disable.yml`, `rollback.yml` |
+| Continuous monitoring | `drift.yml`, `collect.yml`, `silent-rules.yml`, `coverage.yml`, `portfolio.yml`, `conformance.yml`, `audit-verify.yml`, `defender-graph-probe.yml`, `references-check.yml` |
+| Reporting & telemetry | `alerts-report.yml`, `report.yml`, `status-refresh.yml` |
+| Refresh & upstream watch | `kql-schemas-refresh.yml`, `attack-matrix-refresh.yml`, `upstream-watchers.yml` |
 | Release & mirror | `release.yml`, `public-sync.yml` |
-| Validation suites | `e2e-capability-tests.yml`, `production-promotion-check.yml` |
+| Validation suites | `e2e-capability-tests.yml`, `production-promotion-check.yml`, `integration.yml` |
 
 ## Full table
 
 | File | Trigger | Purpose | Key permissions | Typical runtime |
 |---|---|---|---|---|
+| `alerts-report.yml` | daily cron + manual | Alert pipeline: sync alerts into the PII-free ledger, compute the daily rollup, 30-day detection health, and week-over-week trend. Markdown + JSON artefacts; step summary. | `contents: read`, `id-token: write` | ~3 min |
+| `attack-matrix-refresh.yml` | weekly cron + manual | Refresh the bundled MITRE ATT&CK matrix JSON from MITRE's STIX source; opens a PR when the matrix changed. | `contents: write`, `pull-requests: write` | ~2 min |
 | `audit-verify.yml` | weekly cron | Run `contentops audit verify` over the full hash chain. Fails if any record's `prev_hash` / `record_hash` / timestamp regresses. | `contents: read` | ~1 min |
 | `ci.yml` | PR + push to main | Full pytest suite (`pytest -n auto` via xdist) plus pip-audit. | `contents: read` | ~3–5 min |
 | `collect.yml` | weekly cron | Run `contentops collect --full` against production; commit any drift back as a `chore(collect)` PR. | `contents: write`, `pull-requests: write`, `id-token: write` | ~10 min |
@@ -52,18 +56,26 @@ but lose the operator's "which workflow do I click" mental model.
 | `emergency-disable.yml` | manual | Break-glass: branch + `contentops disable <rule>` + commit + open PR. Wall-clock target <5 min from dispatch to opened PR. Does NOT auto-apply. | `contents: write`, `pull-requests: write` | ~1 min |
 | `integration-deploy.yml` | PR (paths: `detections/**`) + manual | Deploy changed detections to the integration workspace as a smoke test. PR-time `--changed-since` + `--continue-on-error` so one broken rule doesn't block a merge. | `id-token: write`, `contents: read` | ~3–10 min |
 | `integration.yml` | manual + scheduled (DANGER flag) | Live tenant integration tests. Requires explicit ack input. | `id-token: write`, `contents: read` | ~10 min |
+| `kql-schemas-refresh.yml` | daily cron + manual | Refresh `tools/kql_strict/schemas.json` from live Log Analytics workspace metadata (Sentinel tables + Defender XDR pseudo-tables); opens a schema-refresh PR on change. | `contents: write`, `pull-requests: write`, `id-token: write` | ~3 min |
 | `lock-unlock.yml` | manual | Wrapper around `contentops lock` / `unlock`. Mutates a YAML file and opens a PR for review. | `contents: write`, `pull-requests: write` | ~1 min |
 | `portfolio.yml` | weekly cron | Generate per-detection CSV + JSON + summary. Posts summary to a tracked file or issue. | `contents: read`, `pull-requests: write` (summary) | ~2 min |
 | `production-promotion-check.yml` | post-merge to main | Validation gate that runs after merge but before deploy proceeds. Sanity checks state of detections + tenant config. | `contents: read`, `id-token: write` | ~2 min |
 | `promote-to-integration.yml` | manual | Snapshot the prod tenant via `collect`, then apply to integration. Used to validate integration workspace parity with prod. | `id-token: write`, `contents: read` | ~10 min |
 | `prune.yml` | manual | Delete remote orphans (tenant-side resources that no longer have a YAML in repo). Defaults to dry-run; requires `CONFIRM` input for real deletes. Environment-protected. | `id-token: write`, `contents: read` | ~3 min |
 | `public-sync.yml` | daily cron + manual | Rebuild `SecM8/ContentOps` (public mirror) from the allowlist. Forbidden-path safety check. One-way. | `contents: write` on the mirror (separate token) | ~3 min |
+| `references-check.yml` | weekly cron + manual | HEAD-check every URL in detection metadata (`references[]`, `runbookUrl`) so a citation can't rot into a 404 unnoticed. Manual dispatch accepts an allow-substring for flaky hosts. | `contents: read`, `issues: write` | ~3 min |
 | `release.yml` | tag push | Release automation (tag → GitHub Release). | `contents: write` | ~2 min |
+| `report.yml` | weekly cron + push to main + manual | Generate the detection inventory report (`reports/latest.html`, dated snapshot, badge JSON); push-to-main commits the regenerated files. | `contents: write` | ~2 min |
 | `retry-failed.yml` | manual | Read the latest audit JSONL, derive `(asset, id)` pairs with `status == failed`, re-apply only those. | `id-token: write`, `contents: read` | ~3 min |
+| `rollback.yml` | manual | Break-glass: `contentops rollback <sha>` re-applies detection content as it existed at a SHA. Dry-run by default; real run needs `CONFIRM` + environment approval; shares the deploy concurrency group so it can't race a deploy. | `id-token: write`, `contents: write` | ~5 min |
 | `sast.yml` | PR | bandit + semgrep static analysis. | `contents: read` | ~2 min |
 | `secret-scan.yml` | PR + weekly cron | gitleaks scan. PR uses incremental (fetch-depth 50); cron does a full-history scan. Uses repo `.gitleaks.toml`. | `contents: read` | ~1 min PR / ~3 min cron |
 | `silent-rules.yml` | weekly cron | Report rules that fired zero alerts over the recent window. | `id-token: write`, `contents: read` | ~3 min |
-| `validate.yml` | PR | Envelope parse + lint without Azure auth — the lightest PR gate. | `contents: read` | <1 min |
+| `spelling.yml` | PR + manual | codespell over envelope prose, docs, and Python source. Config + domain ignore-list in `.codespellrc`. | `contents: read` | <1 min |
+| `status-refresh.yml` | daily cron + manual | Regenerate `docs/status/` pages from live L1–L7 conformance + state + audit; commits any diff directly to main. | `contents: write`, `id-token: write` | ~3 min |
+| `tuning-impact-preview.yml` | PR | When a PR adds a drift suppression, comment with its 30-day blast radius (alerts + incidents the suppression would have silenced). | `pull-requests: write`, `id-token: write` | ~2 min |
+| `upstream-watchers.yml` | weekly cron + manual | Poll Microsoft's content-package + alert-rule-template catalogs; update `manifests/` + `docs/whats-new/` and open a PR when upstream changed. | `contents: write`, `pull-requests: write`, `id-token: write` | ~2 min |
+| `validate.yml` | PR + push to main + nightly cron + manual | Envelope parse + strict lint + plan + version-bump + PR-added URL check (PR gate job); lint-regression job catches tightened rules outside PR flow. | `contents: read`, `id-token: write` (optional schema refresh) | ~2 min |
 
 ## Composite actions
 
