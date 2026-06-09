@@ -309,6 +309,62 @@ def test_apply_identity_profile_unknown_raises() -> None:
         C.apply_identity_profile(C.ConformanceConfig(), "bogus")
 
 
+def test_apply_identity_profile_read_single_mode_keeps_write_expectations() -> None:
+    """identity_mode=single: one shared App Reg for every environment — the
+    read leg keeps the write-grade expectations (still verifying the
+    automation environment's fed cred + reach) and asserts no
+    least-privilege split."""
+    cfg = C.apply_identity_profile(
+        C.ConformanceConfig(identity_mode="single"), "read",
+    )
+    assert cfg.identity_label == "read (single-app)"
+    assert cfg.graph_app_roles == C._DEFAULT_GRAPH_APP_ROLES  # ReadWrite.All
+    assert cfg.forbidden_graph_app_roles == ()
+    assert cfg.expect_rbac_write is True
+
+
+def test_apply_identity_profile_read_single_mode_preserves_role_override() -> None:
+    """Single mode keeps a fork's graph_app_roles override on the read leg —
+    same behaviour the write leg always had."""
+    base = C.ConformanceConfig(
+        identity_mode="single",
+        graph_app_roles=("CustomDetection.ReadWrite.All", "AuditLog.Read.All"),
+    )
+    cfg = C.apply_identity_profile(base, "read")
+    assert cfg.graph_app_roles == (
+        "CustomDetection.ReadWrite.All", "AuditLog.Read.All",
+    )
+
+
+def test_load_config_identity_mode_single(tmp_path) -> None:
+    f = tmp_path / ".contentops-conformance.yml"
+    f.write_text("identity_mode: single\n", encoding="utf-8")
+    cfg = C.load_config(path=f)
+    assert cfg.identity_mode == "single"
+    assert cfg.parse_warning is None
+
+
+def test_load_config_identity_mode_defaults_to_split(tmp_path) -> None:
+    f = tmp_path / ".contentops-conformance.yml"
+    f.write_text(
+        "graph_app_roles: [CustomDetection.ReadWrite.All]\n", encoding="utf-8",
+    )
+    cfg = C.load_config(path=f)
+    assert cfg.identity_mode == "split"
+
+
+def test_load_config_identity_mode_invalid_falls_back_to_split(tmp_path) -> None:
+    """A typo'd identity_mode must not silently relax least-privilege — the
+    strict split profile applies and the report carries the warning."""
+    f = tmp_path / ".contentops-conformance.yml"
+    f.write_text("identity_mode: solo\n", encoding="utf-8")
+    cfg = C.load_config(path=f)
+    assert cfg.identity_mode == "split"
+    assert cfg.parse_warning is not None
+    read_cfg = C.apply_identity_profile(cfg, "read")
+    assert read_cfg.forbidden_graph_app_roles == ("CustomDetection.ReadWrite.All",)
+
+
 def test_l4_read_profile_passes_with_read_only_and_no_write(monkeypatch) -> None:
     """Read identity with only CustomDetection.Read.All: required present
     (PASS) and the forbidden write role absent (least_privilege PASS)."""

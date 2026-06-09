@@ -238,6 +238,37 @@ workflow — the read leg on the `automation` environment, the write leg on
 the `conformance` environment — so a single weekly run validates both App
 Registrations.
 
+### Single-App-Registration deployments (`identity_mode: single`)
+
+The split is the recommended posture, but a second App Registration can
+be organisationally expensive (months of procurement in some tenants).
+If your fork runs **one shared App Registration for every environment**,
+declare it in `.contentops-conformance.yml` at the repo root:
+
+```yaml
+# .contentops-conformance.yml
+identity_mode: single
+```
+
+With `single`, the read leg keeps running — every weekly run still
+verifies the `automation` environment's federated credential, RBAC
+reach, and functional reads — but it applies the **shared-identity
+expectations** (same as the write profile) instead of failing the
+least-privilege checks (`L4 app_role_assignments` /
+`L4 least_privilege` / `L5 rbac_write`) for a separation your
+deployment deliberately doesn't have. The report header shows
+`identity=read (single-app)` so the declared posture is visible in
+every artifact.
+
+Be explicit about the trade-off you accept: the unattended automation
+workflows (drift, collect, silent-rules — no reviewer gate) authenticate
+as an identity that **can write production detections**. Compensating
+rails: keep `purgeAllowed: false` and a low `maxDelete` in
+`tenant.yml`, keep branch protection + the audit chain verification on,
+and treat any portal-side surprise in the weekly drift report as an
+incident. Default is `split`; an unrecognised value falls back to
+`split` (strict) and surfaces a warning row in L1.
+
 > **What this proves (and doesn't).** The conformance check is **drift /
 > regression detection**: it catches an accidental RBAC or Graph-permission
 > change, a missing federated credential, or a misconfigured environment
@@ -258,6 +289,10 @@ different branch-protection check set) override via
 
 ```yaml
 # .contentops-conformance.yml
+identity_mode: split    # 'single' = one shared App Reg for every
+                        # environment; read leg applies shared-identity
+                        # expectations (see section above)
+
 graph_app_roles:
   - CustomDetection.ReadWrite.All
   - AuditLog.Read.All

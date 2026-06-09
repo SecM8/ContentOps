@@ -101,7 +101,10 @@ optional and orthogonal to the wiring.
 > **read** App Reg, and leave the **repo-level** `AZURE_CLIENT_ID` = the
 > **write** App Reg (the gated environments above inherit it). With a
 > single App Reg, the repo-level Variable serves every environment and you
-> can ignore this.
+> can ignore this — but declare `identity_mode: single` in
+> `.contentops-conformance.yml` so the conformance read leg verifies the
+> shared identity instead of failing its least-privilege checks. See
+> [`deployment-conformance.md`](deployment-conformance.md#single-app-registration-deployments-identity_mode-single).
 
 ### Per-environment optional protections
 

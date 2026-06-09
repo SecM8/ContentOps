@@ -166,6 +166,15 @@ class ConformanceConfig:
     # "write" (deploy) or "read" (automation) — drives the report title +
     # the two profiles applied by ``apply_identity_profile``.
     identity_label: str = "write"
+    # "split" (default): two App Registrations, read + write, and the read
+    # leg enforces least-privilege (forbids write-grade grants).
+    # "single": one shared App Registration for every environment — the
+    # read leg verifies the automation environment's federated credential
+    # and reach with the same grant expectations as the write leg, and the
+    # separation-of-duties checks do not apply. Declared per fork via
+    # ``identity_mode: single`` in ``.contentops-conformance.yml`` for
+    # adopters who cannot provision a second App Registration.
+    identity_mode: str = "split"
     federated_credential_subjects: tuple[str, ...] = ()
     # Required GitHub credential NAMES — checked as repo secrets OR variables
     # (some, e.g. AZURE_CLIENT_ID, migrated from secrets to vars).
@@ -206,8 +215,25 @@ def load_config(path: Path | None = None) -> ConformanceConfig:
     gh_creds = raw.get("github_required_credentials")
     if gh_creds is None:
         gh_creds = raw.get("github_required_secrets")
+    parse_warning: str | None = None
+    identity_mode = raw.get("identity_mode") or "split"
+    if identity_mode not in ("split", "single"):
+        # An unrecognised mode must not silently disable the least-privilege
+        # checks — keep the strict default and surface the typo loudly.
+        logger.warning(
+            "conformance config: identity_mode=%r is not one of "
+            "'split'/'single'; using 'split' — fix %s",
+            identity_mode, target,
+        )
+        parse_warning = (
+            f"identity_mode={identity_mode!r} invalid (expected 'split' or "
+            "'single'); strict 'split' profile applied"
+        )
+        identity_mode = "split"
     return ConformanceConfig(
         graph_app_roles=tuple(raw.get("graph_app_roles") or _DEFAULT_GRAPH_APP_ROLES),
+        identity_mode=identity_mode,
+        parse_warning=parse_warning,
         federated_credential_subjects=tuple(
             raw.get("federated_credential_subjects") or _default_fed_creds(),
         ),
@@ -248,10 +274,21 @@ def apply_identity_profile(config: ConformanceConfig, identity: str) -> Conforma
     - ``read`` — require ``CustomDetection.Read.All``, forbid
       ``CustomDetection.ReadWrite.All`` (least-privilege), and expect NO
       Sentinel write.
+
+    Forks that declare ``identity_mode: single`` in
+    ``.contentops-conformance.yml`` run one shared App Registration for
+    every environment (a second App Reg can be organisationally
+    impossible — months of procurement). The ``read`` leg then keeps the
+    loaded write-grade expectations: it still proves the automation
+    environment's federated credential, RBAC reach, and functional reads
+    every run, but no longer asserts a least-privilege split that the
+    deployment deliberately doesn't have.
     """
     import dataclasses
 
     if identity == "read":
+        if config.identity_mode == "single":
+            return dataclasses.replace(config, identity_label="read (single-app)")
         return dataclasses.replace(
             config,
             graph_app_roles=("CustomDetection.Read.All",),

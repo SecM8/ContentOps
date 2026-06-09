@@ -28,6 +28,20 @@ from the commit history.
 
 ### Added
 
+- **`identity_mode: single` in `.contentops-conformance.yml`** — first-class
+  support for single-App-Registration deployments. The conformance `read`
+  leg previously hard-coded least-privilege expectations (require
+  `CustomDetection.Read.All`, forbid `ReadWrite.All`, expect no Sentinel
+  write), so forks running one shared App Reg for every environment —
+  a second App Reg can take months of procurement — failed the weekly
+  read leg with no supported way to declare their posture. With
+  `identity_mode: single` the read leg keeps verifying the `automation`
+  environment's federated credential, RBAC reach, and functional reads,
+  but applies the shared-identity grant expectations; the report header
+  records `identity=read (single-app)`. Default remains `split` (strict);
+  unrecognised values fall back to `split` with a visible warning.
+  Documented in `deployment-conformance.md` with the accepted trade-off
+  and compensating safeguards spelled out.
 - `docs/operations/operationalization-paths.md` — decision guide for
   standing the pipeline up: the five operationalization decisions
   (repo topology, execution model A/B/C, identity, tenant-config
