@@ -108,3 +108,14 @@ runs:
         body: ${{ inputs.body }}
         body-path: ${{ inputs.body-path }}
         labels: ${{ inputs.labels }}
+        # DCO: stamp the commit with a Signed-off-by trailer. Without
+        # this the auto-PR commit relies on the dco.yml PR-author
+        # bypass, which only matches bot logins (github-actions[bot],
+        # siemcontent-bot, …). A PR opened with AUTO_PR_TOKEN is
+        # authored by the PAT owner — a real account, not on the
+        # bypass list — so its commit needs an actual trailer. dco.yml
+        # treats a present-but-author-mismatched trailer as a non-fatal
+        # warning, so signoff alone turns the check green. (Moot on the
+        # operator repo, where GITHUB_TOKEN-opened PRs never trigger
+        # the pull_request DCO workflow at all.)
+        signoff: true

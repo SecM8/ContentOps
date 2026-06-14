@@ -47,9 +47,22 @@ jobs:
         # reviewer can require a clean PR. If it becomes a real
         # problem, the script can be taught to per-rule diff against
         # only the human-authored commits in the PR range.
+        #
+        # Read the PR's *head* commit explicitly via $HEAD_SHA rather
+        # than `git log -1` on the checkout. For a pull_request event
+        # actions/checkout lands on the synthetic merge commit, whose
+        # subject is `Merge <sha> into <sha>` — which never matches the
+        # chore(collect|drift) regex, so the skip silently never fired.
+        # This stayed invisible until collect PRs began triggering
+        # pull_request CI (PAT-opened PRs do; GITHUB_TOKEN-opened ones
+        # never did), at which point a brownfield first-collect of an
+        # already-populated tenant failed the gate on every pre-existing
+        # production rule.
         id: gate
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          subj=$(git log -1 --format=%s)
+          subj=$(git log -1 --format=%s "$HEAD_SHA")
           echo "Head commit subject: $subj"
           if echo "$subj" | grep -qE '^chore\((collect|drift)\):'; then
             echo "::notice::Head commit is a $subj — collected/drifted content, not a human-initiated promotion. Skipping promotion gate."

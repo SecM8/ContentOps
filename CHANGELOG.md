@@ -73,6 +73,30 @@ from the commit history.
 
 ### Fixed
 
+- **Automated PRs now carry a DCO sign-off.** The shared `auto-pr`
+  composite action passes `signoff: true` to
+  `peter-evans/create-pull-request`, so `collect` / `drift` /
+  `kql-schemas-refresh` / `attack-matrix-refresh` / `upstream-watchers`
+  / `lock-unlock` commits land with a `Signed-off-by` trailer. Until
+  now these PRs leaned on the `dco.yml` PR-author bypass, which only
+  matches bot logins — fine while PRs were opened by `GITHUB_TOKEN`
+  (those never trigger `pull_request` CI, so `dco` never ran). The
+  moment a PR is opened with `AUTO_PR_TOKEN`, it is authored by the PAT
+  owner (a real account, not bypassed), `dco` runs, and the missing
+  trailer fails it. `dco.yml` treats a present-but-author-mismatched
+  trailer as a non-fatal warning, so the sign-off turns the check green.
+- **First `collect` of a brownfield tenant no longer red-walls the
+  promotion gate.** `production-promotion-check.yml` carries a skip for
+  `chore(collect|drift):` commits — collected content mirrors
+  already-promoted tenant rules, not new human promotions — but the
+  skip read `git log -1` on the synthetic merge commit that
+  `actions/checkout` produces for `pull_request` events, whose subject
+  is `Merge <sha> into <sha>` and never matches the regex. The skip
+  therefore never fired; it stayed invisible only because collect PRs
+  never triggered `pull_request` CI until the `AUTO_PR_TOKEN` path
+  arrived. The gate now reads the PR head-commit subject via
+  `$HEAD_SHA`. Without the fix, importing an existing tenant's N
+  production rules failed the gate on all N at once.
 - **e2e capability matrix: mocked mode is now hermetic.** Token
   acquisition goes over `requests` (azure-identity/MSAL), which respx
   cannot intercept, so the mocked leg's synthetic `AZURE_CLIENT_SECRET`
