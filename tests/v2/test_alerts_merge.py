@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from contentops.alerts.merge import merge_alerts
+from contentops.alerts.merge import enrich_from_graph, merge_alerts
 from contentops.alerts.models import (
     AlertClassification,
     AlertDetermination,
@@ -129,3 +129,86 @@ def test_merge_classification_enrichment() -> None:
     sentinel = [_sentinel_alert("s1", incident_id="42")]
     result = merge_alerts(graph, sentinel)
     assert result[0].classification == AlertClassification.true_positive
+
+
+# ---------------------------------------------------------------------------
+# Cross-source correlation (VendorOriginalId) — the de-dup / double-count fix.
+# A Defender alert appears in Graph (id/providerAlertId) AND Sentinel
+# (VendorOriginalId → provider_alert_id); they must collapse to one "both"
+# alert, not two. The old key (Graph providerAlertId ↔ Sentinel SystemAlertId)
+# never matched, so every Defender alert was double-counted.
+# ---------------------------------------------------------------------------
+
+
+def test_merge_correlates_graph_id_to_sentinel_vendor_id() -> None:
+    graph = [_graph_alert("defender-alert-abc")]  # Graph id == the vendor id
+    sentinel = [
+        _sentinel_alert("la-system-xyz").model_copy(
+            update={"provider_alert_id": "defender-alert-abc"}
+        )
+    ]
+    result = merge_alerts(graph, sentinel)
+    assert len(result) == 1
+    assert result[0].source == "both"
+
+
+def test_merge_correlates_graph_provider_id_to_sentinel_vendor_id() -> None:
+    graph = [
+        _graph_alert("graph-unified-1").model_copy(
+            update={"provider_alert_id": "defender-alert-abc"}
+        )
+    ]
+    sentinel = [
+        _sentinel_alert("la-system-xyz").model_copy(
+            update={"provider_alert_id": "defender-alert-abc"}
+        )
+    ]
+    result = merge_alerts(graph, sentinel)
+    assert len(result) == 1
+    assert result[0].source == "both"
+
+
+def test_merge_no_double_count_on_vendor_id_match() -> None:
+    """The regression: N Defender alerts in both sources must yield N rows, not 2N."""
+    graph = [_graph_alert(f"d{i}") for i in range(5)]
+    sentinel = [
+        _sentinel_alert(f"s{i}").model_copy(update={"provider_alert_id": f"d{i}"})
+        for i in range(5)
+    ]
+    result = merge_alerts(graph, sentinel)
+    assert len(result) == 5
+    assert all(a.source == "both" for a in result)
+
+
+def test_merge_keeps_genuinely_distinct_alerts_separate() -> None:
+    graph = [_graph_alert("g-only")]
+    sentinel = [
+        _sentinel_alert("s-only").model_copy(update={"provider_alert_id": "unrelated"})
+    ]
+    result = merge_alerts(graph, sentinel)
+    assert len(result) == 2
+    assert {a.source for a in result} == {"graph", "sentinel"}
+
+
+def test_from_kql_row_populates_provider_alert_id_from_vendor_original_id() -> None:
+    row = {
+        "SystemAlertId": "la-system-xyz",
+        "VendorOriginalId": "defender-alert-abc",
+        "AlertName": "Test",
+        "AlertSeverity": "Medium",
+        "Status": "New",
+    }
+    alert = NormalizedAlert.from_kql_row(row)
+    assert alert.id == "la-system-xyz"
+    assert alert.provider_alert_id == "defender-alert-abc"
+
+
+def test_enrich_from_graph_matches_on_vendor_id_not_system_id() -> None:
+    """A Sentinel alert lacking MITRE is enriched from its Graph twin,
+    correlated on VendorOriginalId — SystemAlertId would never match."""
+    sentinel = _sentinel_alert("la-system-xyz").model_copy(
+        update={"provider_alert_id": "defender-alert-abc", "mitre_techniques": []}
+    )
+    graph = _graph_alert("defender-alert-abc")  # carries T1059
+    result = enrich_from_graph([sentinel], [graph])
+    assert result[0].mitre_techniques == ["T1059"]

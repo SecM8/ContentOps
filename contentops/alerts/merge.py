@@ -34,6 +34,26 @@ from contentops.alerts.models import (
 log = logging.getLogger(__name__)
 
 
+def _correlation_keys(alert: NormalizedAlert) -> list[str]:
+    """Candidate keys for correlating the *same* alert across Graph and Sentinel.
+
+    A Defender alert surfaces in two places with two id schemes:
+
+    * Graph ``alerts_v2`` — ``id`` and ``providerAlertId``
+      (``provider_alert_id`` here).
+    * Sentinel ``SecurityAlert`` — ``VendorOriginalId`` (mapped to
+      ``provider_alert_id``) and ``SystemAlertId`` (mapped to ``id``).
+
+    The shared value is the vendor's original alert id: Graph ``id`` /
+    ``providerAlertId`` ↔ Sentinel ``VendorOriginalId``. ``SystemAlertId`` is
+    Log-Analytics-internal and never matches Graph — keying on it (the old
+    behaviour) produced 0 joins and double-counted every Defender alert. We
+    don't assume which field the vendor populated, so we offer every non-empty
+    candidate and let the lookup find the hit.
+    """
+    return [k for k in (alert.provider_alert_id, alert.id) if k]
+
+
 def merge_alerts(
     graph_alerts: list[NormalizedAlert],
     sentinel_alerts: list[NormalizedAlert],
@@ -52,15 +72,23 @@ def merge_alerts(
     matched_graph_ids: set[str] = set()
     matched_sentinel_ids: set[str] = set()
 
-    # Pass 1: provider_alert_id ↔ SystemAlertId match
-    # Graph providerAlertId should equal Sentinel SystemAlertId for the same alert
-    sentinel_by_id: dict[str, NormalizedAlert] = {sa.id: sa for sa in sentinel_alerts if sa.id}
+    # Pass 1: cross-source correlation on the vendor's original alert id.
+    # Index Sentinel by every candidate key (VendorOriginalId AND
+    # SystemAlertId) and try each Graph candidate key against it, so the join
+    # works whichever field the vendor populated. See _correlation_keys.
+    sentinel_by_key: dict[str, NormalizedAlert] = {}
+    for sa in sentinel_alerts:
+        for key in _correlation_keys(sa):
+            sentinel_by_key.setdefault(key, sa)
     for ga in graph_alerts:
-        join_key = ga.provider_alert_id or ga.id
-        if join_key in sentinel_by_id:
-            result.append(NormalizedAlert.merge(ga, sentinel_by_id[join_key]))
+        matched_sa = next(
+            (sentinel_by_key[k] for k in _correlation_keys(ga) if k in sentinel_by_key),
+            None,
+        )
+        if matched_sa is not None:
+            result.append(NormalizedAlert.merge(ga, matched_sa))
             matched_graph_ids.add(ga.id)
-            matched_sentinel_ids.add(join_key)
+            matched_sentinel_ids.add(matched_sa.id)
 
     # Pass 2: incident_id join for remaining unmatched
     graph_by_incident: dict[str, list[NormalizedAlert]] = defaultdict(list)
@@ -88,6 +116,18 @@ def merge_alerts(
             result.append(sa)
 
     merged_count = sum(1 for a in result if a.source == "both")
+    if graph_alerts and sentinel_alerts and merged_count == 0:
+        # Both sources returned alerts but nothing correlated — the key is
+        # likely wrong for this tenant's alert providers. Surface a sample so
+        # the right field is obvious from the run log (alert ids are opaque
+        # identifiers, not PII).
+        gs, ss = graph_alerts[0], sentinel_alerts[0]
+        log.warning(
+            "Merge: 0 cross-source matches — correlation key may be wrong. "
+            "sample graph id=%r provider_alert_id=%r | "
+            "sample sentinel id=%r provider_alert_id=%r",
+            gs.id, gs.provider_alert_id, ss.id, ss.provider_alert_id,
+        )
     log.info(
         "Merge: %d Graph + %d Sentinel → %d merged, %d Graph-only, %d Sentinel-only, %d total",
         len(graph_alerts),
@@ -368,11 +408,13 @@ def enrich_from_graph(
     if not graph_alerts:
         return list(alerts)
 
-    # Pass 1 lookup: provider_alert_id → Graph alert
-    graph_by_provider_id: dict[str, NormalizedAlert] = {}
+    # Pass 1 lookup: index Graph by every correlation key (see
+    # _correlation_keys / merge_alerts), so a Sentinel alert matches its Graph
+    # twin on the vendor's original id rather than the LA-internal SystemAlertId.
+    graph_by_key: dict[str, NormalizedAlert] = {}
     for ga in graph_alerts:
-        if ga.provider_alert_id:
-            graph_by_provider_id[ga.provider_alert_id] = ga
+        for key in _correlation_keys(ga):
+            graph_by_key.setdefault(key, ga)
 
     # Pass 2 lookup: incident_id → list of Graph alerts
     graph_by_incident: dict[str, list[NormalizedAlert]] = defaultdict(list)
@@ -384,8 +426,11 @@ def enrich_from_graph(
     enriched = 0
 
     for alert in alerts:
-        # Pass 1: provider_alert_id match
-        ga = graph_by_provider_id.get(alert.id)
+        # Pass 1: cross-source correlation-key match
+        ga = next(
+            (graph_by_key[k] for k in _correlation_keys(alert) if k in graph_by_key),
+            None,
+        )
         if ga is not None:
             enriched_alert, changed = _apply_graph_enrichment(alert, ga)
             result.append(enriched_alert)

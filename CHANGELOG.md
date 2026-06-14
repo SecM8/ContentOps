@@ -73,6 +73,21 @@ from the commit history.
 
 ### Fixed
 
+- **Graph ↔ Sentinel alert correlation fixed (de-dup / double-count).**
+  The same Defender alert lands in both Graph `alerts_v2` (keyed by `id` /
+  `providerAlertId`) and the Sentinel `SecurityAlert` table (keyed by
+  `VendorOriginalId`), but the merge joined Graph `providerAlertId` against
+  Sentinel `SystemAlertId` — a Log-Analytics-internal hash that never equals
+  the Graph id. So **every** cross-source alert fell through as
+  `0 merged`, was kept twice (Graph-only + Sentinel-only), and the
+  Graph→Sentinel MITRE/evidence enrichment matched nothing (`0/N enriched`).
+  Harmless while Graph capped at 500; once the paging fix surfaced the full
+  ~50k, daily totals inflated ~1.8×. The KQL projection now selects
+  `VendorOriginalId`, `from_kql_row` maps it to `provider_alert_id`, and both
+  join sites (`merge_alerts`, `enrich_from_graph`) correlate on the vendor's
+  original alert id via a shared `_correlation_keys` helper that tries every
+  candidate field. A run that still finds zero matches logs a one-line sample
+  of both sides' ids so the right key is obvious from the log.
 - **Alert sync no longer truncates Graph `alerts_v2` at 500.** The
   enrichment fetch pulled the whole window in one `GET /alerts_v2?$top=500`
   and relied on `@odata.nextLink` to page — but alerts_v2 silently stops

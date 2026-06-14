@@ -421,6 +421,11 @@ class NormalizedAlert(BaseModel):
             detection_source=row.get("ProviderName") or "",
             incident_id=incident_id,
             assigned_to=assigned_to,
+            # The vendor's original alert id (e.g. the Defender alert id).
+            # This is what correlates a Sentinel SecurityAlert row to the
+            # same alert in Graph alerts_v2 — SystemAlertId is LA-internal and
+            # never matches Graph. See merge.py:_correlation_keys.
+            provider_alert_id=row.get("VendorOriginalId") or None,
         )
 
     @classmethod
@@ -460,6 +465,9 @@ class NormalizedAlert(BaseModel):
             rule_id=sentinel.rule_id or graph.rule_id,
             rule_name=graph.rule_name or sentinel.rule_name,
             detection_source=graph.detection_source or sentinel.detection_source,
+            # Keep the correlation key so a merged alert still matches in a
+            # later enrich pass.
+            provider_alert_id=graph.provider_alert_id or sentinel.provider_alert_id,
         )
 
 

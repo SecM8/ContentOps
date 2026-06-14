@@ -316,6 +316,7 @@ SecurityAlert
 | where {where_clause}
 | summarize arg_max(TimeGenerated, *) by SystemAlertId
 | project SystemAlertId,
+          VendorOriginalId,
           AlertName,
           AlertSeverity,
           Status,
@@ -363,7 +364,7 @@ def _security_alerts_joined_base(where_clause: str) -> str:
 let alerts = SecurityAlert
 | where {where_clause}
 | summarize arg_max(TimeGenerated, *) by SystemAlertId
-| project SystemAlertId, AlertName, AlertSeverity,
+| project SystemAlertId, VendorOriginalId, AlertName, AlertSeverity,
           AlertStatus = Status,
           AlertClassification = tostring(parse_json(ExtendedProperties).Classification),
           ProviderName, ProductName, Tactics, Techniques,
