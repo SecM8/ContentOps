@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -40,6 +40,18 @@ class SourcedAlerts:
 
 # Per-phase timeout mirroring the Defender client pattern.
 GRAPH_ALERTS_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
+
+# alerts_v2 returns at most this many results per page, and its
+# ``@odata.nextLink`` is unreliable on large result sets — it silently
+# stops after the first ``$top`` page. So we paginate by *time* instead
+# (see ``GraphAlertsProvider.list_graph_alerts_windowed``): a slice that
+# comes back full at PAGE_SIZE is assumed truncated and halved, down to
+# SLICE_FLOOR. PAGE_SIZE is deliberately the value we have observed the
+# API return in full when more data exists — do not raise it on the
+# assumption the API honours a larger ``$top``; if it caps below the
+# requested value the truncation signal breaks and data is silently lost.
+GRAPH_ALERTS_PAGE_SIZE = 500
+GRAPH_ALERTS_SLICE_FLOOR = timedelta(minutes=15)
 
 
 class GraphAlertsProvider:
@@ -308,6 +320,92 @@ class GraphAlertsProvider:
             url,
             next_link_key="@odata.nextLink",
         )
+
+    def _fetch_graph_alerts_single_page(
+        self, *, since: datetime, until: datetime, page_size: int,
+    ) -> list[dict]:
+        """Fetch a SINGLE page of alerts_v2 for ``[since, until)``.
+
+        Deliberately does NOT follow ``@odata.nextLink`` — time-slicing in
+        :meth:`list_graph_alerts_windowed` is the pagination dimension, and
+        a return of ``page_size`` items is the caller's truncation signal.
+        """
+        filters = [
+            f"createdDateTime ge {since.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            f"createdDateTime lt {until.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        ]
+        url = "/alerts_v2?" + "&".join(
+            ["$filter=" + " and ".join(filters), f"$top={page_size}"]
+        )
+        resp = self._request_with_retry("GET", url)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("value", [])
+
+    def list_graph_alerts_windowed(
+        self,
+        *,
+        since: datetime,
+        until: datetime,
+        page_size: int = GRAPH_ALERTS_PAGE_SIZE,
+        floor: timedelta = GRAPH_ALERTS_SLICE_FLOOR,
+    ) -> list[dict]:
+        """Fetch every alerts_v2 record in ``[since, until)`` by adaptive
+        time-slicing.
+
+        ``alerts_v2``'s ``@odata.nextLink`` silently stops after the first
+        ``$top`` page on large result sets, so a single wide-window pull
+        truncates at ``page_size`` and loses everything past it (the bug
+        this method fixes: a 30-day backfill returned 500 alerts, all on
+        day one). Instead of trusting the continuation token we paginate by
+        *time* — the technique UAL / Defender harvesting tools use to beat
+        per-window result caps: fetch a slice as one page; if it comes back
+        full (``>= page_size``) assume it is truncated and halve it,
+        recursively, until each slice fits in a single page or hits
+        ``floor``. De-dupes by alert ``id`` as a guard against any
+        boundary overlap.
+
+        Degrades loudly, never silently: a slice still at the cap when it
+        reaches ``floor`` logs a WARNING naming the window.
+        """
+        collected: list[dict] = []
+        seen: set[str] = set()
+        slices = 0
+        floored = 0
+        stack: list[tuple[datetime, datetime]] = [(since, until)]
+        while stack:
+            s, u = stack.pop()
+            slices += 1
+            page = self._fetch_graph_alerts_single_page(
+                since=s, until=u, page_size=page_size,
+            )
+            if len(page) >= page_size and (u - s) > floor:
+                mid = s + (u - s) / 2
+                stack.append((s, mid))
+                stack.append((mid, u))
+                continue
+            if len(page) >= page_size:
+                floored += 1
+                logger.warning(
+                    "alerts_v2: time-slice %s..%s hit the %d-record page cap "
+                    "at the %s floor — alerts may be missing for this window",
+                    s.strftime("%Y-%m-%dT%H:%MZ"),
+                    u.strftime("%Y-%m-%dT%H:%MZ"),
+                    page_size, floor,
+                )
+            for alert in page:
+                aid = alert.get("id")
+                if aid is not None:
+                    if aid in seen:
+                        continue
+                    seen.add(aid)
+                collected.append(alert)
+        logger.info(
+            "alerts_v2 windowed fetch: %d alert(s) across %d time-slice(s)%s",
+            len(collected), slices,
+            f" ({floored} truncated at floor)" if floored else "",
+        )
+        return collected
 
     def _list_sentinel_incidents(
         self,

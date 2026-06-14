@@ -311,7 +311,11 @@ def sync_alerts(
                 until = _dt(all_dates[-1].year, all_dates[-1].month, all_dates[-1].day, tzinfo=_tz.utc) + timedelta(days=1)
                 sources = provider.detect_available_sources()
                 if "graph" in sources:
-                    raw_graph = provider._list_graph_alerts(since=since, until=until)
+                    # Time-sliced fetch — alerts_v2's @odata.nextLink stops
+                    # after the first $top page, so a single wide-window pull
+                    # truncates (see list_graph_alerts_windowed). Covers both
+                    # the daily 1-day window and a multi-week backfill.
+                    raw_graph = provider.list_graph_alerts_windowed(since=since, until=until)
                     graph_normalized = [NormalizedAlert.from_graph(g) for g in raw_graph]
                     graph_available = True
                     logger.info("Graph enrichment: fetched %d alerts for enrichment", len(graph_normalized))

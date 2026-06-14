@@ -73,6 +73,22 @@ from the commit history.
 
 ### Fixed
 
+- **Alert sync no longer truncates Graph `alerts_v2` at 500.** The
+  enrichment fetch pulled the whole window in one `GET /alerts_v2?$top=500`
+  and relied on `@odata.nextLink` to page — but alerts_v2 silently stops
+  emitting the continuation token past the first page on large result
+  sets, so a 30-day backfill returned exactly 500 alerts, all landing on
+  day one (every later day showed `0 from Graph`). The daily cron hid it
+  because a single day usually fit under 500. `list_graph_alerts_windowed`
+  now paginates by **time** instead of the continuation token — the
+  technique UAL/Defender harvesting tools use to beat per-window result
+  caps: fetch a slice as one page, and if it comes back full at the cap,
+  halve the window and recurse down to a 15-minute floor. `$top` stays at
+  the empirically-observed page cap (500) so the "full page = truncated"
+  signal can't be fooled by the API ignoring a larger value; a slice still
+  saturated at the floor logs a loud WARNING naming the window. Verified
+  against a simulated 30-day × 2000/day tenant (60,000 alerts recovered in
+  255 slices, zero loss).
 - **Automated PRs now carry a DCO sign-off.** The shared `auto-pr`
   composite action passes `signoff: true` to
   `peter-evans/create-pull-request`, so `collect` / `drift` /

@@ -125,6 +125,7 @@ def _mock_provider(
     provider.list_recently_modified_incidents.return_value = []
     provider.list_graph_alerts_for_date.return_value = []
     provider._list_graph_alerts.return_value = []
+    provider.list_graph_alerts_windowed.return_value = []
     provider._workspace_id = None
     provider._credential = None
     provider._sentinel = None
