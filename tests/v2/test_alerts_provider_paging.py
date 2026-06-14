@@ -16,7 +16,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from contentops.alerts.provider import GRAPH_ALERTS_PAGE_SIZE, GraphAlertsProvider
+from contentops.alerts.provider import (
+    GRAPH_ALERTS_PAGE_SIZE,
+    GraphAlertsProvider,
+    _resolve_page_size,
+)
 
 
 def _provider_over(store: list[dict]) -> GraphAlertsProvider:
@@ -97,3 +101,23 @@ def test_windowed_warns_and_terminates_when_floor_is_saturated(
 
     assert len(got) == GRAPH_ALERTS_PAGE_SIZE  # truncated at the floor
     assert any("hit the" in r.message and "page cap" in r.message for r in caplog.records)
+
+
+def test_resolve_page_size_defaults_when_unset(monkeypatch) -> None:
+    monkeypatch.delenv("CONTENTOPS_ALERTS_PAGE_SIZE", raising=False)
+    assert _resolve_page_size(default=500) == 500
+
+
+def test_resolve_page_size_honours_valid_override(monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTOPS_ALERTS_PAGE_SIZE", "999")
+    assert _resolve_page_size(default=500) == 999
+
+
+def test_resolve_page_size_rejects_non_integer(monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTOPS_ALERTS_PAGE_SIZE", "lots")
+    assert _resolve_page_size(default=500) == 500
+
+
+def test_resolve_page_size_rejects_non_positive(monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTOPS_ALERTS_PAGE_SIZE", "0")
+    assert _resolve_page_size(default=500) == 500

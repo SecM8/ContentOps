@@ -35,6 +35,7 @@ Open the repo's `Settings → Secrets and variables → Actions → Variables ta
 |---|---|---|
 | `AZURE_CLIENT_ID` | The App Registration's "Application (client) ID" GUID | A client ID by itself authenticates nothing — it just identifies the app. Treating it as a secret leaks the wrong threat model and breaks `${{ vars.AZURE_CLIENT_ID }}` references in workflows. |
 | `AZURE_TENANT_ID` | The Entra tenant GUID | Same — tenant IDs are public discovery information. Treat as a Variable. |
+| `CONTENTOPS_ALERTS_PAGE_SIZE` *(optional)* | `alerts_v2` `$top` page size for `alerts-report.yml`. Default 500. Raise (e.g. `999`) to cut the slice count + Graph throttling on large `--backfill` runs — **after** confirming the alert total is unchanged (Graph may silently cap an over-large `$top`, which would drop data). Not sensitive; it's a tuning knob, so a Variable. | A bigger page = fewer time-slices = less throttling; not a secret, and referenced as `${{ vars.CONTENTOPS_ALERTS_PAGE_SIZE }}`. |
 
 The workflows reference these as `${{ vars.AZURE_CLIENT_ID }}` and
 `${{ vars.AZURE_TENANT_ID }}` (see `.github/actions/pipeline-setup/action.yml`).

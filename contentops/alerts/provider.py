@@ -15,6 +15,7 @@ Source detection:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -41,16 +42,44 @@ class SourcedAlerts:
 # Per-phase timeout mirroring the Defender client pattern.
 GRAPH_ALERTS_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
+def _resolve_page_size(*, default: int) -> int:
+    """Resolve the alerts_v2 page size, overridable via env.
+
+    Defaults to ``default``; an operator can raise it through
+    ``CONTENTOPS_ALERTS_PAGE_SIZE`` (validated, must be a positive int).
+    """
+    raw = os.environ.get("CONTENTOPS_ALERTS_PAGE_SIZE")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "CONTENTOPS_ALERTS_PAGE_SIZE=%r is not an integer; using %d", raw, default,
+        )
+        return default
+    if value < 1:
+        logger.warning(
+            "CONTENTOPS_ALERTS_PAGE_SIZE=%d must be >= 1; using %d", value, default,
+        )
+        return default
+    return value
+
+
 # alerts_v2 returns at most this many results per page, and its
 # ``@odata.nextLink`` is unreliable on large result sets — it silently
 # stops after the first ``$top`` page. So we paginate by *time* instead
 # (see ``GraphAlertsProvider.list_graph_alerts_windowed``): a slice that
 # comes back full at PAGE_SIZE is assumed truncated and halved, down to
-# SLICE_FLOOR. PAGE_SIZE is deliberately the value we have observed the
-# API return in full when more data exists — do not raise it on the
-# assumption the API honours a larger ``$top``; if it caps below the
-# requested value the truncation signal breaks and data is silently lost.
-GRAPH_ALERTS_PAGE_SIZE = 500
+# SLICE_FLOOR. The default (500) is the value we have observed the API
+# return in full when more data exists — do NOT raise it blind: per
+# Microsoft's paging docs an over-large ``$top`` may be silently capped to
+# the API maximum, which breaks the "full page ⇒ subdivide" signal and
+# drops data. An operator who has validated their tenant's real maximum
+# (re-run, confirm the alert total is unchanged) can raise it via the
+# ``CONTENTOPS_ALERTS_PAGE_SIZE`` env var to cut the slice count — and the
+# request throttling / backfill runtime — roughly proportionally.
+GRAPH_ALERTS_PAGE_SIZE = _resolve_page_size(default=500)
 GRAPH_ALERTS_SLICE_FLOOR = timedelta(minutes=15)
 
 

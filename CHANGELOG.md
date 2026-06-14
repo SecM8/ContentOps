@@ -73,6 +73,19 @@ from the commit history.
 
 ### Fixed
 
+- **`alerts-report` backfill no longer times out.** The time-sliced
+  `alerts_v2` fetch makes ~350 throttled requests for a busy 30-day tenant,
+  so the fetch + export ran past the job's 15-minute `timeout-minutes` and
+  got cancelled mid-run (≈ day 24 of 30, leaving the ledger unwritten). The
+  ceiling is raised to 30 minutes — free for the daily cron, which is one
+  day and finishes in ~2 min. Operators who want to shrink the slice count
+  (and the throttling) can raise the `alerts_v2` `$top` page size from its
+  proven-safe default of 500 via the new `CONTENTOPS_ALERTS_PAGE_SIZE`
+  Variable, after confirming their tenant's alert total is unchanged (per
+  Microsoft's paging guidance an over-large `$top` can be silently capped to
+  the API maximum, which would break the time-slice truncation signal — so
+  the default stays at the empirically-verified 500 and a higher value is
+  opt-in per fork). Wired into `alerts-report.yml`.
 - **Graph ↔ Sentinel alert correlation fixed (de-dup / double-count).**
   The same Defender alert lands in both Graph `alerts_v2` (keyed by `id` /
   `providerAlertId`) and the Sentinel `SecurityAlert` table (keyed by

@@ -40,11 +40,21 @@ jobs:
     # See drift.yml for the full rationale.
     if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 30, not 15: a --backfill pull time-slices Graph alerts_v2 into many
+    # small requests (~350 for a busy 30-day tenant) and Graph throttles the
+    # burst, so the fetch + 30-day export can run past 15 min. The daily cron
+    # is a single day and finishes in ~2 min, so the higher ceiling is free.
+    # Operators can shrink the slice count (and runtime) by raising
+    # CONTENTOPS_ALERTS_PAGE_SIZE once they've validated their tenant's $top max.
+    timeout-minutes: 30
     environment: automation
     env:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      # Optional tuning: alerts_v2 $top page size (default 500). Raise to cut
+      # the slice count + throttling on large backfills, after confirming the
+      # alert total is unchanged. Empty when the repo Variable is unset → 500.
+      CONTENTOPS_ALERTS_PAGE_SIZE: ${{ vars.CONTENTOPS_ALERTS_PAGE_SIZE }}
     steps:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
