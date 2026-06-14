@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 # to surface — retrying them just burns quota.
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
+# Transport-level faults worth retrying: a dropped connection, a read/connect
+# timeout, or a truncated body ("peer closed connection without sending
+# complete message body") on a large response is transient — retrying it beats
+# failing the whole fetch. Deliberately excludes LocalProtocolError (our own
+# malformed request) and UnsupportedProtocol, which won't fix on retry.
+RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    httpx.TimeoutException,      # connect / read / write / pool timeouts
+    httpx.NetworkError,          # connect / read / write / close errors, resets
+    httpx.RemoteProtocolError,   # server closed mid-response / framing error
+)
+
 # Belt-and-braces upper bound for pagination loops. Real ARM/Graph
 # tenants top out well below this; anything higher is almost certainly
 # a broken nextLink cycle.
@@ -70,27 +81,42 @@ def request_with_retry(
 ) -> httpx.Response:
     """Issue ``do_request()`` and retry up to ``max_retries`` times on transient status.
 
-    A single loop handles both 429 and 5xx — the previous design used
-    two sequential loops that allowed up to 7 total attempts and never
-    re-retried a 5xx that flipped to 429 on a follow-up. Backoff is
-    ``max(Retry-After, 2**attempt)`` so a server that explicitly asks
-    for a longer wait wins, but we never retry faster than the
-    exponential default.
+    A single loop handles 429, 5xx, *and* transient transport faults
+    (dropped connection, read timeout, truncated body) on the same retry
+    budget — the previous design caught only status codes, so a
+    ``RemoteProtocolError`` on a large response sailed past the loop and
+    failed the whole fetch. Backoff is ``max(Retry-After, 2**attempt)`` so
+    a server that explicitly asks for a longer wait wins, but we never
+    retry faster than the exponential default. Transport faults have no
+    ``Retry-After``, so they use the exponential backoff alone.
     """
-    response = do_request()
     attempts = 0
-    while response.status_code in RETRYABLE_STATUS and attempts < max_retries:
-        attempts += 1
-        header_wait = parse_retry_after(response)
-        backoff = 2 ** attempts
-        wait = max(header_wait or 0.0, float(backoff))
-        logger.warning(
-            "%s: retryable %s (attempt %d/%d), sleeping %.1fs",
-            label, response.status_code, attempts, max_retries, wait,
-        )
-        sleep(wait)
-        response = do_request()
-    return response
+    while True:
+        try:
+            response = do_request()
+        except RETRYABLE_EXCEPTIONS as exc:
+            if attempts >= max_retries:
+                raise
+            attempts += 1
+            wait = float(2 ** attempts)
+            logger.warning(
+                "%s: transport error (%s) (attempt %d/%d), sleeping %.1fs",
+                label, type(exc).__name__, attempts, max_retries, wait,
+            )
+            sleep(wait)
+            continue
+        if response.status_code in RETRYABLE_STATUS and attempts < max_retries:
+            attempts += 1
+            header_wait = parse_retry_after(response)
+            backoff = 2 ** attempts
+            wait = max(header_wait or 0.0, float(backoff))
+            logger.warning(
+                "%s: retryable %s (attempt %d/%d), sleeping %.1fs",
+                label, response.status_code, attempts, max_retries, wait,
+            )
+            sleep(wait)
+            continue
+        return response
 
 
 def paginate(
@@ -145,6 +171,7 @@ def paginate(
 
 __all__ = [
     "MAX_PAGES",
+    "RETRYABLE_EXCEPTIONS",
     "RETRYABLE_STATUS",
     "paginate",
     "parse_retry_after",

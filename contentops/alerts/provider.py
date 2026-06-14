@@ -405,6 +405,15 @@ class GraphAlertsProvider:
         while stack:
             s, u = stack.pop()
             slices += 1
+            # Heartbeat: the fetch is otherwise silent between the start and the
+            # final summary (only 429s log), so a quiet multi-minute run looks
+            # hung. Emit progress every 25 slices so it's visibly advancing.
+            if slices % 25 == 0:
+                logger.info(
+                    "alerts_v2 windowed fetch: %d slice(s) done, %d alert(s) so far, "
+                    "%d window(s) queued",
+                    slices, len(collected), len(stack),
+                )
             page = self._fetch_graph_alerts_single_page(
                 since=s, until=u, page_size=page_size,
             )

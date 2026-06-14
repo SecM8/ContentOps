@@ -286,7 +286,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **164** files, **1862** test functions. Integration: **11** files, **15** test functions.
+Unit: **164** files, **1867** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -296,7 +296,7 @@ Unit: **164** files, **1862** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_alerts_ledger.py` | 20 |
 | `tests/v2/test_alerts_merge.py` | 15 |
 | `tests/v2/test_alerts_models.py` | 31 |
-| `tests/v2/test_alerts_provider_paging.py` | 8 |
+| `tests/v2/test_alerts_provider_paging.py` | 9 |
 | `tests/v2/test_alerts_rollup.py` | 25 |
 | `tests/v2/test_alerts_sync.py` | 12 |
 | `tests/v2/test_analytic_kinds.py` | 27 |
@@ -380,7 +380,7 @@ Unit: **164** files, **1862** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_extract_etag.py` | 5 |
 | `tests/v2/test_git_diff.py` | 5 |
 | `tests/v2/test_handler_coverage.py` | 3 |
-| `tests/v2/test_http_retry.py` | 13 |
+| `tests/v2/test_http_retry.py` | 17 |
 | `tests/v2/test_hunting_handler.py` | 6 |
 | `tests/v2/test_hunting_model.py` | 6 |
 | `tests/v2/test_integration_guard.py` | 5 |

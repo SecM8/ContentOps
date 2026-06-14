@@ -12,6 +12,20 @@ from the commit history.
 
 ### Security
 
+- **Detection-inventory report telemetry scrubbed from git + the public
+  mirror.** `report.yml` was committing `reports/latest.{html,json,md}`,
+  dated `reports/YYYY-MM-DD.*`, and `reports/unified.html` — which carry
+  live per-detection operational telemetry (display names, alert/incident
+  counts, TP/FP %, MTTD, MTTR), and `reports/latest.*` was in the
+  public-mirror sync allowlist. Those files were removed from the tree and
+  `reports/` is now gitignored except `reports/badge.json` (an anonymous
+  coverage % that still feeds the README badge). The sync allowlist now
+  ships **only** `reports/badge.json`, so the next `public-sync` drops the
+  telemetry from the mirror tree. Reports are still produced — download the
+  `report.yml` / `alerts-report.yml` run artefact — they're just no longer
+  committed. Note: removing from the tree stops future exposure but the
+  files remain in git **history** on any repo they were pushed to; a
+  history rewrite is required to purge them there.
 - **Tenant config moved out of git.** The committed `config/tenant.yml`
   carrying real Azure tenant + subscription GUIDs was deleted from the
   working tree and gitignored. CI workflows now materialise it at job

@@ -121,3 +121,18 @@ def test_resolve_page_size_rejects_non_integer(monkeypatch) -> None:
 def test_resolve_page_size_rejects_non_positive(monkeypatch) -> None:
     monkeypatch.setenv("CONTENTOPS_ALERTS_PAGE_SIZE", "0")
     assert _resolve_page_size(default=500) == 500
+
+
+def test_windowed_emits_progress_heartbeat(caplog) -> None:
+    # >25 sub-slices must emit at least one progress heartbeat so a long,
+    # otherwise-silent fetch is visibly advancing rather than looking hung.
+    since = datetime(2026, 5, 15, tzinfo=timezone.utc)
+    span = timedelta(days=1)
+    store = _store(6000, since, span)  # ~31 slices — past the 25-slice heartbeat
+
+    prov = _provider_over(store)
+    with caplog.at_level(logging.INFO):
+        got = prov.list_graph_alerts_windowed(since=since, until=since + span)
+
+    assert len(got) == 6000
+    assert any("slice(s) done" in r.message for r in caplog.records)

@@ -109,6 +109,63 @@ def test_success_returns_immediately() -> None:
     assert sleeps == []
 
 
+# ----- transport-error retry (connection drops, timeouts) ------------------
+
+
+def _raiser(*outcomes):
+    """Yield each outcome in turn: an Exception is raised, else returned."""
+    it = iter(outcomes)
+
+    def _do() -> httpx.Response:
+        item = next(it)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    return _do
+
+
+def test_transport_error_retried_then_succeeds() -> None:
+    """A truncated-body RemoteProtocolError must retry, not fail the fetch."""
+    sleeps: list[float] = []
+    drop = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+        request=httpx.Request("GET", "http://test"),
+    )
+    do = _raiser(drop, drop, _resp(200, body={"ok": True}))
+    result = request_with_retry(do, sleep=sleeps.append)
+    assert result.status_code == 200
+    assert sleeps == [2.0, 4.0]  # exponential backoff, no Retry-After on transport faults
+
+
+def test_transport_error_reraised_after_max_retries() -> None:
+    sleeps: list[float] = []
+    drop = httpx.ReadError("connection reset", request=httpx.Request("GET", "http://test"))
+    do = _raiser(drop, drop, drop, drop)  # never recovers
+    with pytest.raises(httpx.ReadError):
+        request_with_retry(do, sleep=sleeps.append, max_retries=3)
+    assert sleeps == [2.0, 4.0, 8.0]
+
+
+def test_local_protocol_error_not_retried() -> None:
+    """LocalProtocolError is our own bad request — it won't fix on retry."""
+    sleeps: list[float] = []
+    bad = httpx.LocalProtocolError("malformed request")
+    with pytest.raises(httpx.LocalProtocolError):
+        request_with_retry(_raiser(bad), sleep=sleeps.append)
+    assert sleeps == []
+
+
+def test_transport_error_and_429_share_one_retry_budget() -> None:
+    """A transport fault followed by a 429 counts against the same counter."""
+    sleeps: list[float] = []
+    drop = httpx.ConnectError("refused", request=httpx.Request("GET", "http://test"))
+    do = _raiser(drop, _resp(429), _resp(200))
+    result = request_with_retry(do, sleep=sleeps.append, max_retries=3)
+    assert result.status_code == 200
+    assert sleeps == [2.0, 4.0]  # attempt 1 (transport) + attempt 2 (429)
+
+
 # ----- paginate ------------------------------------------------------------
 
 

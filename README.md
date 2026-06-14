@@ -7,7 +7,7 @@
 [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-orange.svg)](docs/reference/roadmap.md)
 [![Code of Conduct](https://img.shields.io/badge/contributor%20covenant-2.1-purple.svg)](CODE_OF_CONDUCT.md)
 [![MITRE ATT&CK coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/SecM8/ContentOps/main/coverage/badge.json)](coverage/badge.json)
-[![Detection inventory](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/SecM8/ContentOps/main/reports/badge.json)](reports/latest.html)
+![Detection inventory](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/SecM8/ContentOps/main/reports/badge.json)
 
 A Python CLI plus GitHub Actions pipeline that manages the full
 lifecycle of detection rules across Microsoft Sentinel and
