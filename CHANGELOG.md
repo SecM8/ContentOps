@@ -12,20 +12,21 @@ from the commit history.
 
 ### Security
 
-- **Detection-inventory report telemetry scrubbed from git + the public
-  mirror.** `report.yml` was committing `reports/latest.{html,json,md}`,
-  dated `reports/YYYY-MM-DD.*`, and `reports/unified.html` — which carry
-  live per-detection operational telemetry (display names, alert/incident
-  counts, TP/FP %, MTTD, MTTR), and `reports/latest.*` was in the
-  public-mirror sync allowlist. Those files were removed from the tree and
-  `reports/` is now gitignored except `reports/badge.json` (an anonymous
-  coverage % that still feeds the README badge). The sync allowlist now
-  ships **only** `reports/badge.json`, so the next `public-sync` drops the
-  telemetry from the mirror tree. Reports are still produced — download the
-  `report.yml` / `alerts-report.yml` run artefact — they're just no longer
-  committed. Note: removing from the tree stops future exposure but the
-  files remain in git **history** on any repo they were pushed to; a
-  history rewrite is required to purge them there.
+- **Detection-inventory report telemetry removed from the public mirror.**
+  `reports/latest.*` was in the public-mirror sync allowlist, so the
+  detailed report — which carries live per-detection operational telemetry
+  (display names, alert/incident counts, TP/FP %, MTTD, MTTR) — was being
+  published to `SecM8/ContentOps`. The sync allowlist now ships **only**
+  `reports/badge.json` (an anonymous coverage % that still feeds the README
+  badge), and `public-sync.yml`'s forbidden-paths check asserts
+  `reports/unified.html` + `reports/*-findings.md` never reach the mirror,
+  so the next `public-sync` drops the telemetry from the mirror tree. The
+  **mirror allowlist is the boundary** — reports themselves remain normal
+  versioned content (not gitignored), so a private deployment keeps a
+  durable posture history; only the one-way public sync is filtered. Note:
+  dropping the files from the mirror stops future exposure, but they remain
+  in git **history** on any repo they were already pushed to; a history
+  rewrite is required to purge them there.
 - **Tenant config moved out of git.** The committed `config/tenant.yml`
   carrying real Azure tenant + subscription GUIDs was deleted from the
   working tree and gitignored. CI workflows now materialise it at job
@@ -42,6 +43,21 @@ from the commit history.
 
 ### Added
 
+- **Committed report history + `reports.retentionDays` retention.**
+  `reports/` is normal versioned content (no longer gitignored), so
+  `report.yml` commits the regenerated detection-inventory report on
+  push-to-main — a deployment gets a durable, diffable posture history out
+  of the box. The new optional `reports:` block in `tenant.yml`
+  (`retentionDays`, default 365, range 0..3650; 0 disables) bounds the
+  committed dated snapshots: `contentops report` prunes
+  `reports/<YYYY-MM-DD>.{html,json}` older than the window each run (CLI
+  override `--retention-days`; `report.yml` materialises `tenant.yml` from
+  `TENANT_CONFIG_YAML` so the prune fires in CI). Per-detection telemetry
+  is kept off the public mirror by the sync allowlist, not gitignore (see
+  the Security note above). `config/tenant.yml.example` now documents the
+  `alerts:` retention settings (`ledgerRetentionDays` / `rollupRetentionDays`
+  + lookbacks) and the new `reports:` block, which the template previously
+  omitted. Guide: `docs/operations/durable-reports.md`.
 - **`AUTO_PR_TOKEN` escape hatch for org-blocked PR creation.** Org
   policies commonly disable "Allow GitHub Actions to create and approve
   pull requests", which kills all seven PR-opening workflows (`collect`,
@@ -180,6 +196,22 @@ from the commit history.
 
 ### Changed
 
+- **Source/deployment split — real detections no longer live in the
+  source repo.** The operator repo (`→` public mirror) was doubling as a
+  tenant deployment, carrying ~155 real per-tenant detection YAMLs plus
+  reports. Those are removed: the source now ships only
+  `detections/samples/`, `detections/templates/`, the per-kind READMEs,
+  and the empty `drift_suppressions.yml`. Real detection content now
+  lives in **private deployment forks** (one per tenant), each populated
+  by `collect` against its own tenant — so no tenant detection content
+  sits in, or syncs from, the public repo. `detections/<kind>/*.yml` are
+  **not** gitignored (the reverted PR #183 pattern is not reintroduced);
+  the source simply carries none. CLAUDE.md invariant #11 rewritten to
+  document the new topology. The `.gitignore` is unchanged — it is the
+  *deployment template* every fork inherits via the mirror, so its
+  tenant-data-hygiene rules (`config/tenant.yml`, `audit/`, `state/`,
+  `alerts-reports/`, the report-telemetry block) must stay or downstream
+  forks would leak.
 - **Fork-sync documentation hardened from a real downstream
   onboarding:**
   - `docs/operations/upstream-sync.md` gained §4 "One-time stitch —

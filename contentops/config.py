@@ -207,6 +207,32 @@ class AlertsConfig(BaseModel):
     reconcile: bool = True
 
 
+class ReportsConfig(BaseModel):
+    """Committed-report history retention.
+
+    The detection inventory report (``contentops report`` / the
+    ``report.yml`` workflow) writes a rolling ``reports/latest.*`` plus
+    dated snapshots ``reports/<YYYY-MM-DD>.{html,json}`` so adopters can
+    diff week-over-week. ``reports/`` is normal versioned content (NOT
+    gitignored), so on push-to-main ``report.yml`` commits it — a deployment
+    gets a durable, diffable posture history out of the box. The dated
+    snapshots then accumulate one per run.
+
+    ``retentionDays`` caps that history: on each ``contentops report`` run,
+    dated snapshots older than the window are pruned. Default ``365`` (≈ 52
+    weekly snapshots). Set to ``0`` to disable pruning and keep everything.
+
+    The whole block is optional — a missing ``reports:`` block means "no
+    pruning" (keep every dated snapshot). (Per-detection telemetry is kept
+    off the PUBLIC mirror by the sync allowlist, not by gitignore — see
+    docs/operations/durable-reports.md.)
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    retentionDays: int = Field(default=365, ge=0, le=3650)
+
+
 class TenantConfig(BaseModel):
     """One Entra ID tenant, with 0–1 Defender XDR, 0–N Sentinel workspaces,
     and an optional policy block."""
@@ -219,6 +245,7 @@ class TenantConfig(BaseModel):
     sentinelWorkspaces: list[SentinelWorkspaceConfig] = []
     policy: TenantPolicy | None = None
     alerts: AlertsConfig | None = None
+    reports: ReportsConfig | None = None
 
     def is_scaffold_strict(self) -> bool:
         """Resolve the effective scaffold-strict policy for the lint runner.

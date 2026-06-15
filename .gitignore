@@ -81,16 +81,19 @@ config/tenant.*.yml
 /coverage-*.md
 /coverage-*.json
 
-# Reports: only reports/badge.json (an anonymous coverage %) is tracked and
-# synced to the public mirror. Every other report — reports/latest.*, the
-# dated reports/YYYY-MM-DD.*, reports/unified.html, reports/posture-history.json,
-# and ad-hoc reports/*-findings.md — carries live per-detection telemetry
-# (display names, alert/incident counts, TP/FP %, MTTD, MTTR) and is now
-# operator-local: pull it from the report.yml / alerts-report.yml run artefact
-# rather than committing it. (Previously latest.* was tracked + synced; that was
-# scrubbed — it exposed operational telemetry on the public mirror.)
-/reports/*
-!/reports/badge.json
+# Reports: intentionally NOT gitignored. `contentops report` output
+# (reports/latest.*, dated reports/YYYY-MM-DD.*, reports/unified.html) is
+# normal versioned content, so a deployment fork keeps a durable, diffable
+# posture history out of the box — bounded by tenant.yml
+# `reports.retentionDays`. Same pattern as `coverage/` above.
+#
+# The per-detection telemetry these reports carry is kept OFF the public
+# mirror by the SYNC ALLOWLIST (`.github/sync-allowlist.txt` ships only
+# `reports/badge.json`) plus `public-sync.yml`'s forbidden-paths safety
+# check — NOT by gitignore. Do not re-add a `/reports/*` ignore: it would
+# protect nothing here (the mirror boundary is the allowlist) and only stop
+# adopters from committing their own reports. See
+# docs/operations/durable-reports.md.
 
 # --- KQL strict-lint wrapper build artefacts ----------------------------
 # Sources live at tools/kql_strict/ and are the canonical artifact; the

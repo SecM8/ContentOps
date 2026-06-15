@@ -5,8 +5,19 @@ name: Detection inventory report
 # - Generates reports/latest.html + reports/<date>.html + reports/latest.md
 #   + reports/badge.json.
 # - Uploads as workflow artifact on every run.
-# - On push-to-main: commits the regenerated files back to main via the
-#   github-actions[bot] identity (same pattern as coverage.yml).
+# - On push-to-main: commits the regenerated reports back to main via the
+#   github-actions[bot] identity (same pattern as coverage.yml). reports/ is
+#   normal versioned content, so this gives a deployment fork a durable,
+#   diffable posture history. Per-detection telemetry is kept off the PUBLIC
+#   mirror by the sync allowlist (only reports/badge.json mirrors), not by
+#   gitignore.
+#
+# Report retention: `tenant.yml` reports.retentionDays bounds the committed
+# dated-snapshot history (contentops report prunes dated snapshots older than
+# the window). That requires config/tenant.yml present at report time —
+# materialised below from TENANT_CONFIG_YAML when the secret exists; on repos
+# without the secret the prune is simply skipped. See
+# docs/operations/durable-reports.md.
 
 on:
   schedule:
@@ -33,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: reporting
+    # Job-level so the materialise step's `if:` can read it (you cannot
+    # reference `secrets` directly in an `if:` expression). Masked in logs.
+    env:
+      TENANT_CONFIG_YAML: ${{ secrets.TENANT_CONFIG_YAML }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -51,6 +66,20 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt && pip install -e .
+
+      - name: Materialise tenant configuration (optional — enables report retention)
+        # `reports.retentionDays` in tenant.yml bounds the committed report
+        # history. Read here so the prune knows the window; guarded on the
+        # secret being non-empty, so repos without TENANT_CONFIG_YAML (e.g.
+        # the public mirror) just skip the prune. `config/tenant.yml` is
+        # gitignored (invariant #3); we only write it if not already present.
+        if: env.TENANT_CONFIG_YAML != ''
+        run: |
+          set -euo pipefail
+          if [ ! -f config/tenant.yml ]; then
+            printf '%s' "$TENANT_CONFIG_YAML" > config/tenant.yml
+            echo "::notice::Wrote config/tenant.yml from TENANT_CONFIG_YAML (report retention enabled)."
+          fi
 
       - name: Restore alert ledger cache (read-only)
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5

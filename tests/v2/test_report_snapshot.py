@@ -23,6 +23,7 @@ from contentops.report.snapshot import (
     compute_delta,
     find_previous_snapshot,
     load_snapshot,
+    prune_dated_snapshots,
     render_snapshot,
 )
 
@@ -232,3 +233,61 @@ def test_compute_delta_tolerates_partial_previous() -> None:
     assert delta.total_delta == 1
     assert delta.new_rule_ids == ("rule-a",)
     assert delta.previous_date == "2026-05-10"
+
+
+# ---------------------------------------------------------------------------
+# prune_dated_snapshots
+# ---------------------------------------------------------------------------
+
+
+def _dated(reports_dir: Path, days_ago: int, ext: str = "json") -> Path:
+    """Write a dated snapshot file `<today - days_ago>.<ext>`."""
+    from datetime import date, timedelta
+    stamp = (date.today() - timedelta(days=days_ago)).isoformat()
+    p = reports_dir / f"{stamp}.{ext}"
+    p.write_text("{}", encoding="utf-8")
+    return p
+
+
+def test_prune_removes_only_files_older_than_retention(tmp_path: Path) -> None:
+    """Dated snapshots strictly older than today-retention are deleted;
+    fresher ones survive. Both .html and .json dated forms are eligible."""
+    old_json = _dated(tmp_path, days_ago=400, ext="json")
+    old_html = _dated(tmp_path, days_ago=400, ext="html")
+    recent = _dated(tmp_path, days_ago=10, ext="json")
+    removed = prune_dated_snapshots(tmp_path, retention_days=365)
+    assert removed == 2
+    assert not old_json.exists()
+    assert not old_html.exists()
+    assert recent.exists()
+
+
+def test_prune_never_touches_non_dated_artefacts(tmp_path: Path) -> None:
+    """latest.*, badge.json, unified.html have non-date stems and must
+    survive pruning regardless of age."""
+    for name in ("latest.json", "latest.html", "badge.json", "unified.html"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    _dated(tmp_path, days_ago=500)  # one ancient dated file to prune
+    removed = prune_dated_snapshots(tmp_path, retention_days=90)
+    assert removed == 1
+    for name in ("latest.json", "latest.html", "badge.json", "unified.html"):
+        assert (tmp_path / name).exists()
+
+
+def test_prune_zero_retention_is_disabled(tmp_path: Path) -> None:
+    """retention_days <= 0 means 'keep everything' (pruning disabled)."""
+    _dated(tmp_path, days_ago=9999)
+    assert prune_dated_snapshots(tmp_path, retention_days=0) == 0
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_prune_missing_dir_is_noop(tmp_path: Path) -> None:
+    assert prune_dated_snapshots(tmp_path / "nope", retention_days=365) == 0
+
+
+def test_prune_ignores_malformed_date_stems(tmp_path: Path) -> None:
+    """A 10-char stem that isn't a real date (e.g. 2026-13-99) is skipped,
+    not crashed on."""
+    (tmp_path / "2026-13-99.json").write_text("{}", encoding="utf-8")
+    assert prune_dated_snapshots(tmp_path, retention_days=1) == 0
+    assert (tmp_path / "2026-13-99.json").exists()

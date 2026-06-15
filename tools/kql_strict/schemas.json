@@ -36091,6 +36091,34 @@
           "type": "string"
         },
         {
+          "name": "healthProbeId_g",
+          "type": "string"
+        },
+        {
+          "name": "httpVerb_s",
+          "type": "string"
+        },
+        {
+          "name": "probeUrl_s",
+          "type": "string"
+        },
+        {
+          "name": "originIP_s",
+          "type": "string"
+        },
+        {
+          "name": "totalLatencyMilliseconds_s",
+          "type": "string"
+        },
+        {
+          "name": "connectionLatencyMilliseconds_s",
+          "type": "string"
+        },
+        {
+          "name": "DNSLatencyMicroseconds_s",
+          "type": "string"
+        },
+        {
           "name": "Tag_s",
           "type": "string"
         },

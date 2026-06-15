@@ -29,6 +29,7 @@ from contentops.report.snapshot import (
     compute_delta,
     find_previous_snapshot,
     load_snapshot,
+    prune_dated_snapshots,
     render_snapshot,
 )
 
@@ -166,6 +167,18 @@ from contentops.report.snapshot import (
         "CEO/CISO/SOC Manager/Engineers. Reads from the alert ledger."
     ),
 )
+@click.option(
+    "--retention-days", "retention_days",
+    type=int, default=None,
+    help=(
+        "Prune dated report snapshots (reports/<YYYY-MM-DD>.{html,json}) "
+        "older than this many days after writing the current run. When "
+        "unset, falls back to tenant.yml `reports.retentionDays` (default "
+        "365). Pass 0 to keep every snapshot. reports/ is versioned content, "
+        "so this bounds the committed posture history; a reports/ dir with no "
+        "dated files prunes nothing."
+    ),
+)
 def report_cmd(
     detections_path: Path,
     out_html: Path,
@@ -183,6 +196,7 @@ def report_cmd(
     schemas_path: Path,
     with_alerts: bool,
     unified: bool,
+    retention_days: int | None,
 ) -> None:
     """Generate the SOC-grade detection inventory report.
 
@@ -413,6 +427,34 @@ def report_cmd(
     snapshot_text = render_snapshot(rows, summary)
     out_json.write_text(snapshot_text, encoding="utf-8")
     click.echo(f"wrote snapshot: {out_json}")
+
+    # Bound the committed report history. reports/ is versioned content, so
+    # dated snapshots (reports/<YYYY-MM-DD>.{html,json}) accumulate one per
+    # run; this prune trims the ones older than the window. The dated copies
+    # are written by the workflow's `cp` step *after* this command, so what
+    # we prune here are OLD dated files from prior committed runs — today's
+    # hasn't been created yet. A reports/ dir with no dated files (fresh repo)
+    # prunes nothing.
+    #
+    # Precedence: explicit --retention-days wins; else tenant.yml
+    # reports.retentionDays; else skip (no tenant.yml / no reports block →
+    # keep everything).
+    effective_retention = retention_days
+    if effective_retention is None:
+        try:
+            from contentops.config import load_tenant_config
+            cfg = load_tenant_config()
+            if cfg.reports is not None:
+                effective_retention = cfg.reports.retentionDays
+        except FileNotFoundError:
+            effective_retention = None
+    if effective_retention is not None and effective_retention > 0:
+        pruned = prune_dated_snapshots(out_json.parent, effective_retention)
+        if pruned:
+            click.echo(
+                f"pruned {pruned} dated report snapshot(s) older than "
+                f"{effective_retention}d"
+            )
 
     if unified:
         try:

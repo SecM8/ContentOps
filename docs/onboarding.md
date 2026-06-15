@@ -232,6 +232,26 @@ When a daily rollup store is present (`contentops alerts rollup`),
 the Alerts Overview also charts 14-day trends: alert volume,
 false-positive rate, and resolution time (MTTR).
 
+### 5. (Optional) Report retention
+
+`reports/` is normal versioned content, so `report.yml` commits the
+regenerated reports on push-to-main — your deployment keeps a **durable,
+diffable posture history in git** with no setup. (Per-detection telemetry
+is kept off the public mirror by the sync allowlist, not gitignore.)
+
+The dated snapshots accumulate one per run; cap how much history is kept
+with:
+
+```yaml
+  reports:
+    retentionDays: 365   # keep ~52 weekly snapshots; 0 = keep everything
+```
+
+`contentops report` then prunes dated snapshots older than the window on
+each run. Details (how `report.yml` materialises `tenant.yml`, the
+`--retention-days` flag, the public-mirror boundary) are in
+[`operations/durable-reports.md`](operations/durable-reports.md).
+
 ---
 
 ## Common analyst tasks

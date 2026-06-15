@@ -88,3 +88,64 @@ tenant:
   # ------------------------------------------------------------------
   # policy:
   #   scaffoldStrict: false
+
+  # ------------------------------------------------------------------
+  # Optional alerts block — the alert ledger pipeline + retention.
+  #
+  # Drives `contentops alerts sync|rollup|health` and the daily
+  # `alerts-report.yml` workflow. OPT-IN: a missing `alerts:` block (or
+  # `enabled: false`) disables alert sync entirely. Uncomment + set
+  # `enabled: true` once the App Registration has SecurityAlert.Read.All
+  # (Graph) and/or Sentinel read on the prod workspace.
+  #
+  #   enabled              gate for the whole pipeline (default true
+  #                        WHEN the block is present; the block itself
+  #                        is opt-in).
+  #   defenderLookbackDays how far back to pull Defender XDR alerts on a
+  #                        sync (default 30, range 1..365).
+  #   sentinelLookbackDays how far back to pull Sentinel alerts on a sync
+  #                        (default 90, range 1..365).
+  #   ledgerRetentionDays  RETENTION: prune raw ledger / daily files older
+  #                        than this (default 90, range 7..365).
+  #   rollupRetentionDays  RETENTION: keep the daily rollup store this long
+  #                        — the long-horizon trend substrate (default
+  #                        365, range 30..730).
+  #   armOverlayDays       re-query the most recent N days each sync to
+  #                        catch late-arriving Sentinel updates (default
+  #                        30, range 0..90).
+  #   reexportDays         re-export window for the Defender side (default
+  #                        30, range 0..90).
+  #   reconcile            cross-check Graph vs Sentinel + dedup on
+  #                        VendorOriginalId (default true).
+  # ------------------------------------------------------------------
+  # alerts:
+  #   enabled: true
+  #   defenderLookbackDays: 30
+  #   sentinelLookbackDays: 90
+  #   ledgerRetentionDays: 90
+  #   rollupRetentionDays: 365
+  #   armOverlayDays: 30
+  #   reexportDays: 30
+  #   reconcile: true
+
+  # ------------------------------------------------------------------
+  # Optional reports block — committed-report history retention.
+  #
+  # The detection inventory report (`contentops report` / `report.yml`)
+  # writes a rolling `reports/latest.*` plus dated snapshots
+  # `reports/<YYYY-MM-DD>.{html,json}`. `reports/` is normal versioned
+  # content (NOT gitignored), so on push-to-main the workflow commits it —
+  # your deployment gets a durable, diffable posture history out of the box.
+  # (Per-detection telemetry stays off the PUBLIC mirror via the sync
+  # allowlist, not gitignore — see docs/operations/durable-reports.md.)
+  #
+  # The dated snapshots accumulate one-per-run, so set `retentionDays` to
+  # bound that history: `contentops report` prunes dated snapshots older
+  # than the window on each run. Omit the block to keep everything.
+  #
+  #   retentionDays  days of dated report history to keep (default 365 ≈
+  #                  52 weekly snapshots, range 0..3650). 0 disables
+  #                  pruning (keep everything).
+  # ------------------------------------------------------------------
+  # reports:
+  #   retentionDays: 365

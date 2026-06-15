@@ -64,13 +64,18 @@ Defender XDR. Single tenant. Apache-2.0 with reserved trademarks
 10. **Git is the source of truth, not `state/state.json`.** State
     is derived and rebuildable; refusing to load it is a recoverable
     error, not a deal-breaker.
-11. **Detection content is tracked alongside the code.**
-    `detections/<kind>/*.yml` are committed normally, not
-    gitignored. A 2026-05-17 PR (#183) briefly added a "bring your
-    own" gitignore pattern under an alternative topology; it was
-    reverted. Don't re-propose that pattern. Operator-side details
-    about how this repo relates to any public release live in
-    files not shipped to public consumers.
+11. **Detection content lives in deployment forks, not this source
+    repo.** This repo is the tool *source* (it syncs to the public
+    mirror): it ships `detections/samples/`, `detections/templates/`,
+    the per-kind READMEs, and an empty `detections/drift_suppressions.yml`
+    — and is deliberately empty of real detection YAMLs. Each tenant runs
+    a *private fork* of the tool and populates its own
+    `detections/<kind>/*.yml` via `collect` against that tenant, so no
+    tenant detection content sits in — or syncs from — the public repo.
+    `detections/<kind>/*.yml` are **not** gitignored (don't re-add that
+    pattern — PR #183); the source simply carries none, and each
+    deployment commits its own normally. Operator-side details about
+    specific deployments live in files not shipped to public consumers.
 
 ## Workflow gotchas
 

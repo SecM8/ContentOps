@@ -159,6 +159,51 @@ def find_previous_snapshot(
     return candidates[-1]
 
 
+def prune_dated_snapshots(reports_dir: Path, retention_days: int) -> int:
+    """Delete dated report snapshots older than ``retention_days``.
+
+    The report run writes dated copies ``reports/<YYYY-MM-DD>.{html,json}``
+    alongside the rolling ``latest.*``. On a deployment fork that durably
+    commits ``reports/`` this history grows one entry per run; this prune
+    bounds it to the retention window so the repo doesn't grow without
+    limit. Returns the number of files removed.
+
+    Only files whose **stem is a valid ISO date** (``YYYY-MM-DD``) and
+    strictly older than ``today - retention_days`` are eligible — so
+    ``latest.*``, ``badge.json``, ``unified.html`` and any other non-dated
+    artefact are never touched (same stem guard as
+    :func:`find_previous_snapshot`). A ``retention_days <= 0`` disables
+    pruning entirely (keep everything). Missing directory is a no-op.
+
+    Mirrors :func:`contentops.alerts.ledger.prune_daily_files`. Pure
+    filesystem; no git — the caller's workflow stages the deletions.
+    """
+    if retention_days <= 0 or not reports_dir.is_dir():
+        return 0
+    from datetime import date as _date, timedelta as _td
+    cutoff = _date.today() - _td(days=retention_days)
+    removed = 0
+    for f in reports_dir.iterdir():
+        if not f.is_file():
+            continue
+        stem = f.stem
+        # Same shape guard as find_previous_snapshot: a 10-char
+        # YYYY-MM-DD stem. Excludes latest / badge / unified by construction.
+        if len(stem) != 10 or stem[4] != "-" or stem[7] != "-":
+            continue
+        try:
+            file_date = _date.fromisoformat(stem)
+        except ValueError:
+            continue
+        if file_date < cutoff:
+            try:
+                f.unlink()
+                removed += 1
+            except OSError as exc:
+                logger.debug("could not prune dated snapshot %s: %s", f, exc)
+    return removed
+
+
 def compute_delta(
     previous: dict, current_rows: list[ReportRow],
     current_summary: ReportSummary,
@@ -247,5 +292,6 @@ __all__ = [
     "compute_delta",
     "find_previous_snapshot",
     "load_snapshot",
+    "prune_dated_snapshots",
     "render_snapshot",
 ]

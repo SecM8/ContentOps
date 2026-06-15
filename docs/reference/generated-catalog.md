@@ -286,7 +286,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **164** files, **1867** test functions. Integration: **11** files, **15** test functions.
+Unit: **165** files, **1879** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -334,6 +334,7 @@ Unit: **164** files, **1867** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_config_alerts.py` | 9 |
 | `tests/v2/test_config_cli.py` | 18 |
 | `tests/v2/test_config_envs.py` | 7 |
+| `tests/v2/test_config_reports.py` | 7 |
 | `tests/v2/test_conformance_auth_env.py` | 3 |
 | `tests/v2/test_conformance_layers.py` | 34 |
 | `tests/v2/test_coverage.py` | 24 |
@@ -419,7 +420,7 @@ Unit: **164** files, **1867** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_remediate_payload001.py` | 8 |
 | `tests/v2/test_report.py` | 31 |
 | `tests/v2/test_report_enrich.py` | 16 |
-| `tests/v2/test_report_snapshot.py` | 14 |
+| `tests/v2/test_report_snapshot.py` | 19 |
 | `tests/v2/test_resolve_workspace_id.py` | 7 |
 | `tests/v2/test_restore.py` | 11 |
 | `tests/v2/test_retry_failed_since.py` | 19 |
@@ -475,7 +476,7 @@ Unit: **164** files, **1867** test functions. Integration: **11** files, **15** 
 
 ## MITRE ATT&CK coverage
 
-- Covered: **45** / 222 techniques (**20%**)
+- Covered: **0** / 222 techniques (**0%**)
 - Matrix: MITRE ATT&CK Enterprise (full)
 - Badge: see `coverage/badge.json` (shields.io endpoint format).
 - Layer: see `coverage/navigator-layer.json` (uploadable to https://mitre-attack.github.io/attack-navigator/).
