@@ -54,7 +54,7 @@ single source of truth for "what's automatable."
 | `contentops doctor` | _none — purely local_ | n/a | Diagnostic; runs as a step in CI smoke (`ci.yml`). With `--auth`: hits tenant for token / workspace / SentinelHealth / Graph probes. |
 | `contentops test` (no `--live`) | `ci.yml` | PR + push to main | Unit suite. |
 | `contentops conformance` | `conformance.yml` | weekly Mon 05:00 UTC + manual | Layered install / tenant / RBAC / Graph / GitHub conformance report (scope `L1..L7`). |
-| `contentops report` | `report.yml` | weekly Mon 08:00 UTC + push to main (detection/report paths) + manual | Regenerates the detection inventory / portfolio report and commits the refreshed snapshot. |
+| `contentops report` | `report.yml` | weekly Mon 08:00 UTC + push to main (detection/report paths) + manual | Regenerates the detection inventory / portfolio report and uploads it as a run artifact; push-to-main commits only `reports/badge.json` (an anonymous coverage %). The detailed report carries per-detection telemetry and is gitignored — pull it from the artifact. |
 | `contentops status configuration` / `deployments` / `all` | `status-refresh.yml` | daily 04:00 UTC + manual | Renders the `docs/status/` dashboard markdown; `all` runs both pages (what the cron invokes). |
 | `contentops config validate` / `list-workspaces` | _none — purely local_ | n/a | Read-only tenant-config inspection. Both `--help` paths smoke-tested in `ci.yml`. |
 | `contentops catalog regenerate` / `check` | _none — purely local_ | n/a | Regenerates `docs/reference/generated-catalog.md`; `catalog check` is the drift gate in `ci.yml`. |
