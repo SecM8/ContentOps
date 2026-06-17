@@ -261,7 +261,7 @@ def apply_identity_profile(config: ConformanceConfig, identity: str) -> Conforma
     """Adjust a config's grant expectations for a read vs write identity.
 
     The single shared App Registration was split for separation of duties:
-    a **write** (deploy) identity — Sentinel Contributor +
+    a **write** (deploy) identity — Sentinel + Log Analytics Contributor +
     ``CustomDetection.ReadWrite.All`` — and a **read** (automation)
     identity — Sentinel/Log-Analytics Reader + ``CustomDetection.Read.All``
     and explicitly NO write. Conformance verifies either by running AS that
@@ -1237,9 +1237,10 @@ def check_l5_azure_rbac(
                         report.add(ConformanceCheck(
                             layer, f"rbac_write[{tag}]", "FAIL",
                             f"effective permissions do NOT include {write_action}",
-                            "Grant 'Microsoft Sentinel Contributor' to the App "
-                            f"Registration on RG={w.resourceGroup} (recommended) "
-                            "or the workspace scope.",
+                            "Grant 'Microsoft Sentinel Contributor' (plus 'Log "
+                            "Analytics Contributor' for hunting queries + parsers) "
+                            f"to the App Registration on RG={w.resourceGroup} "
+                            "(recommended) or the workspace scope.",
                         ))
                 else:
                     # Read/automation identity: holding write is the SoD

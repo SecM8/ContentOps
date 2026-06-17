@@ -11,7 +11,7 @@ production workspace is read-only throughout. Pre-flight, confirm:
 
 - `contentops doctor --matrix` is green for both `--role prod` and
   `--role integration`.
-- You hold Microsoft Sentinel Contributor on the integration workspace.
+- You hold Microsoft Sentinel Contributor and Log Analytics Contributor on the integration workspace.
 - The integration workspace name in `config/tenant.yml` is correct
   (case-sensitive lookup; `_validate_workspace_uniqueness` will flag
   case-only duplicates).

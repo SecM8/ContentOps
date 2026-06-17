@@ -145,17 +145,24 @@ authenticated but lacks RBAC on this workspace.
 **Why:** the identity is reaching the workspace correctly but
 doesn't have permission to read alert rules.
 
-**Fix:** grant `Microsoft Sentinel Contributor` on the workspace's
-resource group to whichever identity is active:
+**Fix:** grant `Microsoft Sentinel Contributor` **and `Log Analytics
+Contributor`** on the workspace's resource group to whichever identity
+is active (the Log Analytics role is required for hunting queries +
+parsers, which deploy as `savedSearches` on the workspace):
 
 - **Path A** (`az login` as user): grant to your user account.
 - **Path B** (`.env` with App Reg secret): grant to the App Reg's
   service principal.
 
 ```powershell
-# Path B example
+# Path B example — grant both roles on the workspace RG
 az role assignment create `
   --role "Microsoft Sentinel Contributor" `
+  --assignee "<App-Reg-objectId-or-clientId>" `
+  --scope "/subscriptions/<sub>/resourceGroups/<rg>"
+
+az role assignment create `
+  --role "Log Analytics Contributor" `
   --assignee "<App-Reg-objectId-or-clientId>" `
   --scope "/subscriptions/<sub>/resourceGroups/<rg>"
 ```

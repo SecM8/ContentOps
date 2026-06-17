@@ -134,7 +134,7 @@ only writer to prod.
 
 | Option | Where it lives | Use for |
 |---|---|---|
-| `az login` (your user) | workstation | Path A / Local-test persona. Needs Sentinel Contributor on the workspace RG. |
+| `az login` (your user) | workstation | Path A / Local-test persona. Needs Sentinel Contributor + Log Analytics Contributor on the workspace RG. |
 | App Reg + client secret in `.env` | workstation, gitignored | CI-mirror persona — reproduce CI behaviour exactly. Rotate like any secret. |
 | App Reg + **OIDC federated credentials** | GitHub environments, no stored secret | Paths B/C. One federated credential per environment; subject string must match exactly. |
 

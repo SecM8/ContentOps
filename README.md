@@ -103,7 +103,7 @@ optional Graph scopes can be omitted entirely:
 
 | Surface | Read-only | Read-write | Optional? |
 |---|---|---|---|
-| Microsoft Sentinel (Azure RBAC) | Sentinel Reader | Sentinel Contributor | only if you manage Sentinel content |
+| Microsoft Sentinel (Azure RBAC) | Sentinel Reader + Log Analytics Reader | Sentinel Contributor + Log Analytics Contributor | only if you manage Sentinel content (the Log Analytics role covers hunting queries + parsers, which deploy as workspace `savedSearches`) |
 | Defender custom detections (Graph) | `CustomDetection.Read.All` | `CustomDetection.ReadWrite.All` | only if you manage Defender detections |
 | Advanced hunting schema (Graph) | `ThreatHunting.Read.All` | — | **optional** (Defender lint schema refresh) |
 | Security alerts (Graph) | `SecurityAlert.Read.All` | — | **optional** (alert/MTTR telemetry) |
