@@ -39,6 +39,65 @@ def test_apply_dry_run_makes_no_api_calls(tmp_path: Path) -> None:
     assert "smoke-watchlist" in result.output
 
 
+# A Defender custom detection that parses as an envelope but fails
+# payload validation: ``severity: Medium`` is capitalised, but the Graph
+# API (and our ``DefenderPayload`` model) only accept the lowercase
+# literals informational/low/medium/high. This is the exact shape that
+# surfaced as a bare ``error-validate`` row in a prod CI plan with no
+# stated reason. The regression below asserts the reason is now printed.
+SAMPLE_V2_DEFENDER_BAD_SEVERITY = """\
+id: smoke-defender-bad-severity
+version: 0.1.0
+asset: defender_custom_detection
+status: production
+payload:
+  displayName: Smoke Bad Severity
+  isEnabled: true
+  queryCondition:
+    queryText: DeviceProcessEvents | take 1
+  schedule:
+    period: 1H
+  detectionAction:
+    alertTemplate:
+      title: Smoke Bad Severity
+      severity: Medium
+      category: SuspiciousActivity
+      impactedAssets:
+      - '@odata.type': '#microsoft.graph.security.impactedDeviceAsset'
+        identifier: deviceName
+"""
+
+
+def test_plan_prints_validation_detail_on_error(tmp_path: Path) -> None:
+    """An ``error-validate`` row must surface its reason, not just the status.
+
+    The plan table (``ActionResult.as_row``) shows the status but not the
+    detail: its last column is the verify state. Before this fix a
+    validation failure printed ``error-validate`` and exited 1 with no
+    indication of *why*, which is undiagnosable from a CI log. The plan
+    summary now prints each errored asset's detail next to the exit.
+    """
+    (tmp_path / "defender_custom_detection").mkdir()
+    (tmp_path / "defender_custom_detection" / "bad.yml").write_text(
+        SAMPLE_V2_DEFENDER_BAD_SEVERITY, encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["plan", "--path", str(tmp_path), "--skip-deps-check"],
+    )
+
+    assert result.exit_code == 1, result.output
+    # The row still reports the status...
+    assert "error-validate" in result.output
+    # ...and the reason is now actionable: the asset id, the offending
+    # field, and the validation count all appear.
+    assert "Validation errors:" in result.output
+    assert "smoke-defender-bad-severity" in result.output
+    assert "severity" in result.output
+    assert "1 validation error(s)" in result.output
+
+
 def test_plan_filter_by_asset(tmp_path: Path) -> None:
     (tmp_path / "sentinel_watchlist").mkdir()
     (tmp_path / "sentinel_watchlist" / "wl.yml").write_text(SAMPLE_V2_WATCHLIST)

@@ -286,7 +286,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **165** files, **1881** test functions. Integration: **11** files, **15** test functions.
+Unit: **165** files, **1882** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -326,7 +326,7 @@ Unit: **165** files, **1881** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_clean_cmd.py` | 5 |
 | `tests/v2/test_cli_help_ascii_safe.py` | 3 |
 | `tests/v2/test_cli_help_text.py` | 4 |
-| `tests/v2/test_cli_plan_apply.py` | 6 |
+| `tests/v2/test_cli_plan_apply.py` | 7 |
 | `tests/v2/test_cli_root_group.py` | 3 |
 | `tests/v2/test_collect_enrich.py` | 5 |
 | `tests/v2/test_collect_roundtrip.py` | 10 |

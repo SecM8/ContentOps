@@ -160,6 +160,17 @@ def plan_cmd(
 
     errors = [r for r in results if r.is_error]
     if errors or deps_violations:
+        # The plan table (as_row) shows status but not the reason: its
+        # last column is the verify state, not detail. Without this block
+        # an `error-validate` row is a dead end: the operator sees that a
+        # rule failed but not why. Print each errored asset's detail next
+        # to the exit so the cause is actionable from the CI log alone.
+        # (The apply path already echoes detail inline per asset.)
+        if errors:
+            click.echo("\nValidation errors:")
+            for r in errors:
+                detail = r.detail or "(no detail recorded)"
+                click.echo(f"  {r.asset_id} ({r.asset_kind}): {detail}")
         click.echo(
             f"\n{len(errors)} validation error(s)"
             + (f", {sum(1 for _ in [deps_violations] if _)} dependency violation block(s)" if deps_violations else "")
