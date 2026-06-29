@@ -261,9 +261,9 @@ def apply_identity_profile(config: ConformanceConfig, identity: str) -> Conforma
     """Adjust a config's grant expectations for a read vs write identity.
 
     The single shared App Registration was split for separation of duties:
-    a **write** (deploy) identity — Sentinel + Log Analytics Contributor +
-    ``CustomDetection.ReadWrite.All`` — and a **read** (automation)
-    identity — Sentinel/Log-Analytics Reader + ``CustomDetection.Read.All``
+    a **write** (deploy) identity (Sentinel + Log Analytics Contributor +
+    ``CustomDetection.ReadWrite.All``) and a **read** (automation)
+    identity (Sentinel/Log-Analytics Reader + ``CustomDetection.Read.All``)
     and explicitly NO write. Conformance verifies either by running AS that
     identity (its own OIDC token) with the matching expectation profile, so
     ``conformance.yml`` can check both App Regs in one workflow (one job

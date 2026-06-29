@@ -704,7 +704,7 @@ implications:
 
 | Component                    | Identity                                      | Scope                                                       |
 |------------------------------|-----------------------------------------------|-------------------------------------------------------------|
-| Pipeline → Sentinel ARM      | App Reg + OIDC                                | `Microsoft Sentinel Contributor` + `Log Analytics Contributor` on each workspace (LA role covers hunting queries + parsers as `savedSearches`) |
+| Pipeline -> Sentinel ARM      | App Reg + OIDC                                | `Microsoft Sentinel Contributor` + `Log Analytics Contributor` on each workspace (LA role covers hunting queries + parsers as `savedSearches`) |
 | Pipeline → Workbooks         | same                                          | `Monitoring Contributor` on workbook RG (workbooks live there) |
 | Pipeline → Playbooks         | same                                          | `Logic App Contributor` on playbook RG                      |
 | Sentinel service → Playbooks | Sentinel managed identity (auto-created)      | `Microsoft Sentinel Automation Contributor` on playbook RG  |

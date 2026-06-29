@@ -210,6 +210,30 @@ class DefenderCustomDetectionHandler:
 
         graph_id = name_map.get(display_name)
         if graph_id:
+            # Push only when the rule actually differs. Re-PATCHing an
+            # unchanged rule is needless and, for content collected from the
+            # tenant, 400s under Microsoft's tightened beta save-validator
+            # (e.g. `invoke FileProfile()` rules that run fine but can no
+            # longer be re-saved as-is). Compare with the SAME canonicalisation
+            # the post-apply verification uses (``_strip_server_fields`` +
+            # ``_HASHED_FIELDS``). ``isEnabled`` is NOT in ``_HASHED_FIELDS``,
+            # so an enable/disable flip (e.g. ``status: deprecated``) must NOT
+            # be skipped, so guard it explicitly.
+            desired_enabled = bool(body.get("isEnabled", True))
+            existing = client.get_rule(graph_id)
+            if (
+                existing is not None
+                and compute_content_hash(
+                    _strip_server_fields(existing), _HASHED_FIELDS
+                ) == sent_hash
+                and bool(existing.get("isEnabled", True)) == desired_enabled
+            ):
+                click.echo(f"  no-change: {loaded.envelope.id} (graph:{graph_id})")
+                return ActionResult(
+                    asset_id=loaded.envelope.id, asset_kind=self.asset.value,
+                    action=PlanAction.NOOP, status="success",
+                    detail="unchanged; update skipped", verified=True,
+                )
             response = client.update_rule(graph_id, body)
             if response.status_code != 200:
                 logger.error(

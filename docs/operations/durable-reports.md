@@ -21,7 +21,7 @@ inventory + coverage as it stood each week, in git." No setup required.
 ## The public mirror stays clean — via the allowlist, not gitignore
 
 The detailed report carries live per-detection telemetry (display names,
-alert / incident counts, TP/FP %, MTTD, MTTR). That telemetry must not
+alert / incident counts, TP/FP %, MTTR). That telemetry must not
 reach the **public mirror** (`SecM8/ContentOps`). The boundary that
 enforces this is the **sync allowlist**, not `.gitignore`:
 

@@ -10,18 +10,42 @@ from the commit history.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Defender custom detections: no-op unchanged rules instead of force-PATCHing.**
+  `apply()` used to PATCH every existing Defender rule on every deploy. With no
+  `state/` branch (the deployment-fork norm) that re-pushes all rules, and
+  Microsoft's tightened beta `detectionRules` save-validator now 400s the
+  *re-save* of rules that run fine but use patterns like `invoke FileProfile()`
+  (the query is unchanged; only the API got stricter). The handler now GETs the
+  live rule and compares with the same canonicalisation the post-apply verify
+  uses (`_strip_server_fields` + `_HASHED_FIELDS`); if content **and** enabled
+  state match, it returns `NOOP` and skips the push. Result: collected,
+  unchanged rules are never re-pushed (no 400), deploys are idempotent, and
+  beta-API writes drop sharply. Enable/disable still pushes (`isEnabled` is not
+  in the content hash, so it is checked explicitly).
+
+## [1.0.0] - 2026-06-16
+
+First production release. The package version moves from `0.1.0` to `1.0.0`
+now that the pipeline runs against production tenants. From here, the public
+CLI surface, `tenant.yml` schema, asset taxonomy, and audit format follow
+[Semantic Versioning](https://semver.org/): breaking changes bump the major
+and ship with a migration note in this file. The accumulated changes below
+are the 1.0.0 baseline.
+
 ### Security
 
 - **Detection-inventory report telemetry removed from the public mirror.**
   `reports/latest.*` was in the public-mirror sync allowlist, so the
-  detailed report — which carries live per-detection operational telemetry
-  (display names, alert/incident counts, TP/FP %, MTTD, MTTR) — was being
+  detailed report, which carries live per-detection operational telemetry
+  (display names, alert/incident counts, TP/FP %, MTTR), was being
   published to `SecM8/ContentOps`. The sync allowlist now ships **only**
   `reports/badge.json` (an anonymous coverage % that still feeds the README
   badge), and `public-sync.yml`'s forbidden-paths check asserts
   `reports/unified.html` + `reports/*-findings.md` never reach the mirror,
   so the next `public-sync` drops the telemetry from the mirror tree. The
-  **mirror allowlist is the boundary** — reports themselves remain normal
+  **mirror allowlist is the boundary**: reports themselves remain normal
   versioned content (not gitignored), so a private deployment keeps a
   durable posture history; only the one-way public sync is filtered. Note:
   dropping the files from the mirror stops future exposure, but they remain

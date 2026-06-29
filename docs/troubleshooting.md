@@ -155,7 +155,7 @@ parsers, which deploy as `savedSearches` on the workspace):
   service principal.
 
 ```powershell
-# Path B example — grant both roles on the workspace RG
+# Path B example: grant both roles on the workspace RG
 az role assignment create `
   --role "Microsoft Sentinel Contributor" `
   --assignee "<App-Reg-objectId-or-clientId>" `

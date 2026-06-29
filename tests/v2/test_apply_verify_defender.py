@@ -18,6 +18,7 @@ import pytest
 from contentops.core.asset import Asset
 from contentops.core.envelope import EnvelopeV2
 from contentops.core.handler import LoadedAsset
+from contentops.core.result import PlanAction
 from contentops.defender import client as defender_client_module
 from contentops.defender.client import BASE_URL, DefenderClient
 from contentops.handlers.defender_custom_detection import DefenderCustomDetectionHandler
@@ -104,15 +105,24 @@ def test_apply_happy_path_verifies_hash_create() -> None:
 
 
 def test_apply_happy_path_verifies_hash_update() -> None:
-    """PATCH path: name_map already has display→graph-id, PATCH 200, GET verifies."""
+    """PATCH path: the live rule DIFFERS from the desired body, so the handler
+    updates it (not a no-op), then the post-apply GET verifies the new hash."""
+    state = {"patched": False}
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if request.method == "GET" and path.endswith("/detectionRules"):
-            return httpx.Response(200, json=_list_response([_full_remote()]))
-        if request.method == "PATCH" and "/detectionRules/graph-1" in path:
-            return httpx.Response(200, json=_full_remote())
+            # name-map build: rule exists under this displayName (graph-1).
+            return httpx.Response(200, json=_list_response([_full_remote(query="OLD")]))
         if request.method == "GET" and "/detectionRules/graph-1" in path:
+            # pre-update no-op probe sees OLD content (forces a real PATCH);
+            # the post-apply verify GET sees the new, matching content.
+            return httpx.Response(
+                200,
+                json=_full_remote() if state["patched"] else _full_remote(query="OLD"),
+            )
+        if request.method == "PATCH" and "/detectionRules/graph-1" in path:
+            state["patched"] = True
             return httpx.Response(200, json=_full_remote())
         return httpx.Response(404, text=f"unexpected {request.method} {path}")
 
@@ -120,6 +130,7 @@ def test_apply_happy_path_verifies_hash_update() -> None:
     h = DefenderCustomDetectionHandler(lambda: client)
     result = h.apply(_loaded())
 
+    assert state["patched"] is True, "a differing rule must be PATCHed"
     assert result.status == "success", result.detail
     assert result.verified is True
 
@@ -224,3 +235,67 @@ def test_apply_hash_mismatch() -> None:
 
     assert result.verified is False
     assert "post-apply hash mismatch" in (result.error or "")
+
+
+def test_apply_noop_when_unchanged() -> None:
+    """A rule whose live content already matches the desired body is NOT
+    re-pushed: no PATCH is issued and the result is a NOOP. This is what
+    spares collected-but-unchanged FileProfile rules from the beta
+    save-validator 400 on every deploy."""
+    state = {"patched": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/detectionRules"):
+            return httpx.Response(200, json=_list_response([_full_remote()]))
+        if request.method == "GET" and "/detectionRules/graph-1" in path:
+            return httpx.Response(200, json=_full_remote())  # identical to desired
+        if request.method == "PATCH" and "/detectionRules/graph-1" in path:
+            state["patched"] = True
+            return httpx.Response(200, json=_full_remote())
+        return httpx.Response(404, text=f"unexpected {request.method} {path}")
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = DefenderCustomDetectionHandler(lambda: client)
+    result = h.apply(_loaded())
+
+    assert state["patched"] is False, "unchanged rule must NOT be PATCHed"
+    assert result.action == PlanAction.NOOP
+    assert result.status == "success"
+    assert result.verified is True
+
+
+def test_apply_disable_pushes_even_when_content_matches() -> None:
+    """An enable->disable must still be pushed. ``isEnabled`` is not in
+    ``_HASHED_FIELDS``, so a deprecated rule whose content matches but is
+    still enabled remotely must NOT be swallowed by the no-op skip."""
+    state = {"patched": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/detectionRules"):
+            return httpx.Response(200, json=_list_response([_full_remote()]))
+        if request.method == "GET" and "/detectionRules/graph-1" in path:
+            remote = _full_remote()
+            # Still enabled on the pre-update probe (forces the disable PATCH);
+            # disabled on the post-apply verify GET.
+            remote["isEnabled"] = not state["patched"]
+            return httpx.Response(200, json=remote)
+        if request.method == "PATCH" and "/detectionRules/graph-1" in path:
+            state["patched"] = True
+            return httpx.Response(200, json={**_full_remote(), "isEnabled": False})
+        return httpx.Response(404, text=f"unexpected {request.method} {path}")
+
+    env = EnvelopeV2(
+        id="defender-test", version="0.1.0",
+        asset=Asset.DEFENDER_CUSTOM_DETECTION, status="deprecated",
+    )
+    loaded = LoadedAsset(path=Path("d.yml"), envelope=env, payload=dict(_PAYLOAD))
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = DefenderCustomDetectionHandler(lambda: client)
+    result = h.apply(loaded)
+
+    assert state["patched"] is True, "enable->disable must be pushed, not skipped"
+    assert result.action == PlanAction.DISABLE
+    assert result.status == "success"

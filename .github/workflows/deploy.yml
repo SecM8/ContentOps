@@ -192,10 +192,16 @@ jobs:
           # ``--role prod`` (the CLI mutex enforces one or the
           # other). Default behaviour (empty workspace) is identical
           # to before -- iterate every prod workspace.
+          #
+          # --continue-on-error: one rule the tenant rejects (e.g. a
+          # content-fit 400) must not block the rest of the deploy. The
+          # apply exit code is suppressed so the good rules still land;
+          # per-rule failures are recorded in apply-report.json and the
+          # post-deploy smoke step turns them into warnings (see below).
           if [ -n "$INPUT_WORKSPACE" ]; then
-            ARGS=( "--workspace" "$INPUT_WORKSPACE" "--skip-deps-check" )
+            ARGS=( "--workspace" "$INPUT_WORKSPACE" "--skip-deps-check" "--continue-on-error" )
           else
-            ARGS=( "--role" "prod" "--skip-deps-check" )
+            ARGS=( "--role" "prod" "--skip-deps-check" "--continue-on-error" )
           fi
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             if [ -n "$INPUT_CHANGED_SINCE" ]; then
@@ -269,7 +275,19 @@ jobs:
               (step_summary.read_text() if step_summary.exists() else "")
               + "\n".join(summary_lines) + "\n"
           )
-          if failed or unverified:
+          if failed:
+              # Content-fit rejections (e.g. a 400 from the tenant) are
+              # tolerated: the rule is skipped, the rest of the deploy stands.
+              # Surfaced as a warning so a green run is not silent.
+              print(
+                  f"::warning::{failed} rule(s) failed to apply and were skipped "
+                  "(tolerated; see apply-report.json + the items above). "
+                  "The remaining rules deployed."
+              )
+          if unverified:
+              # Applied, but the post-apply hash did not match. That is an
+              # integrity signal (the write did not land as authored), not a
+              # content rejection, so it still fails the deploy.
               sys.exit(1)
           PY
           # Audit chain integrity. ``contentops audit verify`` exits 0

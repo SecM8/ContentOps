@@ -167,7 +167,7 @@ Sentinel or Graph endpoint, the HTTP status code matters:
 | Status | Meaning | Fix |
 |---|---|---|
 | **401 Unauthorized** | The token itself was rejected. Wrong tenant context, expired, or `DefaultAzureCredential` returned a stale cached identity (SharedTokenCache / VSCode) instead of the one `az login` minted. | First try `$env:AZURE_TOKEN_CREDENTIALS = "dev"` to force the dev-credential chain. If that fixes it, you hit a known credential-chain ordering issue on multi-identity machines. Then verify `az account show` matches `tenant.yml`. |
-| **403 Forbidden** | Authenticated successfully, but the identity lacks RBAC on this resource. | Grant `Microsoft Sentinel Contributor` **and `Log Analytics Contributor`** on the workspace's resource group to whichever identity is active — your user on Path A, the App Reg on Path B. (The Log Analytics role is required for hunting queries + parsers, which deploy as workspace `savedSearches`.) RBAC propagation can take 5–15 minutes. |
+| **403 Forbidden** | Authenticated successfully, but the identity lacks RBAC on this resource. | Grant `Microsoft Sentinel Contributor` **and `Log Analytics Contributor`** on the workspace's resource group to whichever identity is active. Your user on Path A, the App Reg on Path B. (The Log Analytics role is required for hunting queries + parsers, which deploy as workspace `savedSearches`.) RBAC propagation can take 5-15 minutes. |
 | **500 / other 5xx** | Service-side issue, often transient. | Retry; if persistent, check Azure Service Health. |
 
 ---
