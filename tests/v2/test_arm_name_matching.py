@@ -269,6 +269,35 @@ def test_drift_matches_by_arm_name_when_envelope_id_differs(tmp_path):
     assert not report.has_drift()
 
 
+def test_collect_matches_portal_renamed_rule_by_arm_name(tmp_path):
+    """Regression: collect matched by slug only, so a rule renamed in
+    the portal (new displayName -> new slug, same ARM name) was
+    classified NEW and written as a duplicate file next to the
+    existing one. It must match the existing file via arm_name and be
+    reported as CHANGED (the displayName differs), not NEW."""
+    from contentops.cli.commands.collect_support import _classify_collected_drift
+
+    detections = tmp_path / "detections"
+    _write_envelope(
+        detections,
+        envelope_id="mfa-rejected-by-user",
+        display_name="MFA Rejected by User",
+        arm_name="0f1a2b3c-0000-4000-8000-000000000001",
+    )
+    handler = _DriftableHandler([])
+    remote = _remote(
+        "0f1a2b3c-0000-4000-8000-000000000001", "TEAM_MFA Rejected by User",
+    )
+
+    report = _classify_collected_drift(
+        [handler], {handler.asset.value: [remote]}, detections,
+    )
+
+    kinds = [(e.kind, e.local_path is not None) for e in report.entries]
+    assert kinds == [("changed", True)], kinds
+    assert report.entries[0].local_path.stem == "mfa-rejected-by-user"
+
+
 def test_drift_falls_back_to_envelope_id_for_legacy_envelopes(tmp_path):
     """When the local envelope has no ``metadata.arm_name`` (true
     v1-era files), drift still matches by the envelope id —

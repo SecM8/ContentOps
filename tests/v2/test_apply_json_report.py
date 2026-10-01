@@ -306,3 +306,31 @@ payload:
     parsed = json.loads(result.output[json_start:])
     assert parsed["dry_run"] is True
     assert "totals" in parsed
+
+
+def test_cli_apply_with_no_assets_still_writes_empty_json_report(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A run that selects 0 assets (e.g. a push touching only detection
+    READMEs) must still write the report. deploy.yml's post-deploy smoke
+    treats a missing report as "apply did not run to completion"."""
+    from click.testing import CliRunner
+    from contentops.cli import cli
+
+    detections = tmp_path / "detections"
+    (detections / "sentinel_analytic").mkdir(parents=True)
+    (detections / "sentinel_analytic" / "README.md").write_text("docs only\n", encoding="utf-8")
+
+    out = tmp_path / "apply-report.json"
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, [
+        "apply", "--path", str(detections),
+        "--no-audit",
+        "--json-report", str(out),
+        "--skip-deps-check",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "No assets to apply." in result.output
+    parsed = json.loads(out.read_text(encoding="utf-8"))
+    assert parsed["totals"]["total"] == 0
+    assert parsed["results"] == []

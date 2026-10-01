@@ -301,6 +301,25 @@ def detect_drift(
     return report
 
 
+def _preserve_local_id(envelope: dict, local_path: Path) -> dict:
+    """Keep the on-disk ``id`` when re-importing an existing asset.
+
+    Handlers derive ``id`` from the remote displayName. When a rule is
+    renamed in the portal, the re-import matches the existing file (by
+    ARM name / Graph id) but carries a new slug, so the file would keep
+    its name while its ``id`` changed. That breaks every lookup keyed on
+    ``path.stem == id`` and orphans references to the old id. The local
+    file is the identity; the rename still lands via ``displayName``.
+    """
+    try:
+        local = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+    except Exception:
+        return envelope
+    if isinstance(local, dict) and local.get("id"):
+        envelope["id"] = local["id"]
+    return envelope
+
+
 def _preserve_local_version(envelope: dict, local_path: Path) -> dict:
     """Keep the on-disk ``version`` when re-importing an existing asset.
 
@@ -315,6 +334,14 @@ def _preserve_local_version(envelope: dict, local_path: Path) -> dict:
 
     The baseline only applies to genuinely *new* assets (no local file);
     for those, ``write_drift`` never calls this function.
+
+    When the re-import actually changes the envelope, the patch component
+    is bumped (``1.0.6`` -> ``1.0.7``): a portal edit is a new revision,
+    and ``scripts/check_version_bump.py`` refuses a content change under
+    an unchanged version, so without the bump every drift PR carrying a
+    portal edit failed validation. "Changed" uses the same comparison as
+    that gate (parsed YAML, ``version`` set aside), so a cosmetic-only
+    re-import never bumps.
     """
     try:
         local = yaml.safe_load(local_path.read_text(encoding="utf-8"))
@@ -325,7 +352,28 @@ def _preserve_local_version(envelope: dict, local_path: Path) -> dict:
     local_version = local.get("version")
     if local_version:
         envelope["version"] = local_version
+        if _body_without_version(envelope) != _body_without_version(local):
+            envelope["version"] = _bump_patch(local_version)
     return envelope
+
+
+def _body_without_version(envelope: dict) -> dict:
+    """The envelope as it would read back from disk, minus ``version``."""
+    try:
+        parsed = yaml.safe_load(dump_envelope_yaml(envelope))
+    except Exception:
+        parsed = envelope
+    if not isinstance(parsed, dict):
+        return {}
+    return {k: v for k, v in parsed.items() if k != "version"}
+
+
+def _bump_patch(version: object) -> object:
+    """``X.Y.Z`` -> ``X.Y.(Z+1)``; anything that isn't plain semver is kept."""
+    parts = str(version).split(".")
+    if len(parts) == 3 and all(p.isdigit() for p in parts):
+        return f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
+    return version
 
 
 def _preserve_local_metadata(envelope: dict, local_path: Path) -> dict:
@@ -369,6 +417,7 @@ def write_drift(report: DriftReport, out_dir: Path) -> list[Path]:
             entry.envelope = _preserve_local_metadata(
                 entry.envelope, target,
             )
+            entry.envelope = _preserve_local_id(entry.envelope, target)
             entry.envelope = _preserve_local_version(
                 entry.envelope, target,
             )

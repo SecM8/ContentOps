@@ -320,6 +320,11 @@ def apply_cmd(
 
     loaded = _filter_loaded_by_env_status(loaded, cfg, workspaces)
     if _apply_no_loaded_assets_or_return(loaded):
+        # Still honour --json-report: an empty run (e.g. a push that only
+        # touched detection READMEs/samples) must leave an empty report,
+        # not a missing one, or deploy.yml's post-deploy smoke reads the
+        # absence as "apply did not run to completion" and fails.
+        _write_json_report(json_report_path, started_at=started_at, dry_run=dry_run)
         return
 
     _apply_dependency_violations_or_exit(loaded, skip_deps_check)
@@ -456,34 +461,14 @@ def apply_cmd(
                     err=True,
                 )
 
-    finished_at = datetime.now(timezone.utc)
-
-    # JSON report — opt-in, decoupled from audit so it works for dry-run too.
-    if json_report_path is not None:
-        from contentops.apply_report import build_report, to_json, write_report
-        try:
-            from contentops.config import load_tenant_config
-            tenant_name = load_tenant_config().name
-        except Exception:
-            tenant_name = ""
-        report = build_report(
-            tenant=tenant_name,
-            started_at=started_at,
-            finished_at=finished_at,
-            sha=_resolve_sha(Path.cwd()),
-            actor=_resolve_actor(),
-            workflow_run=os.getenv("GITHUB_RUN_ID") or None,
-            dry_run=dry_run,
-            pairs=audit_pairs,
-            audit_path=audit_path,
-            audit_first_line=audit_first_line,
-        )
-        if str(json_report_path) == "-":
-            click.echo("")  # blank line between summary and JSON
-            click.echo(to_json(report).rstrip())
-        else:
-            written = write_report(report, json_report_path)
-            click.echo(f"[json-report] wrote {written}")
+    _write_json_report(
+        json_report_path,
+        started_at=started_at,
+        dry_run=dry_run,
+        pairs=audit_pairs,
+        audit_path=audit_path,
+        audit_first_line=audit_first_line,
+    )
 
     failed = [r for r in results if r.is_failure]
     if failed:
@@ -496,3 +481,40 @@ def apply_cmd(
             click.echo(f"\n{len(failed)} error(s).")
             sys.exit(1)
 
+
+def _write_json_report(
+    json_report_path: Path | None,
+    *,
+    started_at: datetime,
+    dry_run: bool,
+    pairs: list | None = None,
+    audit_path: Path | None = None,
+    audit_first_line: int | None = None,
+) -> None:
+    """JSON report — opt-in, decoupled from audit so it works for dry-run too."""
+    if json_report_path is None:
+        return
+    from contentops.apply_report import build_report, to_json, write_report
+    try:
+        from contentops.config import load_tenant_config
+        tenant_name = load_tenant_config().name
+    except Exception:
+        tenant_name = ""
+    report = build_report(
+        tenant=tenant_name,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
+        sha=_resolve_sha(Path.cwd()),
+        actor=_resolve_actor(),
+        workflow_run=os.getenv("GITHUB_RUN_ID") or None,
+        dry_run=dry_run,
+        pairs=pairs or [],
+        audit_path=audit_path,
+        audit_first_line=audit_first_line,
+    )
+    if str(json_report_path) == "-":
+        click.echo("")  # blank line between summary and JSON
+        click.echo(to_json(report).rstrip())
+    else:
+        written = write_report(report, json_report_path)
+        click.echo(f"[json-report] wrote {written}")

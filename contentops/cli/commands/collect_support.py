@@ -122,13 +122,13 @@ def _classify_collected_drift(
     (applying the ``--since`` timestamp filter), disambiguate ids, then
     bucket each into new / changed / in-sync.
 
-    NOTE: matches local envelopes by the disambiguated ``asset_id`` ONLY —
-    it does not consult ``remote.name`` / arm_name the way
-    :func:`contentops.core.drift.detect_drift` does. On the documented
-    slug-vs-GUID divergence this can re-flag an item as NEW that ``drift``
-    calls in-sync. This is a faithful move of the pre-refactor behaviour;
-    unifying the two matching paths is a deliberate follow-up (see the
-    refactor plan / ``contentops.core.drift``).
+    Matches local envelopes the same way
+    :func:`contentops.core.drift.detect_drift` does: by the authoritative
+    remote name (``remote.name`` / Graph ``id``, stored locally as
+    ``metadata.arm_name``) first, then by the disambiguated ``asset_id``.
+    Matching by slug only re-flagged every rule renamed in the portal as
+    NEW, and ``write_drift`` then wrote a duplicate file pointing at the
+    same live rule.
     """
     from contentops.core.drift import (
         DriftEntry, DriftReport, _local_index, _payloads_match,
@@ -139,7 +139,7 @@ def _classify_collected_drift(
         for handler in drift_handlers:
             asset_value = handler.asset.value
             local = _local_index(detections_path, handler.asset)
-            envelopes: list[dict] = []
+            pairs: list[tuple[dict, dict]] = []
             for remote in handler_results.get(asset_value, []):
                 if since_dt is not None:
                     ts = _remote_timestamp(remote)
@@ -148,20 +148,24 @@ def _classify_collected_drift(
                 env = handler.to_envelope(remote)
                 if env is None:
                     continue
-                envelopes.append(env)
-            envelopes = disambiguate_envelope_ids(envelopes)
-            for envelope in envelopes:
+                pairs.append((env, remote))
+            envelopes = disambiguate_envelope_ids([e for e, _ in pairs])
+            for envelope, (_, remote) in zip(envelopes, pairs):
                 asset_id = envelope.get("id")
                 if not asset_id:
                     continue
                 new_payload = envelope.get("payload", {})
-                if asset_id not in local:
+                remote_key = str(remote.get("name") or remote.get("id") or "")
+                match = local.get(remote_key) if remote_key else None
+                if match is None:
+                    match = local.get(asset_id)
+                if match is None:
                     report.entries.append(DriftEntry(
                         asset=handler.asset, asset_id=asset_id, kind="new",
                         envelope=envelope,
                     ))
                     continue
-                local_path, local_payload = local[asset_id]
+                local_path, local_payload = match
                 if _payloads_match(local_payload, new_payload):
                     report.entries.append(DriftEntry(
                         asset=handler.asset, asset_id=asset_id, kind="in-sync",

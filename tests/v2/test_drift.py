@@ -125,13 +125,15 @@ def test_write_drift_preserves_local_version_no_downgrade(tmp_path: Path) -> Non
     write_drift(report, tmp_path)
     on_disk = yaml.safe_load(local.read_text())
     assert on_disk["payload"]["displayName"] == "NEW"  # payload still imported
-    assert on_disk["version"] == "0.1.1"  # ...but version not downgraded
+    # ...version not downgraded to the baseline; patch-bumped from the
+    # operator's value because the content changed.
+    assert on_disk["version"] == "0.1.2"
 
 
 def test_write_drift_preserves_local_version_over_remote(tmp_path: Path) -> None:
-    """version is operator-managed: a drift re-import never overwrites the
-    on-disk value, even if the handler emits a different (higher) one. The
-    remote has no authoritative version to import, so local always wins.
+    """version is operator-managed: a drift re-import never takes the
+    handler's value, even a higher one. The remote has no authoritative
+    version, so the local value wins (then patch-bumps, content changed).
     """
     class _VersionedHandler(_StubHandler):
         def to_envelope(self, remote: dict) -> dict | None:
@@ -148,7 +150,68 @@ def test_write_drift_preserves_local_version_over_remote(tmp_path: Path) -> None
     write_drift(report, tmp_path)
     on_disk = yaml.safe_load(local.read_text())
     assert on_disk["payload"]["displayName"] == "NEW"  # content imported
-    assert on_disk["version"] == "1.5.0"  # ...version untouched
+    assert on_disk["version"] == "1.5.1"  # local 1.5.0 wins, patch-bumped
+
+
+def test_write_drift_output_passes_version_bump_gate(tmp_path: Path) -> None:
+    """Regression: a drift PR carrying a portal edit must pass
+    scripts/check_version_bump.py. Keeping the local version unchanged
+    made every such PR fail validation on a deployment fork."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_version_bump",
+        Path(__file__).resolve().parents[2] / "scripts" / "check_version_bump.py",
+    )
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+
+    local = _write_local(tmp_path, "rule-g", {"displayName": "OLD"}, version="1.0.6")
+    before = local.read_text(encoding="utf-8")
+    handler = _StubHandler([{"name": "rule-g", "properties": {"displayName": "NEW"}}])
+    write_drift(detect_drift([handler], tmp_path), tmp_path)
+    after = local.read_text(encoding="utf-8")
+
+    assert gate._requires_bump(after, before) is None
+    assert yaml.safe_load(after)["version"] == "1.0.7"
+
+
+def test_preserve_local_version_keeps_version_when_body_unchanged(tmp_path: Path) -> None:
+    """A re-import that is identical apart from version never bumps."""
+    from contentops.core.drift import _preserve_local_version
+
+    local = _write_local(tmp_path, "rule-h", {"displayName": "SAME"}, version="2.3.4")
+    envelope = yaml.safe_load(local.read_text(encoding="utf-8"))
+    envelope["version"] = "0.1.0"  # collect baseline
+    assert _preserve_local_version(envelope, local)["version"] == "2.3.4"
+
+
+def test_preserve_local_version_leaves_non_semver_alone(tmp_path: Path) -> None:
+    from contentops.core.drift import _bump_patch
+
+    assert _bump_patch("1.2.3") == "1.2.4"
+    assert _bump_patch("1.2") == "1.2"
+    assert _bump_patch("v1.2.3") == "v1.2.3"
+
+
+def test_write_drift_keeps_local_id_on_portal_rename(tmp_path: Path) -> None:
+    """Regression: a portal rename re-slugs the handler's id; the
+    existing file must keep its id (file name == id), while the new
+    displayName is imported."""
+    class _RenamingHandler(_StubHandler):
+        def to_envelope(self, remote: dict) -> dict | None:
+            env = super().to_envelope(remote)
+            if env is not None:
+                env["id"] = "team-prefix-" + env["id"]  # slug of renamed displayName
+            return env
+
+    local = _write_local(tmp_path, "rule-r", {"displayName": "Old name"}, version="1.0.0")
+    handler = _RenamingHandler([{"name": "rule-r", "properties": {"displayName": "TEAM Old name"}}])
+    write_drift(detect_drift([handler], tmp_path), tmp_path)
+    on_disk = yaml.safe_load(local.read_text(encoding="utf-8"))
+    assert on_disk["id"] == "rule-r" == local.stem
+    assert on_disk["payload"]["displayName"] == "TEAM Old name"
+    assert on_disk["version"] == "1.0.1"
 
 
 def test_write_drift_creates_new_file_under_asset_dir(tmp_path: Path) -> None:

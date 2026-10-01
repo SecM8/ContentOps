@@ -286,7 +286,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **166** files, **1897** test functions. Integration: **11** files, **15** test functions.
+Unit: **166** files, **1903** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -301,7 +301,7 @@ Unit: **166** files, **1897** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_alerts_sync.py` | 13 |
 | `tests/v2/test_analytic_kinds.py` | 27 |
 | `tests/v2/test_apply_continue_on_error.py` | 4 |
-| `tests/v2/test_apply_json_report.py` | 10 |
+| `tests/v2/test_apply_json_report.py` | 11 |
 | `tests/v2/test_apply_push_state.py` | 3 |
 | `tests/v2/test_apply_safeguards.py` | 5 |
 | `tests/v2/test_apply_support.py` | 48 |
@@ -310,7 +310,7 @@ Unit: **166** files, **1897** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_apply_verify_hunting.py` | 3 |
 | `tests/v2/test_apply_verify_watchlist.py` | 13 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
-| `tests/v2/test_arm_name_matching.py` | 10 |
+| `tests/v2/test_arm_name_matching.py` | 11 |
 | `tests/v2/test_attack_matrix_data.py` | 5 |
 | `tests/v2/test_audit.py` | 13 |
 | `tests/v2/test_audit_chain.py` | 23 |
@@ -366,7 +366,7 @@ Unit: **166** files, **1897** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_doctor_multi_workspace.py` | 3 |
 | `tests/v2/test_doctor_output.py` | 3 |
 | `tests/v2/test_doctor_sentinel_health.py` | 6 |
-| `tests/v2/test_drift.py` | 12 |
+| `tests/v2/test_drift.py` | 16 |
 | `tests/v2/test_drift_field_diff.py` | 10 |
 | `tests/v2/test_drift_pr_body.py` | 8 |
 | `tests/v2/test_drift_resolve.py` | 8 |

@@ -31,6 +31,34 @@ from the commit history.
 
 ### Fixed
 
+- **`collect` duplicated rules renamed in the portal.** Collect matched
+  local files by the slug-derived `id` only, while `drift` matched by
+  ARM name first. A portal rename changes the slug, so collect classified
+  the rule as new and wrote a second file pointing at the same live rule
+  (8 duplicates on one fork). Collect now uses drift's lookup — ARM name
+  / Graph id first, then `id` — so a rename is a change to the existing
+  file.
+- **Portal renames changed a rule's `id` but not its file name.** Handlers
+  derive `id` from the displayName, so renaming a rule in the portal made
+  the drift re-import write a new `id` into the existing file (matched by
+  ARM name), leaving `id` != file name — 8 rules on one fork after a
+  prefix rename. The re-import now keeps the local `id`; the rename still
+  lands through `displayName`.
+- **Drift PRs with portal edits always failed the version-bump gate.**
+  A drift re-import kept the operator's `version` (so it never rolls
+  back a bump), but `check_version_bump.py` refuses a content change
+  under an unchanged version — so every drift PR carrying a real portal
+  edit went red. The re-import now patch-bumps (`1.0.6` -> `1.0.7`) when
+  the envelope actually changed, using the same comparison as the gate
+  (parsed YAML, `version` set aside); cosmetic-only re-imports keep the
+  version. Result: drift PRs pass validation without hand-bumping.
+- **Deploys that select no assets went red.** A push to `main` touching
+  only detection READMEs, samples or templates triggers `deploy.yml`;
+  `apply --changed-since` then selects 0 assets and returned before
+  writing `--json-report`, so the post-deploy smoke step read the missing
+  `apply-report.json` as "apply did not run to completion" and failed the
+  run. `apply` now writes an empty report on that path. Result: docs-only
+  pushes deploy nothing and stay green.
 - **Defender custom detections: `status` and `description` (Graph removed
   `isEnabled` on 2026-10-01).** Graph beta replaced `isEnabled` with a
   `status` enum (`enabled` / `disabled` / `autoDisabled`) and added an
