@@ -30,7 +30,7 @@ but lose the operator's "which workflow do I click" mental model.
 |---|---|
 | Deploy & apply | `deploy.yml`, `integration-deploy.yml`, `promote-to-integration.yml`, `retry-failed.yml` |
 | Read-only PR gates | `ci.yml`, `validate.yml`, `dco.yml`, `sast.yml`, `secret-scan.yml`, `spelling.yml`, `tuning-impact-preview.yml` |
-| Operational | `prune.yml`, `lock-unlock.yml`, `emergency-disable.yml`, `rollback.yml` |
+| Operational | `prune.yml`, `lock-unlock.yml`, `emergency-disable.yml`, `rollback.yml`, `state-adopt.yml` |
 | Continuous monitoring | `drift.yml`, `collect.yml`, `silent-rules.yml`, `coverage.yml`, `portfolio.yml`, `conformance.yml`, `audit-verify.yml`, `defender-graph-probe.yml`, `references-check.yml` |
 | Reporting & telemetry | `alerts-report.yml`, `report.yml`, `status-refresh.yml` |
 | Refresh & upstream watch | `kql-schemas-refresh.yml`, `attack-matrix-refresh.yml`, `upstream-watchers.yml` |
@@ -56,7 +56,7 @@ but lose the operator's "which workflow do I click" mental model.
 | `emergency-disable.yml` | manual | Break-glass: branch + `contentops disable <rule>` + commit + open PR. Wall-clock target <5 min from dispatch to opened PR. Does NOT auto-apply. | `contents: write`, `pull-requests: write` | ~1 min |
 | `integration-deploy.yml` | PR (paths: `detections/**`) + manual | Deploy changed detections to the integration workspace as a smoke test. PR-time `--changed-since` + `--continue-on-error` so one broken rule doesn't block a merge. | `id-token: write`, `contents: read` | ~3–10 min |
 | `integration.yml` | manual + scheduled (DANGER flag) | Live tenant integration tests. Requires explicit ack input. | `id-token: write`, `contents: read` | ~10 min |
-| `kql-schemas-refresh.yml` | daily cron + manual | Refresh `tools/kql_strict/schemas.json` from live Log Analytics workspace metadata (Sentinel tables + Defender XDR pseudo-tables); opens a schema-refresh PR on change. | `contents: write`, `pull-requests: write`, `id-token: write` | ~3 min |
+| `kql-schemas-refresh.yml` | weekly cron (Mon) + manual | Refresh `tools/kql_strict/schemas.json` from live Log Analytics workspace metadata (Sentinel tables + Defender XDR pseudo-tables); opens a schema-refresh PR on change. | `contents: write`, `pull-requests: write`, `id-token: write` | ~3 min |
 | `lock-unlock.yml` | manual | Wrapper around `contentops lock` / `unlock`. Mutates a YAML file and opens a PR for review. | `contents: write`, `pull-requests: write` | ~1 min |
 | `portfolio.yml` | weekly cron | Generate per-detection CSV + JSON + summary. Posts summary to a tracked file or issue. | `contents: read`, `pull-requests: write` (summary) | ~2 min |
 | `production-promotion-check.yml` | post-merge to main | Validation gate that runs after merge but before deploy proceeds. Sanity checks state of detections + tenant config. | `contents: read`, `id-token: write` | ~2 min |
@@ -72,7 +72,8 @@ but lose the operator's "which workflow do I click" mental model.
 | `secret-scan.yml` | PR + weekly cron | gitleaks scan. PR uses incremental (fetch-depth 50); cron does a full-history scan. Uses repo `.gitleaks.toml`. | `contents: read` | ~1 min PR / ~3 min cron |
 | `silent-rules.yml` | weekly cron | Report rules that fired zero alerts over the recent window. | `id-token: write`, `contents: read` | ~3 min |
 | `spelling.yml` | PR + manual | codespell over envelope prose, docs, and Python source. Config + domain ignore-list in `.codespellrc`. | `contents: read` | <1 min |
-| `status-refresh.yml` | daily cron + manual | Regenerate `docs/status/` pages from live L1–L7 conformance + state + audit; commits any diff directly to main. | `contents: write`, `id-token: write` | ~3 min |
+| `state-adopt.yml` | manual | Pull the state branch, run `contentops state adopt` (records rules already in sync with the tenant as managed; read-only against Azure), push the state branch. Dry-run by default; `automation` environment, same identity as `collect.yml`. | `contents: write` (state branch), `id-token: write` | ~5 min |
+| `status-refresh.yml` | daily cron + manual | Pull the per-env state branch, then regenerate `docs/status/` pages from live L1–L7 conformance + state + audit; commits any diff directly to main. | `contents: write`, `id-token: write` | ~3 min |
 | `tuning-impact-preview.yml` | PR | When a PR adds a drift suppression, comment with its 30-day blast radius (alerts + incidents the suppression would have silenced). | `pull-requests: write`, `id-token: write` | ~2 min |
 | `upstream-watchers.yml` | weekly cron + manual | Poll Microsoft's content-package + alert-rule-template catalogs; update `manifests/` + `docs/whats-new/` and open a PR when upstream changed. | `contents: write`, `pull-requests: write`, `id-token: write` | ~2 min |
 | `validate.yml` | PR + push to main + nightly cron + manual | Envelope parse + strict lint + plan + version-bump + PR-added URL check (PR gate job); lint-regression job catches tightened rules outside PR flow. | `contents: read`, `id-token: write` (optional schema refresh) | ~2 min |

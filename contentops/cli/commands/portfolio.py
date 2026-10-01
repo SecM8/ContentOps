@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""``pipeline portfolio`` command."""
+"""``contentops portfolio`` command."""
 
 from __future__ import annotations
 

@@ -10,8 +10,39 @@ from the commit history.
 
 ## [Unreleased]
 
+### Added
+
+- **Team routine page.** New
+  [`docs/operations/team-routine.md`](docs/operations/team-routine.md)
+  sets out what a deployment fork needs from its team: a five-minute
+  daily look at the drift PR (merge to accept portal changes, or revert
+  them in the portal), a weekly sweep of the housekeeping bot PRs and
+  the upstream-sync PR (always a merge commit), a "red check -> what to
+  do" table for the failures forks have actually hit, and a short
+  never-do list. Result: one page to hand a new team member instead of
+  a tour of the workflow files. Linked from the Operator Guide.
+- **`contentops state adopt` and `state-adopt.yml`.** A tenant deployed
+  before ContentOps tracked state showed every rule as `unmanaged`, and
+  the only way to fix that was a full redeploy — which re-saves every
+  rule (rules can re-run over windows they already covered and raise
+  duplicate incidents) and can overwrite template links. `state adopt` runs drift's read-only comparison and
+  records each rule that already matches the tenant as managed
+  (`status: adopted`), keyed by the local id. Rules that differ are
+  listed, never adopted; any listing error aborts before state is
+  written; `last_apply_*` and the audit trail are untouched. The
+  manual-only `state-adopt.yml` (dry-run by default) runs it in CI and
+  pushes the state branch. Result: an existing tenant becomes managed
+  without a single write to Azure. See
+  [`operations/adopt.md`](docs/operations/adopt.md).
+
 ### Changed
 
+- **KQL schema refresh runs weekly, not daily.** `kql-schemas-refresh.yml`
+  now fires Mondays at 03:30 UTC (`30 3 * * 1`) instead of every day.
+  Table schemas change rarely, and a daily PR is more review than the
+  change is worth — one fork accumulated 83 daily schema PRs before
+  supersede-close landed. `gh workflow run kql-schemas-refresh.yml`
+  still refreshes on demand. Result: at most one schema PR a week.
 - **Scheduled workflows are opt-in per deployment, not slug-edited.**
   Eleven cron gates read `github.repository == 'KustoKing/SIEMContent'`,
   so every deployment fork had to rewrite the slug in eleven workflow
@@ -31,6 +62,102 @@ from the commit history.
 
 ### Fixed
 
+- **Sentinel analytics lost their Content Hub template link.** For
+  Scheduled, NRT and MicrosoftSecurityIncidentCreation rules,
+  `collect` / `drift` dropped `alertRuleTemplateName` and
+  `templateVersion` from the YAML (the code wrongly treated them as
+  server-side audit fields), so the next deploy re-saved the rule
+  without its template link and the portal stopped offering Content Hub
+  updates for it — 18 rules on one deployment fork. Both fields now
+  round-trip. A second bug hid behind it: apply strips `displayName`
+  from template-bound bodies (the template owns it) but the verify hash
+  still included it, so every template-bound rule reported
+  `verified=False`. The hash for those rules now uses the template name
+  in place of `displayName`, on both the sent and the read-back side;
+  Fusion, MLBehaviorAnalytics and ThreatIntelligence are unchanged.
+  Existing YAML for template-bound rules shows as "changed" once on the
+  next `drift` / `collect` while the two fields are re-added — expected,
+  and a one-time event. Result: template-bound rules keep their link
+  and verify cleanly.
+- **The durable state branch was never pushed, so the status page
+  showed every rule as `unmanaged`.** apply / prune / rollback /
+  retry-failed write `state/<env>/state.json` and `state sync push`
+  pushes that file, but the workflows gated the push on the
+  env-less `state/state.json`, which nothing writes — so the push was
+  always skipped. `status-refresh.yml` never pulled state either, and
+  `status` read `state/state.json` by default. The workflows now gate
+  on `state/*/state.json`, `status-refresh.yml` pulls the state branch
+  first, and `status deployments` / `status all` default `--env` to
+  tenant.yml's `name` like `state sync` does. `state sync push` also
+  exits 1 when the network push fails (it used to report
+  `pushed_remote=False` and exit 0) and falls back to a bot committer
+  identity on runners with no git identity. `undeployed-rules` uses the
+  same default as `status`. The integration lane
+  (`promote-to-integration.yml`) deliberately still does not push: state
+  is keyed by tenant name, not role, so on a single-tenant.yml
+  deployment it would mark integration-only rules managed in prod.
+  Result: state advances
+  after every deploy and the status page reflects it; run
+  `state adopt` once to backfill rules deployed before the fix.
+- **FP-rate and incident counts were computed over incident rows, not
+  incidents.** `SecurityIncident` logs one row per incident update
+  (assignment, comment, closure), and the shared telemetry query
+  counted raw rows: `incidents_30d` (the FP-rate denominator) was
+  inflated by every update, and a false-positive incident counted once
+  per row carrying that classification. The query behind `silent-rules`,
+  `portfolio --with-telemetry` and the `lifecycle promote`
+  `fp_rate_threshold` gate — and the incident count in `tuning preview`
+  — now dedupes to the latest row per `IncidentNumber` first, the same
+  `arg_max` pattern the alert-join query already used. Result: expect
+  FP-rate, incident counts and portfolio numbers to change after
+  upgrading — they now count each incident once and are correct; a gate
+  verdict near the threshold may flip.
+- **`collect` reported success when an asset kind failed to list, and
+  `--clear` could wipe that kind.** A handler whose listing raised (a
+  403 on one kind, a Graph outage) was printed as a warning and collect
+  exited 0, so `collect.yml` opened a PR from a partial snapshot. With
+  `--clear` it was worse: local YAML was deleted *before* listing, so
+  the failing kind's files were wiped with nothing to replace them.
+  Collect now lists first, clears only the kinds that listed
+  successfully (which also keeps `--clear --asset K` to kind K), writes
+  what it collected, and exits 2 if any kind failed — matching
+  `contentops drift`. Result: a failed kind fails the job and its local
+  files survive.
+- **`lifecycle promote` passed its workspace gates when it could not
+  authenticate.** A failed credential, token or workspace-id lookup was
+  caught and reported as an `info:` line, leaving `live_test_pass` and
+  `fp_rate_threshold` deferred, and `all_passed()` counts deferred gates
+  as passed — so an expired `az login` promoted rules to `production`
+  with neither gate run. A failed lookup now fails both gates with the
+  error as the reason; deferral is reserved for an explicit
+  `--no-workspace-query`, which behaves as before. Result: promote exits
+  non-zero and writes nothing unless the gates actually ran or the
+  operator opted out (or used `--force`).
+- **`rollback` bypassed apply's safety gates.** Rollback replayed the
+  YAML at the target SHA straight into the handlers: it never checked
+  tenant.yml `writeAllowed`, never ran the env-status filter, and PUT
+  `{{...}}` snippet placeholders verbatim instead of resolving them from
+  `overrides/`. It also read the `localCustomization` lock from the copy
+  materialised at that SHA, so a rule locked since then was overwritten.
+  Rollback now reuses apply's helpers for the write gate, the env-status
+  and disabled-engine filters, and per-asset snippet substitution (plan
+  and apply), and reads the lock from the current checkout. Dry-run
+  still previews a write-locked workspace. Result: a rollback can only do
+  what an `apply` of the same YAML would be allowed to do.
+- **Defender apply could create duplicate custom detections.** Apply
+  matched live rules by `displayName` only and ignored the Graph id
+  collect records in `metadata.arm_name`, so editing a rule's
+  `displayName` in YAML POSTed a second rule beside the original. Two
+  YAMLs sharing a `displayName` both POSTed in the same run, because the
+  name map was not updated after the first create. And the create POST
+  went through the shared retry loop, so a 5xx or read timeout after
+  Graph had already committed the rule replayed it. Apply now matches by
+  `arm_name` first (when that rule still exists), falls back to
+  `displayName`, records each created or renamed rule for the rest of the
+  run, and `create_rule` retries only faults that prove the request was
+  not processed (429, connection never established); GET, PATCH and
+  DELETE keep the full retry policy. Result: a rename PATCHes the rule in
+  place and one YAML never yields two live rules.
 - **`collect` duplicated rules renamed in the portal.** Collect matched
   local files by the slug-derived `id` only, while `drift` matched by
   ARM name first. A portal rename changes the slug, so collect classified

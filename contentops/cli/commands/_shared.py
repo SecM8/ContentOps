@@ -314,8 +314,17 @@ def _is_locked(loaded: LoadedAsset) -> bool:
     The flag is intentionally kept off the strict envelope schema so
     an analyst can lock a rule without a model migration.
     """
+    return _is_locked_path(loaded.path)
+
+
+def _is_locked_path(path: Path) -> bool:
+    """``_is_locked`` for a bare path (missing / unreadable file -> False).
+
+    Rollback reads the lock from the CURRENT working-tree file, not the
+    copy materialised from the target SHA, so it needs the path form.
+    """
     try:
-        raw = yaml.safe_load(loaded.path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:
         return False
     if not isinstance(raw, dict):

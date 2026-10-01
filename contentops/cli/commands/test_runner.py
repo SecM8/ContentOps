@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""``pipeline test`` command.
+"""``contentops test`` command.
 
 Module named ``test_runner`` (not ``test``) so pytest collection
 doesn't accidentally treat this command module as a test module.

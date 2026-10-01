@@ -11,7 +11,14 @@ from typing import Any
 
 import httpx
 
-from contentops.utils.http_retry import paginate, request_with_retry
+from contentops.utils.http_retry import (
+    NON_IDEMPOTENT_RETRYABLE_EXCEPTIONS,
+    NON_IDEMPOTENT_RETRYABLE_STATUS,
+    RETRYABLE_EXCEPTIONS,
+    RETRYABLE_STATUS,
+    paginate,
+    request_with_retry,
+)
 from contentops.utils.token_auth import BearerTokenAuth
 
 logger = logging.getLogger(__name__)
@@ -56,7 +63,8 @@ class DefenderClient:
         )
 
     def _request_with_retry(
-        self, method: str, url: str, **kwargs: object
+        self, method: str, url: str, *, idempotent: bool = True,
+        **kwargs: object,
     ) -> httpx.Response:
         """Issue a request, retrying transient 429/5xx up to 3 times.
 
@@ -65,10 +73,21 @@ class DefenderClient:
         treated symmetrically with 429 — the previous design retried
         5xx exactly once with a 1s sleep and ignored ``Retry-After``,
         which lost every multi-second Graph flap.
+
+        ``idempotent=False`` (POST) retries only faults that prove the
+        request was not processed (429, connection never established): a
+        replayed POST after a 5xx or read timeout can create a duplicate.
         """
         return request_with_retry(
             lambda: self._client.request(method, url, **kwargs),
             label=f"Graph {method} {url}",
+            retry_status=(
+                RETRYABLE_STATUS if idempotent else NON_IDEMPOTENT_RETRYABLE_STATUS
+            ),
+            retry_exceptions=(
+                RETRYABLE_EXCEPTIONS if idempotent
+                else NON_IDEMPOTENT_RETRYABLE_EXCEPTIONS
+            ),
         )
 
     def list_rules(self) -> list[dict]:
@@ -94,8 +113,14 @@ class DefenderClient:
         return response.json()
 
     def create_rule(self, body: dict) -> httpx.Response:
-        """POST a new detection rule."""
-        return self._request_with_retry("POST", "/detectionRules", json=body)
+        """POST a new detection rule.
+
+        Not retried on 5xx / read timeouts: Graph may have committed the
+        first POST, and a replay would create a duplicate rule.
+        """
+        return self._request_with_retry(
+            "POST", "/detectionRules", idempotent=False, json=body,
+        )
 
     def update_rule(self, graph_id: str, body: dict) -> httpx.Response:
         """PATCH an existing detection rule."""

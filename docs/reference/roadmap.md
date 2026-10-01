@@ -221,7 +221,7 @@ existing CLI:
 >
 > Schema refresh paths (covered in
 > [`tools/kql_strict/README.md`](../../tools/kql_strict/README.md)):
-> nightly cron via
+> weekly cron via
 > [`kql-schemas-refresh.yml`](../../.github/workflows/kql-schemas-refresh.yml),
 > on-demand `gh workflow run`, or manual
 > `contentops upstream check-schemas --write` locally. The source of

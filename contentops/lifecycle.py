@@ -19,13 +19,14 @@ workspace (``--role`` / ``--workspace-id``):
 * ``gate_fp_rate_threshold`` compares the rule's measured FP-rate
   against ``config/lifecycle.yml``'s threshold.
 
-Without a workspace id (or with ``--no-workspace-query``), both stay
-deferred so offline / dry-run paths keep working.
+Only an explicit ``--no-workspace-query`` defers both, so offline /
+dry-run paths keep working when the operator opts out.
 
 Workspace-call failures are **fail-closed**: an auth error, a
-SemanticError, or a transient LA outage makes the gate
-``passed=False`` so promotions don't go through unverified. The
-escape hatch is ``--force`` or ``--no-workspace-query``.
+SemanticError, a transient LA outage -- or failing to obtain a
+credential / token / workspace id at all (``workspace_error``) -- makes
+the gate ``passed=False`` so promotions don't go through unverified.
+The escape hatch is ``--force`` or ``--no-workspace-query``.
 
 Implemented today:
 * status must currently be ``experimental``.
@@ -206,11 +207,36 @@ def gate_recent_validation(
     )
 
 
+def _no_workspace_gate(name: str, workspace_error: str | None) -> GateResult:
+    """Outcome of a workspace-backed gate that has no workspace to query.
+
+    ``workspace_error`` set -> the caller WANTED the query but could not
+    get a credential / token / workspace id: fail closed, or an auth
+    outage would wave every promotion through. Unset -> the caller opted
+    out (``--no-workspace-query``): deferred.
+    """
+    if workspace_error:
+        return GateResult(
+            name=name,
+            passed=False,
+            detail=(
+                f"workspace unavailable: {workspace_error} "
+                "(pass --no-workspace-query to defer this gate explicitly)"
+            ),
+        )
+    return GateResult(
+        name=name,
+        passed=True, deferred=True,
+        detail="workspace credentials not provided (pass --workspace-id or unset --no-workspace-query)",
+    )
+
+
 def gate_live_test_pass(
     envelope: dict, *,
     workspace_id: str | None,
     token: str | None,
     query_fn: Callable | None = None,
+    workspace_error: str | None = None,
 ) -> GateResult:
     """Live-execute the rule's KQL against the workspace (F2 live path).
 
@@ -223,7 +249,8 @@ def gate_live_test_pass(
 
     Behaviour mirrors ``gate_fp_rate_threshold``:
       * No ``workspace_id`` / token -> deferred (offline /
-        ``--no-workspace-query`` opted out).
+        ``--no-workspace-query`` opted out), or **failed** when
+        ``workspace_error`` says the lookup was attempted and failed.
       * Asset kind carries no KQL (watchlist, data_connector) -> passed;
         nothing to live-test.
       * Workspace/query failure (a 400 ``SemanticError``, a 403, a
@@ -234,11 +261,7 @@ def gate_live_test_pass(
         schema); the row count over the rule's own window is reported.
     """
     if not workspace_id or not token:
-        return GateResult(
-            name="live_test_pass",
-            passed=True, deferred=True,
-            detail="workspace credentials not provided (pass --workspace-id or unset --no-workspace-query)",
-        )
+        return _no_workspace_gate("live_test_pass", workspace_error)
 
     from contentops.core.asset import Asset, kql_body_from_payload
     try:
@@ -302,11 +325,14 @@ def gate_fp_rate_threshold(
     threshold: float,
     since_days: int = 30,
     query_fn: Callable | None = None,
+    workspace_error: str | None = None,
 ) -> GateResult:
     """Compare the rule's measured FP-rate against ``threshold``.
 
     When ``workspace_id`` is None (or no token) the gate stays
-    deferred — the caller opted out of the workspace query. When the
+    deferred — the caller opted out of the workspace query — unless
+    ``workspace_error`` reports a failed credential / workspace lookup,
+    which fails the gate. When the
     workspace call fails we fail-closed: ``passed=False`` so promotion
     blocks until the operator investigates (the escape hatch is
     ``--force`` or ``--no-workspace-query``).
@@ -321,11 +347,7 @@ def gate_fp_rate_threshold(
         ``threshold`` and pass iff the ratio is at or below the cap.
     """
     if not workspace_id or not token:
-        return GateResult(
-            name="fp_rate_threshold",
-            passed=True, deferred=True,
-            detail="workspace credentials not provided (pass --workspace-id or unset --no-workspace-query)",
-        )
+        return _no_workspace_gate("fp_rate_threshold", workspace_error)
 
     if query_fn is None:
         from contentops.workspace_kql import query as _real_query
@@ -396,13 +418,15 @@ def check_gates(
     telemetry_since_days: int = 30,
     fp_rate_query_fn: Callable | None = None,
     live_test_query_fn: Callable | None = None,
+    workspace_error: str | None = None,
 ) -> list[GateResult]:
     """Run every gate and return the per-gate result list.
 
     When ``workspace_id`` is None the workspace-backed gates
     (``live_test_pass``, ``fp_rate_threshold``) stay deferred — the same
     shape callers relied on before they were wired up. Pass
-    ``workspace_id`` + ``token`` to evaluate them live.
+    ``workspace_id`` + ``token`` to evaluate them live, or
+    ``workspace_error`` to fail them when the lookup itself failed.
     """
     return [
         gate_currently_experimental(envelope),
@@ -414,6 +438,7 @@ def check_gates(
             workspace_id=workspace_id,
             token=token,
             query_fn=live_test_query_fn,
+            workspace_error=workspace_error,
         ),
         gate_fp_rate_threshold(
             envelope,
@@ -422,6 +447,7 @@ def check_gates(
             threshold=fp_rate_threshold,
             since_days=telemetry_since_days,
             query_fn=fp_rate_query_fn,
+            workspace_error=workspace_error,
         ),
     ]
 
@@ -554,6 +580,7 @@ def promote(
     telemetry_since_days: int = 30,
     fp_rate_query_fn: Callable | None = None,
     live_test_query_fn: Callable | None = None,
+    workspace_error: str | None = None,
 ) -> PromotionReport:
     """Run gates and (if all pass or `force`) flip status to production.
 
@@ -563,9 +590,9 @@ def promote(
 
     When ``workspace_id`` + ``token`` are both supplied, the
     fp_rate_threshold gate runs live against the LA workspace. When
-    either is absent, the gate stays deferred (skipped). The CLI
-    surfaces this via the ``--workspace-id`` / ``--no-workspace-query``
-    flags.
+    either is absent, the gate stays deferred (skipped) -- or fails, when
+    ``workspace_error`` is set. The CLI surfaces this via the
+    ``--workspace-id`` / ``--no-workspace-query`` flags.
 
     Returns the structured report. Caller (CLI) decides exit code
     based on report.all_passed() / promoted.
@@ -590,6 +617,7 @@ def promote(
         telemetry_since_days=telemetry_since_days,
         fp_rate_query_fn=fp_rate_query_fn,
         live_test_query_fn=live_test_query_fn,
+        workspace_error=workspace_error,
     )
     report = PromotionReport(
         rule_id=rule_id, path=path,
@@ -632,6 +660,7 @@ def promote_many(
     fp_rate_query_fn: Callable | None = None,
     live_test_query_fn: Callable | None = None,
     continue_on_failure: bool = False,
+    workspace_error: str | None = None,
 ) -> list[PromotionReport]:
     """Run :func:`promote` against every rule_id in ``rule_ids``.
 
@@ -666,6 +695,7 @@ def promote_many(
                 telemetry_since_days=telemetry_since_days,
                 fp_rate_query_fn=fp_rate_query_fn,
                 live_test_query_fn=live_test_query_fn,
+                workspace_error=workspace_error,
             )
         except LifecycleError as exc:
             # Synthesize an explicit "not found" report so the bulk

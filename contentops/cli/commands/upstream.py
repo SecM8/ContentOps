@@ -188,7 +188,7 @@ def upstream_group() -> None:
     Diff Microsoft's Sentinel catalog of Content Packages, Alert Rule
     Templates, and Log Analytics workspace table schemas against the
     committed baselines. Weekly schedule runs marketplace+templates;
-    a separate nightly schedule runs schemas.
+    a separate weekly schedule runs schemas.
     """
 
 

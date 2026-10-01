@@ -16,8 +16,14 @@ git SHA into a temporary tree, then runs every handler's `validate()`
   `contentops prune` afterwards if you want full reset semantics
   (see [§ Full reset](#full-reset-rollback-then-prune) below).
 - **Non-destructive on locks.** Envelopes with
-  `localCustomization: true` are skipped. `contentops unlock <id>`
+  `localCustomization: true` in the *current* checkout are skipped
+  (a lock added after the rollback SHA counts). `contentops unlock <id>`
   first if you want rollback to overwrite them.
+- **Same gates as `apply`.** tenant.yml `writeAllowed: false` refuses a
+  real rollback (exit 2; dry-run still previews), the env-status filter
+  drops envelopes whose `status` the target workspace role does not
+  allow, and `{{...}}` snippet placeholders are resolved from today's
+  `overrides/` before the PUT.
 - **Audit-tagged.** Every rollback apply writes audit records whose
   `message` is prefixed `rollback to <full-sha>`, so you can find the
   exact records later with `contentops audit query` (see

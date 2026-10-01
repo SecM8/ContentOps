@@ -130,7 +130,35 @@ def _strip_server_fields(remote: dict) -> dict:
     return cleaned
 
 
-def _hashed_fields_for_kind(kind: str) -> list[str]:
+# Kinds whose body keeps everything except ``displayName`` when bound
+# to a Content Hub template (apply strips displayName; the template
+# owns it).
+_TEMPLATE_BINDABLE_KINDS = ("Scheduled", "NRT", "MicrosoftSecurityIncidentCreation")
+
+
+def _template_bound_projection(fields: list[str]) -> list[str]:
+    """Return ``fields`` minus ``displayName``, plus the template link.
+
+    Apply strips ``properties.displayName`` from template-bound bodies,
+    so the sent hash would always read it as None while the remote GET
+    returns the template's displayName -- a guaranteed verify mismatch.
+    Hashing the template name instead keeps the projection stable on
+    both sides.
+    """
+    projected = [f for f in fields if f != "properties.displayName"]
+    return ["properties.alertRuleTemplateName", *projected]
+
+
+def _hashed_fields_for_kind(kind: str, *, template_bound: bool = False) -> list[str]:
+    """Return the hash projection for ``kind``.
+
+    ``template_bound`` is True when the body carries
+    ``properties.alertRuleTemplateName``; it only changes the projection
+    for Scheduled / NRT / MicrosoftSecurityIncidentCreation. Callers must
+    use the same projection for the sent and the remote hash.
+    """
+    if template_bound and kind in _TEMPLATE_BINDABLE_KINDS:
+        return _template_bound_projection(_hashed_fields_for_kind(kind))
     if kind == "Scheduled":
         return _SCHEDULED_HASHED_FIELDS
     if kind == "NRT":
@@ -310,7 +338,12 @@ class SentinelAnalyticHandler:
         etag: str | None = extract_etag(existing)
 
         kind = body.get("kind") or "Scheduled"
-        hashed_fields = _hashed_fields_for_kind(kind)
+        # One projection for both hashes: template-bound bodies had
+        # displayName stripped above, so hash the template link instead.
+        hashed_fields = _hashed_fields_for_kind(
+            kind,
+            template_bound=bool((body.get("properties") or {}).get("alertRuleTemplateName")),
+        )
         sent_hash = compute_content_hash(body, hashed_fields)
         response = provider.put_resource(self._RESOURCE, remote_id, body, etag=etag)
 
@@ -425,11 +458,13 @@ class SentinelAnalyticHandler:
     def to_envelope(self, remote: dict) -> dict | None:
         """Convert an ARM alertRule into a v2 envelope dict.
 
-        Round-trips every alert ``kind`` we manage. For Microsoft-shipped
+        Round-trips every alert ``kind`` we manage. ``alertRuleTemplateName``
+        and ``templateVersion`` are always preserved. For Microsoft-shipped
         kinds (Fusion / MLBehaviorAnalytics / ThreatIntelligence) the
-        ``alertRuleTemplateName`` is the *required* identifier and is
-        preserved; for Scheduled / NRT it's a server-side audit field
-        and is dropped so the payload compares cleanly.
+        template name is the *required* identifier; for Scheduled / NRT /
+        MicrosoftSecurityIncidentCreation it is the rule's Content Hub
+        template link, which the portal uses to offer template updates.
+        Dropping it would unlink the rule on the next deploy.
         """
         from contentops.utils.slug import displayname_slug
 
@@ -439,12 +474,8 @@ class SentinelAnalyticHandler:
         properties: dict = dict(remote.get("properties") or {})
         kind = remote.get("kind") or properties.get("kind") or "Scheduled"
 
-        # Snapshot the template info BEFORE the per-kind strip below
-        # might drop it. The envelope's ``version`` field reflects the
-        # Sentinel template version regardless of whether the payload
-        # itself ends up carrying ``alertRuleTemplateName`` (Fusion / MLBA
-        # / TI keep it; Scheduled / NRT / MSI strip it for clean diffs,
-        # but the *rule* is still template-derived).
+        # The envelope's ``version`` field reflects the Sentinel template
+        # version for any template-derived rule.
         _template_name_original = properties.get("alertRuleTemplateName")
         _template_version_original = properties.get("templateVersion")
 
@@ -452,13 +483,11 @@ class SentinelAnalyticHandler:
         for k in ("lastModifiedUtc",):
             properties.pop(k, None)
 
-        # Scheduled / NRT customers usually don't pin templateVersion in YAML,
-        # so dropping these prevents spurious "changed" reports. For Fusion,
-        # MLBA, and ThreatIntelligence the template name *is* the identifier
-        # and must stay.
-        if kind in ("Scheduled", "NRT", "MicrosoftSecurityIncidentCreation"):
-            for k in ("alertRuleTemplateName", "templateVersion"):
-                properties.pop(k, None)
+        # ``alertRuleTemplateName`` / ``templateVersion`` stay for every
+        # kind. An earlier version dropped them for Scheduled / NRT / MSI
+        # to avoid "changed" noise, but the next deploy then PUT the rule
+        # without its template link and the portal lost track of
+        # Content Hub updates for it.
 
         properties["kind"] = kind
         enabled = properties.get("enabled", True)
@@ -479,10 +508,6 @@ class SentinelAnalyticHandler:
         # `advanced-multistage-attack-detection` — the envelope had a
         # synthetic version even though the rule is a Microsoft-shipped
         # Fusion template.
-        #
-        # We read from the pre-strip snapshot so this works even for
-        # Scheduled / NRT / MSI rules where the strip above drops the
-        # template identity from the payload itself.
         if _template_name_original:
             envelope_version = _template_version_original or COLLECT_BASELINE_VERSION
         else:

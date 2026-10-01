@@ -9,7 +9,7 @@ and reordering as noise. F12 indexes archive contents by
 directly, so the diff is "what content changed" rather than
 "what filenames changed."
 
-Closes G23. Pairs with F10 (`pipeline restore`) — both consume
+Closes G23. Pairs with F10 (`contentops restore`) — both consume
 the same archive shape.
 """
 

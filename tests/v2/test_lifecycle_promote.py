@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from contentops.cli import cli
@@ -510,6 +511,7 @@ def test_cli_lifecycle_promote_happy_path(tmp_path: Path) -> None:
     result = runner.invoke(cli, [
         "lifecycle", "promote", "rule-x",
         "--path", str(detections),
+        "--no-workspace-query",
     ])
     assert result.exit_code == 0, result.output
     assert "PROMOTED" in result.output
@@ -539,7 +541,7 @@ def test_cli_lifecycle_promote_dry_run_does_not_write(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, [
         "lifecycle", "promote", "rule-x",
-        "--path", str(detections), "--dry-run",
+        "--path", str(detections), "--dry-run", "--no-workspace-query",
     ])
     assert result.exit_code == 0
     assert "[dry-run]" in result.output
@@ -653,6 +655,95 @@ def test_cli_lifecycle_promote_workspace_failure_blocks_promotion(
     assert result.exit_code == 1
     assert "[FAIL] fp_rate_threshold" in result.output
     assert "REFUSED" in result.output
+
+
+def _raise_no_credential():
+    raise RuntimeError("DefaultAzureCredential failed to retrieve a token")
+
+
+def test_cli_lifecycle_promote_credential_failure_fails_gates(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """No credential is not an opt-out: the workspace gates FAIL, the
+    command exits non-zero and the YAML stays experimental."""
+    import contentops.utils.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "get_credential", _raise_no_credential)
+    detections = _write(tmp_path, _envelope(
+        status="experimental", last_validated=date.today().isoformat(),
+    ))
+    result = CliRunner().invoke(cli, [
+        "lifecycle", "promote", "rule-x",
+        "--path", str(detections),
+        "--workspace-id", "ws-abc",
+    ])
+    assert result.exit_code != 0, result.output
+    assert "[FAIL] live_test_pass" in result.output
+    assert "[FAIL] fp_rate_threshold" in result.output
+    assert "failed to retrieve a token" in result.output
+    assert "PROMOTED" not in result.output
+    target = detections / "sentinel_analytic" / "rule-x.yml"
+    assert "status: experimental" in target.read_text(encoding="utf-8")
+
+
+def test_cli_lifecycle_promote_bulk_credential_failure_promotes_nothing(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import contentops.utils.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "get_credential", _raise_no_credential)
+    today = date.today().isoformat()
+    detections = _write_many(tmp_path, [
+        ("rule-a", "experimental", today, None),
+        ("rule-b", "experimental", today, None),
+    ])
+    result = CliRunner().invoke(cli, [
+        "lifecycle", "promote", "--rules", "rule-a,rule-b",
+        "--path", str(detections),
+    ])
+    assert result.exit_code != 0, result.output
+    assert "0 promoted" in result.output
+    for rid in ("rule-a", "rule-b"):
+        text = (detections / "sentinel_analytic" / f"{rid}.yml").read_text(encoding="utf-8")
+        assert "status: experimental" in text
+
+
+def test_cli_lifecycle_promote_no_workspace_query_still_defers_without_credential(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The explicit opt-out keeps deferring (and passing) even when no
+    credential is available -- it never tries to get one."""
+    import contentops.utils.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "get_credential", _raise_no_credential)
+    detections = _write(tmp_path, _envelope(
+        status="experimental", last_validated=date.today().isoformat(),
+    ))
+    result = CliRunner().invoke(cli, [
+        "lifecycle", "promote", "rule-x",
+        "--path", str(detections),
+        "--no-workspace-query",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "[skip] live_test_pass" in result.output
+    assert "[skip] fp_rate_threshold" in result.output
+    assert "PROMOTED" in result.output
+
+
+def test_gate_with_workspace_error_fails_instead_of_deferring() -> None:
+    env = yaml.safe_load(_envelope())
+    for gate in (
+        gate_live_test_pass(
+            env, workspace_id=None, token=None, workspace_error="token expired",
+        ),
+        gate_fp_rate_threshold(
+            env, workspace_id=None, token=None, threshold=0.5,
+            workspace_error="token expired",
+        ),
+    ):
+        assert gate.passed is False
+        assert gate.deferred is False
+        assert "token expired" in gate.detail
 
 
 # ---------------------------------------------------------------------------

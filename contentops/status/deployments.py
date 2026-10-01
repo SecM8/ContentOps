@@ -19,8 +19,9 @@ Each row is classified as one of:
 * ``orphan``     — present in state, no longer in git (deployment ghost).
 
 Pure rendering — the caller decides which audit dir / state file to
-read. The CLI wrapper provides sensible defaults (``state/state.json``,
-``audit/``, ``detections/``).
+read. The CLI wrapper provides sensible defaults
+(``state/<env>/state.json`` for the tenant env, ``audit/``,
+``detections/``).
 """
 
 from __future__ import annotations
@@ -121,6 +122,19 @@ def _discover_kinds(
             entry["remote_id"] = state_entry.remote_id or ""
 
     return rows
+
+
+def _class_suffix(cls: str, data: dict) -> str:
+    """Annotate in-sync rows that ``contentops state adopt`` recorded.
+
+    Adoption marks an asset managed without deploying it, so its "Last
+    Applied" timestamp is the adoption time, not an apply. Say so in
+    the cell rather than inventing a new class -- classification (and
+    the totals) stay exactly as before.
+    """
+    if cls == "in-sync" and data.get("state_status") == "adopted":
+        return " (adopted)"
+    return ""
 
 
 _WORKFLOW_LINK = (
@@ -237,7 +251,7 @@ def render_deployments(
                 continue
             cells = [
                 f"`{_escape_cell(envelope_id)}`",
-                f"{_CLASS_GLYPH.get(cls, '')} {cls}",
+                f"{_CLASS_GLYPH.get(cls, '')} {cls}{_class_suffix(cls, data)}",
                 _escape_cell(data.get("last_applied_at") or "—"),
                 f"`{_short_sha(data.get('last_applied_sha') or '')}`" if data.get("last_applied_sha") else "—",
                 (

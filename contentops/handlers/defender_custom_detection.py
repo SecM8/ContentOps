@@ -26,7 +26,12 @@ from contentops.core.handler import LoadedAsset
 from contentops.core.result import ActionResult, PlanAction
 from contentops.defender import rule_status
 from contentops.defender.client import DefenderClient
-from contentops.defender.deploy import build_display_name_map, deploy_defender_rule
+from contentops.defender.deploy import (
+    build_rule_index,
+    deploy_defender_rule,
+    record_graph_id,
+    resolve_graph_id,
+)
 from contentops.handlers._verify import compute_content_hash, hash_mismatch_error
 from contentops.models import validate_defender_payload
 from contentops.utils.yaml_io import to_defender_body
@@ -104,6 +109,9 @@ class DefenderCustomDetectionHandler:
         self._client_factory = client_factory
         self._client: DefenderClient | None = None
         self._name_map: dict[str, str] | None = None
+        # Graph ids that exist remotely, from the same list call as
+        # ``_name_map``; lets apply match by ``metadata.arm_name``.
+        self._graph_ids: set[str] = set()
 
     def _client_or_create(self) -> DefenderClient | None:
         if self._client is None:
@@ -133,7 +141,7 @@ class DefenderCustomDetectionHandler:
                     # Factory returned None — legacy dry-run shim.
                     self._name_map = {}
                 else:
-                    self._name_map = build_display_name_map(client)
+                    self._name_map, self._graph_ids = build_rule_index(client)
             except Exception as exc:
                 logger.debug(
                     "dry-run name-map fetch failed (label defaults to "
@@ -143,7 +151,7 @@ class DefenderCustomDetectionHandler:
         else:
             client = self._client_or_create()
             assert client is not None
-            self._name_map = build_display_name_map(client)
+            self._name_map, self._graph_ids = build_rule_index(client)
         return self._name_map
 
     def validate(self, loaded: LoadedAsset) -> None:
@@ -192,6 +200,7 @@ class DefenderCustomDetectionHandler:
             result = deploy_defender_rule(
                 client, loaded.envelope.id, loaded.payload,
                 loaded.envelope.status, name_map, dry_run=True,
+                arm_name=loaded.envelope.arm_name, graph_ids=self._graph_ids,
             )
             return ActionResult(
                 asset_id=result["id"],
@@ -210,7 +219,13 @@ class DefenderCustomDetectionHandler:
         hashed_fields = rule_status.hashed_fields(_HASHED_FIELDS, body)
         sent_hash = compute_content_hash(body, hashed_fields)
 
-        graph_id = name_map.get(display_name)
+        # Match by the Graph id collect recorded (``metadata.arm_name``)
+        # before displayName: matching on displayName alone POSTed a second
+        # rule whenever the YAML renamed one.
+        graph_id = resolve_graph_id(
+            display_name, name_map,
+            arm_name=loaded.envelope.arm_name, graph_ids=self._graph_ids,
+        )
         if graph_id:
             # Push only when the rule actually differs. Re-PATCHing an
             # unchanged rule is needless and, for content collected from the
@@ -253,6 +268,7 @@ class DefenderCustomDetectionHandler:
                     verified=False, error=response.text[:200],
                 )
             action = PlanAction.DISABLE if loaded.envelope.status == "deprecated" else PlanAction.UPDATE
+            record_graph_id(display_name, graph_id, name_map, self._graph_ids)
             click.echo(f"  {action.value}: {loaded.envelope.id} (graph:{graph_id})")
         else:
             response = client.create_rule(body)
@@ -282,6 +298,10 @@ class DefenderCustomDetectionHandler:
                     loaded.envelope.id, exc, response.text[:200],
                 )
                 graph_id = ""
+            if graph_id:
+                # A second YAML with this displayName later in the run
+                # must PATCH this rule, not POST another.
+                record_graph_id(display_name, graph_id, name_map, self._graph_ids)
             click.echo(f"  {action.value}: {loaded.envelope.id}")
 
         # Post-apply content-hash verification.

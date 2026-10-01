@@ -137,6 +137,32 @@ class StatusResult:
 # ---------------------------------------------------------------------------
 
 
+_FALLBACK_NAME = "contentops-state"
+_FALLBACK_EMAIL = "contentops-state@users.noreply.github.com"
+
+
+def _identity_args(repo: Path) -> list[str]:
+    """Return ``-c user.name=... -c user.email=...`` when git has none.
+
+    ``commit-tree`` needs a committer identity. GitHub-hosted runners
+    ship without ``user.name`` / ``user.email``, so without a fallback
+    the orphan commit stops with "Please tell me who you are" on the
+    first workflow run that reaches ``state sync push``. A configured
+    identity is left alone, and ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*``
+    env vars still win over ``-c`` as usual.
+    """
+    args: list[str] = []
+    for key, fallback in (
+        ("user.name", _FALLBACK_NAME),
+        ("user.email", _FALLBACK_EMAIL),
+    ):
+        try:
+            _run(["config", "--get", key], cwd=repo)
+        except StateSyncError:
+            args += ["-c", f"{key}={fallback}"]
+    return args
+
+
 def push(
     env: str,
     state_file: Path,
@@ -173,7 +199,8 @@ def push(
     # Keep the commit message tight — first 200 chars of the JSON
     # blob is enough to grep the ref's history later.
     commit_sha = _run_with_input(
-        ["commit-tree", tree_sha, "-m", f"[state] {env} sync from {actor}"],
+        [*_identity_args(repo), "commit-tree", tree_sha,
+         "-m", f"[state] {env} sync from {actor}"],
         cwd=repo, stdin="",
     )
 

@@ -77,11 +77,12 @@ drift.
 | `silent-rules` | command | List rules that haven't fired in the lookback window (F4). |
 | `snapshot-diff` | command | Content-aware diff between two `contentops collect` archives. |
 | `state` | group | Inspect and manage the per-env state file (DESIGN section 13). |
+| `state adopt` | command | Mark assets already in sync with the live tenant as managed. |
 | `state forget` | command | Drop one envelope id from state (e.g. after a manual portal cleanup). |
 | `state show` | command | Print the per-env state file. |
 | `state sync` | group | Push / pull / status against the orphan-branch state convention. |
-| `state sync pull` | command | Pull refs/heads/state/<env> into state/state.json. |
-| `state sync push` | command | Push state/state.json onto refs/heads/state/<env> (orphan). |
+| `state sync pull` | command | Pull refs/heads/state/<env> into state/<env>/state.json. |
+| `state sync push` | command | Push state/<env>/state.json onto refs/heads/state/<env> (orphan). |
 | `state sync status` | command | Show divergence between local state and the state/<env> ref. |
 | `status` | group | Generate dashboard markdown for the docs/status/ tree. |
 | `status all` | command | Generate both pages with their default output paths. |
@@ -163,12 +164,13 @@ Every registered command, the Click callback that implements it (the Function), 
 | `sentinel-roundtrip-diff` | `sentinel_roundtrip_diff_cmd` | `contentops.cli.commands.diagnostics` | `.github/workflows/ci.yml` |
 | `silent-rules` | `silent_rules_cmd` | `contentops.cli.commands.silent_rules` | `.github/workflows/silent-rules.yml` |
 | `snapshot-diff` | `snapshot_diff_cmd` | `contentops.cli.commands.archive` | _(local-only)_ |
-| `state` | `state_group` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml` |
+| `state` | `state_group` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml`, `.github/workflows/state-adopt.yml`, `.github/workflows/status-refresh.yml` |
+| `state adopt` | `state_adopt_cmd` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/state-adopt.yml` |
 | `state forget` | `state_forget_cmd` | `contentops.cli.commands.state` | `.github/workflows/ci.yml` |
 | `state show` | `state_show_cmd` | `contentops.cli.commands.state` | `.github/workflows/ci.yml` |
-| `state sync` | `state_sync_group` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml` |
-| `state sync pull` | `state_sync_pull` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml` |
-| `state sync push` | `state_sync_push` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml` |
+| `state sync` | `state_sync_group` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml`, `.github/workflows/state-adopt.yml`, `.github/workflows/status-refresh.yml` |
+| `state sync pull` | `state_sync_pull` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/promote-to-integration.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml`, `.github/workflows/state-adopt.yml`, `.github/workflows/status-refresh.yml` |
+| `state sync push` | `state_sync_push` | `contentops.cli.commands.state` | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/prune.yml`, `.github/workflows/retry-failed.yml`, `.github/workflows/rollback.yml`, `.github/workflows/state-adopt.yml` |
 | `state sync status` | `state_sync_status` | `contentops.cli.commands.state` | `.github/workflows/ci.yml` |
 | `status` | `status_group` | `contentops.cli.commands.status` | `.github/workflows/status-refresh.yml` |
 | `status all` | `status_all_cmd` | `contentops.cli.commands.status` | `.github/workflows/status-refresh.yml` |
@@ -279,6 +281,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 | `.github/workflows/secret-scan.yml` | Secret scan |
 | `.github/workflows/silent-rules.yml` | Silent rules report |
 | `.github/workflows/spelling.yml` | Spelling |
+| `.github/workflows/state-adopt.yml` | State adopt |
 | `.github/workflows/status-refresh.yml` | Status refresh |
 | `.github/workflows/tuning-impact-preview.yml` | Tuning impact preview |
 | `.github/workflows/upstream-watchers.yml` | Upstream catalog watchers |
@@ -286,7 +289,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **166** files, **1903** test functions. Integration: **11** files, **15** test functions.
+Unit: **171** files, **1951** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -299,7 +302,7 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_alerts_provider_paging.py` | 9 |
 | `tests/v2/test_alerts_rollup.py` | 25 |
 | `tests/v2/test_alerts_sync.py` | 13 |
-| `tests/v2/test_analytic_kinds.py` | 27 |
+| `tests/v2/test_analytic_kinds.py` | 28 |
 | `tests/v2/test_apply_continue_on_error.py` | 4 |
 | `tests/v2/test_apply_json_report.py` | 11 |
 | `tests/v2/test_apply_push_state.py` | 3 |
@@ -329,6 +332,7 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_cli_plan_apply.py` | 7 |
 | `tests/v2/test_cli_root_group.py` | 3 |
 | `tests/v2/test_collect_enrich.py` | 5 |
+| `tests/v2/test_collect_failed_kinds.py` | 3 |
 | `tests/v2/test_collect_roundtrip.py` | 10 |
 | `tests/v2/test_collect_workers_default.py` | 2 |
 | `tests/v2/test_config_alerts.py` | 9 |
@@ -345,6 +349,7 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_daily_store.py` | 8 |
 | `tests/v2/test_defender_dry_run_resolve.py` | 4 |
 | `tests/v2/test_defender_extensions_probe.py` | 9 |
+| `tests/v2/test_defender_no_duplicate_create.py` | 8 |
 | `tests/v2/test_defender_patch_probe.py` | 5 |
 | `tests/v2/test_defender_roundtrip.py` | 10 |
 | `tests/v2/test_defender_rule_status.py` | 14 |
@@ -387,7 +392,7 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_hunting_model.py` | 6 |
 | `tests/v2/test_integration_guard.py` | 5 |
 | `tests/v2/test_l2_kql101_production_gating.py` | 2 |
-| `tests/v2/test_lifecycle_promote.py` | 46 |
+| `tests/v2/test_lifecycle_promote.py` | 50 |
 | `tests/v2/test_lint.py` | 24 |
 | `tests/v2/test_lint_coverage.py` | 5 |
 | `tests/v2/test_lint_graduated_strict.py` | 10 |
@@ -426,6 +431,7 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_restore.py` | 11 |
 | `tests/v2/test_retry_failed_since.py` | 19 |
 | `tests/v2/test_rollback.py` | 16 |
+| `tests/v2/test_rollback_gates.py` | 5 |
 | `tests/v2/test_rule_test_cli.py` | 7 |
 | `tests/v2/test_sentinel_arm_retry.py` | 6 |
 | `tests/v2/test_sentinel_pagination.py` | 1 |
@@ -433,11 +439,13 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_slug_arm_name.py` | 12 |
 | `tests/v2/test_snapshot_diff.py` | 15 |
 | `tests/v2/test_snippets.py` | 36 |
+| `tests/v2/test_state_adopt.py` | 10 |
 | `tests/v2/test_state_file.py` | 10 |
-| `tests/v2/test_state_sync.py` | 10 |
+| `tests/v2/test_state_sync.py` | 13 |
 | `tests/v2/test_status_configuration.py` | 8 |
 | `tests/v2/test_status_deployments.py` | 13 |
 | `tests/v2/test_status_redact.py` | 13 |
+| `tests/v2/test_status_state_env.py` | 8 |
 | `tests/v2/test_stdio_utf8.py` | 4 |
 | `tests/v2/test_strict_allowlist.py` | 14 |
 | `tests/v2/test_tenant_policy.py` | 6 |
@@ -453,8 +461,8 @@ Unit: **166** files, **1903** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_upstream_templates.py` | 1 |
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
 | `tests/v2/test_watchlist_model.py` | 7 |
-| `tests/v2/test_workflow_state_and_telemetry.py` | 2 |
-| `tests/v2/test_workspace_kql.py` | 18 |
+| `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
+| `tests/v2/test_workspace_kql.py` | 20 |
 | `tests/v2/test_workspace_kql_joined.py` | 16 |
 | `tests/v2/test_workspace_role_test.py` | 4 |
 | `tests/v2/test_yaml_block_scalar.py` | 4 |

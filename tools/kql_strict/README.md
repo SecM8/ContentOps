@@ -67,7 +67,7 @@ The convention is a two-file split:
 
 | File | Source | Refresh |
 |---|---|---|
-| `schemas.json` | **Sentinel custom tables** (tenant-specific — custom logs, ASIM normalizers, third-party connectors). | Nightly via `contentops upstream check-schemas`, sourced from `https://api.loganalytics.io/v1/workspaces/<id>/metadata`. |
+| `schemas.json` | **Sentinel custom tables** (tenant-specific — custom logs, ASIM normalizers, third-party connectors). | Weekly via `contentops upstream check-schemas`, sourced from `https://api.loganalytics.io/v1/workspaces/<id>/metadata`. |
 | `schemas_defender.json` | **Defender XDR tables** (tenant-invariant — same columns for every tenant on the same license tier). | Vendored from Microsoft Learn / Graph Advanced Hunting; rarely changes. Public-mirror adopters reuse this file as-is without needing tenant access. |
 
 When neither file is present the wrapper logs a stderr advisory and
@@ -132,10 +132,10 @@ cp config/kql_lint_allowlist.yml.example config/kql_lint_allowlist.yml
 
 ### Refresh paths
 
-1. **Nightly workflow** — `.github/workflows/kql-schemas-refresh.yml`
-   runs at 03:30 UTC. Runs `check-schemas` (Sentinel, LA metadata)
+1. **Weekly workflow** — `.github/workflows/kql-schemas-refresh.yml`
+   runs at 03:30 UTC on Mondays. Runs `check-schemas` (Sentinel, LA metadata)
    AND `check-defender-schema` (Defender, Graph
-   `runHuntingQuery getschema`) in sequence; one PR per night with
+   `runHuntingQuery getschema`) in sequence; one PR per run with
    both files refreshed. Each step honours
    `config/lint_strict.yml`'s per-source `enabled`.
 2. **On-demand workflow** — `gh workflow run kql-schemas-refresh.yml`

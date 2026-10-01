@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""`pipeline restore <archive>` — inverse of collect/export.
+"""`contentops restore <archive>` — inverse of collect/export.
 
 Reads a tar.gz archive whose top-level layout matches what
 `contentops collect` produces (``detections/<asset_kind>/<id>.yml``)

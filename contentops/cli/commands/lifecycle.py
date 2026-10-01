@@ -614,8 +614,10 @@ def lifecycle_group() -> None:
     envvar="PIPELINE_WORKSPACE_ID",
     default=None,
     help="LA workspace ID for the fp_rate_threshold gate (env: "
-         "PIPELINE_WORKSPACE_ID). When unset OR --no-workspace-query "
-         "is on, the gate stays deferred.",
+         "PIPELINE_WORKSPACE_ID). When unset it is derived from "
+         "tenant.yml (role prod); if that or the credential fails, the "
+         "workspace-backed gates FAIL. Only --no-workspace-query defers "
+         "them.",
 )
 @click.option(
     "--telemetry-since", "telemetry_since_days",
@@ -628,8 +630,8 @@ def lifecycle_group() -> None:
     is_flag=True, default=False,
     help="Skip the workspace query even when --workspace-id is set. "
          "Useful for offline dry-runs or when the operator already "
-         "has out-of-band FP-rate evidence. The fp_rate_threshold "
-         "gate is reported as deferred.",
+         "has out-of-band FP-rate evidence. The live_test_pass and "
+         "fp_rate_threshold gates are reported as deferred.",
 )
 @click.option(
     "--force", is_flag=True, default=False,
@@ -666,7 +668,8 @@ def lifecycle_promote_cmd(
         the rule's KQL against the workspace via the Log Analytics
         Query API (the rule-test path); a server-side parse/schema
         error or 403 blocks the promotion. Fail-closed on workspace
-        errors (use --force or --no-workspace-query to bypass).
+        errors, including a failed credential or workspace lookup
+        (use --force or --no-workspace-query to bypass).
       * fp_rate_threshold - live when a workspace is set and
         --no-workspace-query is unset. Compares closed_fp_30d /
         incidents_30d against config/lifecycle.yml's
@@ -733,6 +736,10 @@ def lifecycle_promote_cmd(
 
     effective_workspace_id: str | None = None
     token: str | None = None
+    # Set when the workspace lookup was wanted but failed. The workspace
+    # gates then FAIL rather than defer: only --no-workspace-query is a
+    # legitimate deferral, or an expired login would pass every promotion.
+    workspace_error: str | None = None
     if not no_workspace_query:
         from contentops.utils.auth import get_credential
         from contentops.workspace_kql import (
@@ -748,16 +755,16 @@ def lifecycle_promote_cmd(
                 token = cred.get_token(LA_SCOPE).token
                 effective_workspace_id = workspace_id
         except WorkspaceKqlError as exc:
-            click.echo(
-                f"info: workspace-backed gates (live_test_pass, fp_rate) "
-                f"stay deferred (workspace auto-derive failed: {exc}).",
-                err=True,
-            )
+            workspace_error = f"workspace auto-derive failed: {exc}"
         except Exception as exc:
+            workspace_error = f"credential/token acquisition failed: {exc}"
+        if workspace_error is None and effective_workspace_id is None:
+            workspace_error = "no workspace id resolved"
+        if workspace_error is not None:
             click.echo(
-                f"info: workspace-backed gates (live_test_pass, fp_rate) "
-                f"stay deferred (credential/token acquisition failed: {exc}). "
-                "Pass --no-workspace-query to silence this notice.",
+                f"error: workspace-backed gates (live_test_pass, fp_rate) "
+                f"will FAIL ({workspace_error}). Pass --no-workspace-query "
+                "to defer them explicitly.",
                 err=True,
             )
 
@@ -775,6 +782,7 @@ def lifecycle_promote_cmd(
             token=token,
             fp_rate_threshold=config.fp_rate_threshold,
             telemetry_since_days=telemetry_since_days,
+            workspace_error=workspace_error,
         )
         promoted = sum(1 for r in reports if r.promoted)
         passed_no_write = sum(
@@ -830,6 +838,7 @@ def lifecycle_promote_cmd(
             token=token,
             fp_rate_threshold=config.fp_rate_threshold,
             telemetry_since_days=telemetry_since_days,
+            workspace_error=workspace_error,
         )
     except LifecycleError as exc:
         click.echo(f"error: {exc}", err=True)

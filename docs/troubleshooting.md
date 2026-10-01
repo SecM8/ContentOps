@@ -564,6 +564,35 @@ contentops collect --role prod --asset sentinel_analytic --full
 contentops collect --role prod --clear
 ```
 
+### `unmanaged` on every row of the deployments status page
+
+**Looks like:** `docs/status/deployments.md` reports `0 in-sync` and
+every rule as `⚪ unmanaged`, even though the rules are live and
+deploys succeed.
+
+**Why:** a rule counts as managed only when the per-env state file
+(`state/<env>/state.json`, pushed to `refs/heads/state/<env>`) lists
+it. Older tool versions never pushed that branch — the workflows
+checked for the env-less `state/state.json`, which nothing writes —
+and `status-refresh.yml` neither pulled state nor read the env-scoped
+file. Rules deployed before ContentOps tracked state are missing from
+it too.
+
+**Fix:** sync the tool from upstream, then backfill once:
+
+```powershell
+contentops state sync pull
+contentops state adopt --role prod --dry-run
+contentops state adopt --role prod --push
+```
+
+or dispatch `state-adopt.yml` (dry-run first). The next
+`status-refresh.yml` run shows the adopted rules as
+`in-sync (adopted)`. Rules adopt lists as *differs from tenant* stay
+`unmanaged` until a deploy (or a merged drift PR) reconciles them.
+Check what the branch holds with `contentops state sync status` and
+`contentops state show`. See [`operations/adopt.md`](operations/adopt.md).
+
 ---
 
 ## CI gate failures

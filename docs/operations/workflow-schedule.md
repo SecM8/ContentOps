@@ -9,7 +9,6 @@ exchange contention against Azure Entra ID.
 | Time  | Workflow                    | OIDC | Notes                              |
 |-------|-----------------------------|------|------------------------------------|
 | 03:00 | Public mirror sync          | No   | PAT-based mirror push              |
-| 03:30 | KQL schemas refresh         | Yes  | LA metadata + Defender XDR schemas |
 | 04:00 | Status refresh              | Yes  | Regenerate L1-L7 status pages      |
 | 04:17 | Secret scan                 | No   | Full-history scan                  |
 | 06:00 | Drift detection             | Yes  | Drift detection + auto-PR          |
@@ -21,6 +20,7 @@ exchange contention against Azure Entra ID.
 
 | Time  | Workflow                    | OIDC | Notes                              |
 |-------|-----------------------------|------|------------------------------------|
+| 03:30 | KQL schemas refresh         | Yes  | LA metadata + Defender XDR schemas |
 | 04:00 | Audit chain verify          | No   | Weekly hash-chain integrity check  |
 | 05:00 | Deployment conformance      | Yes  | End-to-end L1-L7 deployment check |
 | 05:30 | Collect detections          | Yes  | Full tenant snapshot               |

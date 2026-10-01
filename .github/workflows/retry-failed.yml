@@ -128,10 +128,13 @@ jobs:
         if: ${{ inputs.dry_run == false }}
         run: |
           set -euo pipefail
-          if [ -f state/state.json ]; then
+          # `state sync push` reads state/<env>/state.json (<env> =
+          # tenant.yml's name), never the env-less state/state.json the
+          # old gate tested -- so the push was always skipped.
+          if compgen -G "state/*/state.json" > /dev/null; then
             contentops state sync push
           else
-            echo "::notice::No state/state.json written; skipping state sync push."
+            echo "::notice::No state/<env>/state.json written; skipping state sync push."
           fi
 
       - name: Upload audit JSONL

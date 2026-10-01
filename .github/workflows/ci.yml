@@ -154,6 +154,7 @@ jobs:
         run: |
           contentops state show --help
           contentops state forget --help
+          contentops state adopt --help
           contentops state sync push --help
           contentops state sync pull --help
           contentops state sync status --help

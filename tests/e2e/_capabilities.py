@@ -249,6 +249,7 @@ COVERED_LEAVES: tuple[str, ...] = (
     "sentinel-roundtrip-diff",
     "silent-rules",
     "snapshot-diff",
+    "state adopt",
     "state forget",
     "state show",
     "state sync pull",
@@ -706,6 +707,21 @@ CAPABILITIES: tuple[Capability, ...] = (
         modes=frozenset({"mocked", "live"}),
         mock_routes=("oidc_token", "arm_sentinel", "graph_defender"),
         catalog_path="drift",
+        expect_exit=(0, 1, 2),
+    ),
+    Capability(
+        # Read-only against the tenant (drift's list-and-compare);
+        # --dry-run keeps the e2e sandbox state file untouched.
+        id="state.adopt.dry_run",
+        cli=(
+            "state", "adopt", "--path", "{detections}",
+            "--workspace", "law-e2e-itest", "--env", "e2e", "--dry-run",
+        ),
+        needs="both",
+        modes=frozenset({"mocked", "live"}),
+        mock_routes=("oidc_token", "arm_sentinel", "graph_defender"),
+        catalog_path="state adopt",
+        # 1 = a remote kind could not be listed (adopt refuses to write).
         expect_exit=(0, 1, 2),
     ),
     Capability(

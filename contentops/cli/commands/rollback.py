@@ -15,17 +15,72 @@ from contentops.audit import write_records
 from contentops.cli.handler_factories import register_default_handlers
 from contentops.cli.commands._shared import (
     _apply_log_levels,
+    _filter_disabled_engines,
     _is_locked,
+    _is_locked_path,
     _load_all,
     _print_run_banner,
     _resolve_single_workspace_or_exit,
     _skip_if_integration_role_absent,
 )
-from contentops.cli.commands.apply_support import _build_audit_record
+from contentops.cli.commands.apply_support import (
+    WorkspaceRunContext,
+    _build_audit_record,
+    _check_apply_write_allowed_or_exit,
+    _filter_loaded_by_env_status,
+    _process_apply_asset,
+    _process_plan_asset,
+)
+import contentops.config as _config
+from contentops.config import SentinelWorkspaceConfig, TenantConfig
 from contentops.core.asset import Asset
+from contentops.core.discovery import iter_loaded_assets
 from contentops.core.handler import LoadedAsset
 from contentops.core.registry import default_registry
-from contentops.core.result import ActionResult, PlanAction
+from contentops.core.result import ActionResult
+
+# Rollback replays the materialised tree but resolves locks and snippet
+# overrides against the CURRENT checkout (the same roots apply uses).
+_CURRENT_DETECTIONS = Path("detections")
+
+
+def _rollback_target() -> tuple[TenantConfig | None, list[SentinelWorkspaceConfig]]:
+    """Return (tenant config, workspaces this rollback writes to).
+
+    Runs after ``_resolve_single_workspace_or_exit``, so an explicit
+    selector has already landed in ``PIPELINE_WORKSPACE_NAME`` (the env
+    var the handler factories read). Without one, every configured
+    workspace is in scope — conservative for the writeAllowed gate.
+    Missing tenant.yml -> ``(None, [])``, as for apply.
+    """
+    try:
+        cfg = _config.load_tenant_config()
+    except FileNotFoundError:
+        return None, []
+    name = os.environ.get("PIPELINE_WORKSPACE_NAME")
+    if name:
+        match = [w for w in cfg.sentinelWorkspaces if w.workspaceName == name]
+        if match:
+            return cfg, match
+    return cfg, list(cfg.sentinelWorkspaces)
+
+
+def _locked_in_current_tree(
+    la: LoadedAsset,
+    rollback_root: Path,
+    current: dict[tuple[Asset, str], LoadedAsset],
+) -> bool:
+    """True when TODAY's file for this asset carries the lock.
+
+    The copy materialised from the target SHA predates any lock added
+    since, so it cannot be trusted. Match by (asset, id) so a file moved
+    since the SHA is still found; fall back to the same relative path
+    when today's file does not load.
+    """
+    today = current.get((la.envelope.asset, la.envelope.id))
+    if today is not None:
+        return _is_locked(today)
+    return _is_locked_path(_CURRENT_DETECTIONS / la.path.relative_to(rollback_root))
 
 
 @click.command("rollback")
@@ -96,8 +151,11 @@ def rollback_cmd(
       * Non-destructive: a rule that exists today but didn't at SHA
         is LEFT ALONE. Run ``contentops prune`` afterwards if you want
         full reset semantics.
-      * Honours ``localCustomization: true`` locks (same as apply).
-        Unlock the rule first if you want rollback to overwrite it.
+      * Honours ``localCustomization: true`` locks as they stand in the
+        current checkout (same as apply). Unlock the rule first if you
+        want rollback to overwrite it.
+      * Same gates as apply: tenant.yml ``writeAllowed``, the env-status
+        filter, and snippet substitution from the current overrides/.
       * Skips dependency check - the SHA was valid at its merge time;
         re-validating against today's dependency graph is the wrong
         contract for an incident-response replay.
@@ -114,6 +172,15 @@ def rollback_cmd(
     if _skip_if_integration_role_absent(role, workspace_name, command="rollback"):
         return
     _resolve_single_workspace_or_exit(role, workspace_name)
+    cfg, workspaces = _rollback_target()
+    will_apply = (not dry_run) and yes
+    # Same writeAllowed safeguard as apply, before any handler exists; a
+    # preview (dry-run, or --no-dry-run without --yes) bypasses it.
+    _check_apply_write_allowed_or_exit(cfg, workspaces, asset, not will_apply)
+    ws_name = (
+        workspaces[0].workspaceName if len(workspaces) == 1
+        else os.environ.get("PIPELINE_WORKSPACE_NAME")
+    )
     register_default_handlers()
 
     try:
@@ -164,14 +231,21 @@ def rollback_cmd(
                 )
                 sys.exit(1)
 
+        loaded = _filter_disabled_engines(loaded)
+        loaded = _filter_loaded_by_env_status(loaded, cfg, workspaces)
         if not loaded:
             click.echo("No assets to rollback.")
             return
 
-        # Filter locked envelopes — rollback honours the lock by default.
+        # Filter locked envelopes — rollback honours the lock by default,
+        # read from the current checkout (a lock added after SHA counts).
+        current: dict[tuple[Asset, str], LoadedAsset] = {}
+        if _CURRENT_DETECTIONS.is_dir():
+            for today in iter_loaded_assets(_CURRENT_DETECTIONS):
+                current[(today.envelope.asset, today.envelope.id)] = today
         kept: list[LoadedAsset] = []
         for la in loaded:
-            if _is_locked(la):
+            if _locked_in_current_tree(la, rollback_root, current):
                 click.echo(
                     f"  skipped (locked): {la.envelope.id} "
                     "— contentops unlock then re-run rollback to override"
@@ -195,22 +269,14 @@ def rollback_cmd(
             default_registry.close_all()
             sys.exit(1)
 
-        # Plan phase — validate + plan against the materialised tree.
-        plan_results: list[ActionResult] = []
+        # Plan phase — snippet substitution + validate + plan against the
+        # materialised tree, through apply's per-asset helper.
+        plan_ctx = WorkspaceRunContext(
+            command="plan", detections_path=_CURRENT_DETECTIONS,
+        )
         for la in loaded:
-            if not default_registry.has(la.envelope.asset):
-                click.echo(f"  no handler for {la.envelope.asset.value}: {la.path}")
-                continue
-            handler = default_registry.get(la.envelope.asset)
-            try:
-                handler.validate(la)
-                plan_results.append(handler.plan(la))
-            except Exception as exc:
-                plan_results.append(ActionResult(
-                    asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
-                    action=PlanAction.NOOP,
-                    status="error-validate", detail=str(exc),
-                ))
+            _process_plan_asset(la, ws_name, plan_ctx)
+        plan_results: list[ActionResult] = plan_ctx.results
 
         click.echo(f"\nRollback plan ({len(plan_results)} assets):")
         for r in plan_results:
@@ -225,7 +291,6 @@ def rollback_cmd(
             default_registry.close_all()
             sys.exit(1)
 
-        will_apply = (not dry_run) and yes
         if not will_apply:
             click.echo(
                 "\n[dry-run] No API calls. "
@@ -234,25 +299,20 @@ def rollback_cmd(
             default_registry.close_all()
             return
 
-        # Apply phase.
-        results: list[ActionResult] = []
-        audit_pairs: list[tuple[LoadedAsset, ActionResult]] = []
+        # Apply phase — apply's per-asset helper, so the PUT carries the
+        # snippet-substituted payload exactly as `apply` would send it.
+        ctx = WorkspaceRunContext(
+            command="apply", detections_path=_CURRENT_DETECTIONS,
+            dry_run=False, audit_pairs=[],
+        )
         try:
             for la in loaded:
-                handler = default_registry.get(la.envelope.asset)
-                try:
-                    handler.validate(la)
-                    result = handler.apply(la, dry_run=False)
-                except Exception as exc:
-                    result = ActionResult(
-                        asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
-                        action=PlanAction.NOOP, status="error-apply", detail=str(exc),
-                    )
-                    click.echo(f"  error: {la.envelope.id}: {exc}", err=True)
-                results.append(result)
-                audit_pairs.append((la, result))
+                _process_apply_asset(la, ws_name, ctx)
         finally:
             default_registry.close_all()
+        results = ctx.results
+        assert ctx.audit_pairs is not None
+        audit_pairs = ctx.audit_pairs
 
         click.echo(f"\nRollback summary ({len(results)} assets):")
         for r in results:
@@ -264,9 +324,10 @@ def rollback_cmd(
         if not no_audit and audit_pairs:
             records = []
             marker = rollback_audit_message(full_sha)
-            active_ws = os.environ.get("PIPELINE_WORKSPACE_NAME")
-            for la, r in audit_pairs:
-                base = _build_audit_record(r, la, workspace=active_ws)
+            for la, r, pair_ws, snippet_digest in audit_pairs:
+                base = _build_audit_record(
+                    r, la, workspace=pair_ws, snippet_digest=snippet_digest,
+                )
                 # Prefix the message; preserve any pre-existing detail.
                 existing = base.message or ""
                 new_message = (

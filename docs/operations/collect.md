@@ -51,20 +51,27 @@ changed envelopes alongside whatever already exists locally. That's
 the right behaviour for incremental syncs, but it leaves stale files
 behind if the tenant has had content removed since the last collect.
 
-`--clear` wipes the local detection YAMLs **before** the collect runs:
+`--clear` wipes the local detection YAMLs before the collected ones
+are written:
 
 ```sh
 contentops collect --clear --role prod
 ```
 
-Mechanically equivalent to running `pipeline clean --yes` and then
+Roughly equivalent to running `contentops clean --yes` and then
 `contentops collect`. Behaviour:
 
-* Deletes `detections/<asset_kind>/*.yml` and the legacy v1
-  `detections/sentinel/` and `detections/defender/` directories.
+* Lists the tenant first, then deletes `detections/<asset_kind>/*.yml`
+  only for the kinds whose listing **succeeded**. A kind that fails to
+  list (403, outage) keeps its local files.
 * Preserves `detections/templates/` and `detections/samples/`.
 
-Use `pipeline clean` (without collecting) when you want the wipe
+Whether or not `--clear` is set, collect **exits 2** when any asset
+kind fails to list (as `contentops drift` does); the kinds that did
+list are still written. In `collect.yml` that fails the job instead of
+opening a PR from a partial snapshot.
+
+Use `contentops clean` (without collecting) when you want the wipe
 without the immediate re-pull — e.g. to inspect what's left or to
 re-collect against a different workspace.
 

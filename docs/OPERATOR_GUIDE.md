@@ -380,6 +380,24 @@ A tenant with more than one workspace requires `--role` or
 integration Defender — so `--role integration` skips Defender
 content silently. Long-form: [`operations/multi-workspace.md`](operations/multi-workspace.md).
 
+### Adopting an existing tenant
+
+The status page shows every rule as `unmanaged` because nothing has
+recorded them in the per-env state file yet — typical for a tenant
+deployed before ContentOps, or before the state branch was pushed.
+
+```
+contentops state sync pull
+contentops state adopt --role prod --dry-run   # preview
+contentops state adopt --role prod --push      # record + push state
+```
+
+Adopt is read-only against Azure: it records only the rules that
+already match the tenant. Prefer it over a full redeploy, which
+re-saves every rule — restarting schedules (duplicate incidents) and
+risking template links. In CI, dispatch `state-adopt.yml` (dry-run by
+default). Long-form: [`operations/adopt.md`](operations/adopt.md).
+
 ---
 
 ## Runbooks — top failure modes, decision trees
@@ -706,9 +724,11 @@ governance evidence can grep for missing or stale runbook URLs.
 - [`operations/operationalization-paths.md`](operations/operationalization-paths.md) — choose the operating model (local-only / GitOps / hybrid): the five decisions, the workflow maturity ladder, and the validation matrix.
 - [`operations/authentication-setup.md`](operations/authentication-setup.md) — Azure App Registration + OIDC walkthrough. First-timer-friendly; TL;DR up top for the experienced.
 - [`operations/tenant-config-modes.md`](operations/tenant-config-modes.md) — the three supported `tenant.yml` layouts (committed / secret / vars+secrets) and the `policy.scaffoldStrict` flag.
+- [`operations/team-routine.md`](operations/team-routine.md) — the daily / weekly review routine, a red-check lookup table, and the never-do list.
 - [`operations/collect.md`](operations/collect.md) — pulling live state (`--clear`, `--role`).
 - [`operations/multi-workspace.md`](operations/multi-workspace.md) — single tenant, N Sentinel workspaces; OIDC federated credentials; per-role CLI selection.
 - [`operations/prune.md`](operations/prune.md) — deletion-as-code.
+- [`operations/adopt.md`](operations/adopt.md) — mark an already-deployed tenant as managed without redeploying (`state adopt`).
 - [`operations/prod-to-int-mirror.md`](operations/prod-to-int-mirror.md) — wipe + collect + apply workflow to mirror prod into integration; tombstone window guidance and retry-failed recovery.
 - [`emergency-disable-workflow.md`](emergency-disable-workflow.md) — break-glass single-rule disable.
 

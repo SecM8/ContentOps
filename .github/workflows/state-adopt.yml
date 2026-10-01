@@ -1,0 +1,126 @@
+name: State adopt
+
+# Marks detections that are ALREADY in sync with the live tenant as
+# managed in the durable per-env state (refs/heads/state/<env>), without
+# redeploying them. For tenants whose content was deployed before
+# ContentOps tracked state -- the status page otherwise shows every
+# asset as "unmanaged" until the next apply touches it.
+#
+# Read-only against Azure: `contentops state adopt` runs the same
+# list-and-compare as `contentops drift` and writes only
+# state/<env>/state.json. Assets that differ from the tenant are listed
+# and never adopted. Uses collect.yml's environment + identity (the
+# read-only tenant identity). See docs/operations/adopt.md.
+#
+# Manual only. dry_run defaults to true so the first dispatch is a
+# preview; re-run with dry_run=false to save and push the state.
+
+on:
+  workflow_dispatch:
+    inputs:
+      role:
+        description: "Sentinel workspace role to compare against (prod / integration / dev). Defender XDR is tenant-level and always compared. Default prod."
+        required: false
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - integration
+          - dev
+      workspace:
+        description: "Optional exact workspaceName (overrides role). Leave blank to select by role."
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Preview only: list what would be adopted and push nothing. Default true."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: write   # push refs/heads/state/<env>
+
+concurrency:
+  # Serialise adopt runs: each one pulls, mutates and force-pushes the
+  # state branch, so two in parallel would race. `state sync` does not
+  # lock (see contentops/state_sync.py); avoid dispatching this while a
+  # deploy is running.
+  group: state-adopt
+  cancel-in-progress: false
+
+jobs:
+  adopt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: automation
+    env:
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Pipeline setup (checkout / python / deps / azure-login)
+        # Composite action -- see .github/actions/pipeline-setup/action.yml.
+        # persist-credentials defaults to true, which the final
+        # `state sync push` needs to update refs/heads/state/<env>.
+        uses: ./.github/actions/pipeline-setup
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          tenant-config-env-yaml: ${{ secrets.TENANT_CONFIG_ENV_YAML }}
+          role: ${{ inputs.role || 'prod' }}
+
+      - name: Pull durable state
+        # Start from the current state branch so adopt only adds to it
+        # (already-managed entries are kept as-is). Best-effort: no
+        # branch yet means a first adoption from empty state.
+        run: |
+          set -euo pipefail
+          contentops state sync pull || {
+            echo "::notice::No remote state branch yet; adopting into empty state."
+          }
+
+      - name: Run contentops state adopt
+        # Free-text inputs go through env vars, never inline template
+        # substitution into the shell (expression-injection vector).
+        env:
+          INPUT_ROLE: ${{ inputs.role || 'prod' }}
+          INPUT_WORKSPACE: ${{ inputs.workspace }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          ARGS=("--path" "detections")
+          if [ -n "$INPUT_WORKSPACE" ]; then
+            ARGS+=("--workspace" "$INPUT_WORKSPACE")
+          else
+            ARGS+=("--role" "$INPUT_ROLE")
+          fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            ARGS+=("--dry-run")
+          fi
+          contentops state adopt "${ARGS[@]}" | tee adopt.log
+
+      - name: Push durable state
+        if: ${{ success() && inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          contentops state sync push
+
+      - name: Step summary
+        if: always()
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## State adopt"
+            echo ""
+            echo "- Dry run: \`$INPUT_DRY_RUN\`"
+            echo ""
+            echo '```'
+            if [ -f adopt.log ]; then tail -n 5 adopt.log; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

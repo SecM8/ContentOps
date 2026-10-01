@@ -1,8 +1,9 @@
 name: Status refresh
 
 # Regenerates docs/status/configuration.md and docs/status/deployments.md
-# from the current repo state (full L1-L7 conformance, state/state.json,
-# audit/*.jsonl, detections/) and commits any diff directly to main.
+# from the current repo state (full L1-L7 conformance, the durable
+# per-env state pulled from refs/heads/state/<env>, audit/*.jsonl,
+# detections/) and commits any diff directly to main.
 #
 # L3-L7 conformance hits real Azure: OIDC tokens (L3), Graph permissions
 # (L4), RBAC + Sentinel onboarding (L5), functional reach (L6), GitHub
@@ -59,6 +60,22 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+
+      - name: Pull durable state
+        # The deployments page marks an asset managed only when the
+        # per-env state file (state/<env>/state.json) lists it. That
+        # file is not in the checkout -- deploy.yml / prune.yml /
+        # state-adopt.yml push it to refs/heads/state/<env> -- so pull
+        # it first. `status all` defaults --env to tenant.yml's name,
+        # the same env `state sync pull` writes. Best-effort: with no
+        # state branch yet every asset renders as unmanaged, which is
+        # the truth for a tenant that has never been deployed or
+        # adopted. contents: write (above) covers the fetch.
+        run: |
+          set -euo pipefail
+          contentops state sync pull || {
+            echo "::notice::No remote state branch yet; every asset will render as unmanaged."
+          }
 
       - name: Regenerate status pages (L1-L7)
         # --scope all runs every conformance layer. L1-L2 are local;

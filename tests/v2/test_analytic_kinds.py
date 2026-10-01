@@ -498,6 +498,58 @@ def test_scheduled_with_template_binding_strips_displayname() -> None:
     assert put_properties.get("alertRuleTemplateName") == "scheduled-template-guid"
 
 
+def test_scheduled_with_template_binding_verifies_against_template_displayname() -> None:
+    """Post-apply verify for a template-bound Scheduled rule.
+
+    Apply strips displayName from the PUT body, but the remote GET
+    returns the template's displayName. The hash projection must not
+    count that as a mismatch -- before the fix every template-bound
+    Scheduled / NRT / MSI rule reported ``verified=False``.
+    """
+    import json as _json
+
+    payload = {
+        "kind": "Scheduled",
+        "displayName": "Template-bound Scheduled rule",
+        "alertRuleTemplateName": "scheduled-template-guid",
+        "templateVersion": "1.0.3",
+        "query": "SecurityEvent | take 1",
+        "severity": "Low",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT5M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "enabled": True,
+    }
+    stored: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PUT":
+            body = _json.loads(request.content.decode())
+            # ARM fills displayName back in from the template.
+            stored.update({
+                "name": "rule-1",
+                "kind": body.get("kind"),
+                "etag": 'W/"echoed"',
+                "properties": {
+                    **(body.get("properties") or {}),
+                    "displayName": "Template-bound Scheduled rule",
+                    "lastModifiedUtc": "2024-01-01T00:00:00Z",
+                },
+            })
+            return httpx.Response(200, json=stored)
+        if not stored:
+            return httpx.Response(404)
+        return httpx.Response(200, json=stored)
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = SentinelAnalyticHandler(lambda: client)
+    result = h.apply(_loaded(payload))
+
+    assert result.status == "success", f"got {result.status} / {result.detail}"
+    assert result.verified is True, result.detail
+
+
 def test_scheduled_without_template_keeps_displayname() -> None:
     """Control: a plain Scheduled rule (no template binding) must KEEP
     displayName in the PUT body — operators rely on it being writeable
@@ -529,7 +581,13 @@ def test_scheduled_without_template_keeps_displayname() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_to_envelope_drops_template_metadata_for_scheduled() -> None:
+def test_to_envelope_keeps_template_metadata_for_scheduled() -> None:
+    """The Content Hub template link must round-trip for Scheduled rules.
+
+    Dropping it made the next deploy PUT the rule without
+    ``alertRuleTemplateName`` and the portal stopped offering template
+    updates for it.
+    """
     h = SentinelAnalyticHandler(lambda: None)
     remote = {
         "name": "rule-1",
@@ -542,15 +600,16 @@ def test_to_envelope_drops_template_metadata_for_scheduled() -> None:
             "queryPeriod": "PT5M",
             "triggerOperator": "GreaterThan",
             "triggerThreshold": 0,
-            "alertRuleTemplateName": "should-not-round-trip",
-            "templateVersion": "1.0",
+            "alertRuleTemplateName": "scheduled-template-guid",
+            "templateVersion": "1.0.3",
             "enabled": True,
         },
     }
     env = h.to_envelope(remote)
     assert env is not None
-    assert "alertRuleTemplateName" not in env["payload"]
-    assert "templateVersion" not in env["payload"]
+    assert env["payload"]["alertRuleTemplateName"] == "scheduled-template-guid"
+    assert env["payload"]["templateVersion"] == "1.0.3"
+    assert env["version"] == "1.0.3"
 
 
 def test_to_envelope_keeps_template_for_fusion() -> None:

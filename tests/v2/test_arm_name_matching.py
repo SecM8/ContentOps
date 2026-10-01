@@ -146,9 +146,9 @@ class _DriftableHandler:
         envelope_id = displayname_slug(display_name, fallback_id=rid)
         if not envelope_id:
             return None
+        # Mirrors the real handler: only server-set fields are dropped;
+        # the template link round-trips.
         properties.pop("lastModifiedUtc", None)
-        for k in ("alertRuleTemplateName", "templateVersion"):
-            properties.pop(k, None)
         properties["kind"] = remote.get("kind", "Scheduled")
         return {
             "id": envelope_id,

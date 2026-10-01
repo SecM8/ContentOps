@@ -10,8 +10,10 @@ invokes.
 The subcommands are read-only against tenant infra: ``configuration``
 runs :func:`contentops.devex.conformance.run_conformance` for layers
 L1 + L2 (local install + tenant.yml shape -- no Azure creds needed);
-``deployments`` reads the local ``state/state.json`` and
-``audit/*.jsonl`` chain plus walks ``detections/``.
+``deployments`` reads the local per-env state file
+(``state/<env>/state.json``, where ``<env>`` defaults to tenant.yml's
+``name`` exactly as ``contentops state sync`` does) and the
+``audit/*.jsonl`` chain, plus walks ``detections/``.
 
 Output paths default to ``docs/status/<page>.md``; pass ``--out`` to
 write elsewhere or ``-`` for stdout.
@@ -25,7 +27,7 @@ from pathlib import Path
 import click
 
 from contentops.devex.conformance import load_config, run_conformance
-from contentops.state import load_state
+from contentops.state import EnvState, load_state, state_path
 from contentops.status import render_configuration, render_deployments
 
 _DEFAULT_CONFIGURATION_OUT = Path("docs/status/configuration.md")
@@ -42,6 +44,32 @@ def _write(rendered: str, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered, encoding="utf-8")
     click.echo(f"wrote {out}", err=True)
+
+
+def _load_status_state(env: str | None) -> EnvState:
+    """Load the state file the deployments page should read.
+
+    An explicit ``--env`` always wins. Without it, default to the
+    tenant env (tenant.yml's ``name``) -- the same default
+    ``contentops state sync pull`` / ``apply`` use, so the page reads
+    the file those commands actually write (``state/<env>/state.json``).
+    Before this default, a flag-less run read ``state/state.json``,
+    which nothing writes, and every asset rendered as unmanaged.
+
+    When the env-scoped file is absent but the legacy env-less
+    ``state/state.json`` exists (an old local clone), fall back to it
+    so local behaviour is unchanged.
+    """
+    if env:
+        return load_state(env)
+    from contentops.cli.commands.state import _state_env_default
+
+    default_env = _state_env_default()
+    if default_env and (
+        state_path(env=default_env).is_file() or not state_path().is_file()
+    ):
+        return load_state(default_env)
+    return load_state(None)
 
 
 @click.group("status")
@@ -107,7 +135,11 @@ def status_configuration_cmd(
 @click.option(
     "--env",
     default=None,
-    help="State env (loads state/<env>/state.json); default loads state/state.json.",
+    help=(
+        "State env (loads state/<env>/state.json). Defaults to "
+        "tenant.yml's name, like `state sync`; falls back to "
+        "state/state.json when no tenant.yml is present."
+    ),
 )
 @click.option(
     "--failures-only",
@@ -132,7 +164,7 @@ def status_deployments_cmd(
     out: Path,
 ) -> None:
     """Render deployment status to docs/status/deployments.md."""
-    state = load_state(env)
+    state = _load_status_state(env)
     rendered = render_deployments(
         detections_root=detections_root,
         state=state,
@@ -151,7 +183,7 @@ def status_deployments_cmd(
 @click.option(
     "--env",
     default=None,
-    help="State env for the deployments page.",
+    help="State env for the deployments page (defaults to tenant.yml's name).",
 )
 @click.option(
     "--failures-only",

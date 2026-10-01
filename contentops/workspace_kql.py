@@ -10,7 +10,7 @@ Returns parsed rows (list of dicts keyed by column name). Used by:
 
 * F4 `contentops silent-rules` — counts SecurityAlert / SecurityIncident
   per rule.
-* F20 `pipeline portfolio --with-telemetry` — populates fire-rate /
+* F20 `contentops portfolio --with-telemetry` — populates fire-rate /
   FP-rate / cost columns.
 
 Pure: takes an HTTP-runner callable so tests can mock without
@@ -132,8 +132,16 @@ def query(
 def silent_rules_query(*, since_days: int = 30) -> str:
     """Return the canonical KQL that powers `contentops silent-rules`.
 
-    For every rule's displayName, count SecurityAlert + SecurityIncident
-    rows in the window. Rules with zero rows are "silent".
+    For every rule's displayName, count SecurityAlert rows and
+    SecurityIncident incidents in the window. Rules with zero rows are
+    "silent".
+
+    SecurityIncident logs one row per incident UPDATE (assign, comment,
+    close), so incidents are first deduped to their latest row per
+    ``IncidentNumber`` -- the same ``arg_max`` pattern as
+    ``_security_alerts_joined_base``. Counting raw rows inflated
+    ``incidents_30d`` and let ``closed_fp_30d`` reflect intermediate
+    states, skewing the FP-rate gate and portfolio telemetry.
     """
     return f"""
 let window = {since_days}d;
@@ -142,6 +150,7 @@ let alerts = SecurityAlert
 | summarize alerts_30d = count() by AlertName;
 let incidents = SecurityIncident
 | where TimeGenerated > ago(window)
+| summarize arg_max(TimeGenerated, *) by IncidentNumber
 | summarize incidents_30d = count(),
             closed_fp_30d = countif(Classification == "FalsePositive")
             by Title;
@@ -181,6 +190,10 @@ def suppression_impact_query(*, rule_names: list[str], since_days: int = 30) -> 
     fields), so the caller must resolve each suppression's envelope
     id → displayName before invoking this.
 
+    Incidents are deduped to one row per ``IncidentNumber`` first
+    (SecurityIncident logs a row per update), as in
+    :func:`silent_rules_query`.
+
     Returns one row per rule_name with two count columns. Rules that
     fired zero times will not appear (left as a gap that the renderer
     fills with 0 / 0).
@@ -213,6 +226,7 @@ let alerts = SecurityAlert
 let incidents = SecurityIncident
 | where TimeGenerated > ago(window)
 | where Title in (names)
+| summarize arg_max(TimeGenerated, *) by IncidentNumber
 | summarize incidents_count = count() by rule_name = Title;
 alerts
 | join kind=fullouter (incidents) on rule_name

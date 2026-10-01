@@ -47,6 +47,7 @@ single source of truth for "what's automatable."
 | `contentops lifecycle promote` | _none — purely local_ | n/a | Promote `experimental` → `production` after gates pass. |
 | `contentops state sync` (push/pull/status) | _called from workflows that need state_ | n/a | Orphan-branch `refs/heads/state/<env>` convention. |
 | `contentops state show` / `state forget` | _none — purely local_ | n/a | State file inspection / surgical drop. |
+| `contentops state adopt` | `state-adopt.yml` | manual | Records rules already in sync with the tenant as managed (`status: adopted`); read-only against Azure. Dispatch defaults to dry-run; a real run pushes `refs/heads/state/<env>`. |
 | `contentops defender-extensions-probe` | `defender-graph-probe.yml` | weekly Tue 06:00 UTC + manual | Secondary-signal probe of three Defender Graph endpoints (savedQueries / detection-tuning / alert-suppression). Exits 2 (workflow red) when an endpoint GAs. |
 | `contentops defender-roundtrip-diff` | _none — purely local_ | n/a | Diagnostic for `verified=False` on a Defender rule. Read-only. |
 | `contentops sentinel-roundtrip-diff` | _none — purely local_ | n/a | Sentinel counterpart to `defender-roundtrip-diff`. |

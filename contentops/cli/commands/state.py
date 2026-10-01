@@ -104,6 +104,196 @@ def state_forget_cmd(envelope_id: str, asset: str, env_name: str | None) -> None
     click.echo(f"forgot {asset}/{envelope_id} from state (env={state.env})")
 
 
+@state_group.command("adopt")
+@click.option(
+    "--path", "detections_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("detections"),
+    help="Root detections directory compared against the live tenant.",
+)
+@click.option(
+    "--asset",
+    type=click.Choice([a.value for a in Asset]),
+    default=None,
+    help="Restrict adoption to one asset kind.",
+)
+@click.option(
+    "--role",
+    type=click.Choice(["prod", "integration", "dev", "test"]),
+    default=None,
+    help="Target the Sentinel workspace with this role. Mutex with "
+         "--workspace. Multi-workspace tenants must pass one of --role / "
+         "--workspace; adopt reads one workspace per run.",
+)
+@click.option(
+    "--workspace", "workspace_name",
+    default=None,
+    help="Target the Sentinel workspace with this exact workspaceName. "
+         "Mutex with --role.",
+)
+@click.option(
+    "--env", "env_name", default=None,
+    help="Tenant env slug for the state file. Defaults to tenant.yml's name.",
+)
+@click.option(
+    "--dry-run", is_flag=True, default=False,
+    help="Print what would be adopted; write nothing.",
+)
+@click.option(
+    "--refresh", is_flag=True, default=False,
+    help="Re-record assets that are already managed (default: skip them).",
+)
+@click.option(
+    "--push", "push_state", is_flag=True, default=False,
+    help="After saving, push the state file like `state sync push`.",
+)
+def state_adopt_cmd(
+    detections_path: Path,
+    asset: str | None,
+    role: str | None,
+    workspace_name: str | None,
+    env_name: str | None,
+    dry_run: bool,
+    refresh: bool,
+    push_state: bool,
+) -> None:
+    """Mark assets already in sync with the live tenant as managed.
+
+    Runs the same read-only comparison as `contentops drift`, then
+    records every IN-SYNC asset in the per-env state file with
+    status=adopted. Use it on a tenant whose content was deployed
+    before ContentOps tracked state, instead of a full redeploy.
+
+    Never writes to Azure. Writes only state/<env>/state.json (and,
+    with --push, the state/<env> branch). Assets that differ from the
+    tenant (changed / new) are listed but never adopted. Any remote
+    listing error aborts before state is touched.
+    """
+    from contentops.audit import _resolve_sha
+    from contentops.cli.commands._shared import (
+        _apply_log_levels,
+        _collect_drift_handlers,
+        _resolve_single_workspace_or_exit,
+        _skip_if_integration_role_absent,
+    )
+    from contentops.cli.handler_factories import register_default_handlers
+    from contentops.core.discovery import load_asset
+    from contentops.core.drift import detect_drift
+    from contentops.core.registry import default_registry
+    from contentops.state import load_state, save_state
+
+    _apply_log_levels()
+    env_name = env_name or _state_env_default()
+    if not env_name:
+        click.echo("error: no env (pass --env or set tenant.yml's name)", err=True)
+        sys.exit(2)
+    if _skip_if_integration_role_absent(role, workspace_name, command="state adopt"):
+        return
+    _resolve_single_workspace_or_exit(role, workspace_name)
+    register_default_handlers()
+    target_asset = Asset(asset) if asset else None
+
+    handlers = _collect_drift_handlers(target_asset)
+    if not handlers:
+        click.echo("No drift-capable handlers registered; nothing to adopt.")
+        return
+
+    try:
+        report = detect_drift(handlers, detections_path)
+    finally:
+        default_registry.close_all()
+
+    if report.has_errors():
+        for entry in report.errors:
+            click.echo(
+                f"  ERROR    {entry.asset.value:30} (could not list remote: {entry.error})",
+                err=True,
+            )
+        click.echo(
+            f"error: {len(report.errors)} asset kind(s) could not be compared "
+            "with the tenant; state was not changed.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Resolve every IN-SYNC entry to its LOCAL envelope. DriftEntry.asset_id
+    # is derived from the remote (displayName slug), which differs from the
+    # local id after a rename or slug disambiguation; state is keyed by the
+    # local id because that is what apply / prune / status look up.
+    candidates: dict[tuple[str, str], str] = {}
+    load_errors: list[str] = []
+    for entry in report.in_sync:
+        if entry.local_path is None:
+            load_errors.append(f"{entry.asset.value}/{entry.asset_id}: no local path")
+            continue
+        try:
+            envelope = load_asset(entry.local_path).envelope
+        except Exception as exc:  # noqa: BLE001 - reported, aborts below
+            load_errors.append(f"{entry.local_path}: {exc}")
+            continue
+        key = (envelope.asset.value, envelope.id)
+        candidates[key] = str(envelope.arm_name or "")
+    if load_errors:
+        for line in load_errors:
+            click.echo(f"  ERROR    could not reload {line}", err=True)
+        click.echo(
+            f"error: {len(load_errors)} in-sync asset(s) could not be "
+            "reloaded; state was not changed.",
+            err=True,
+        )
+        sys.exit(1)
+
+    state = load_state(env=env_name)
+    # save_state() derives the path from state.env; pin it to the env we
+    # loaded from so the write lands in the same state/<env>/state.json.
+    state.env = env_name
+    sha = _resolve_sha(Path.cwd())
+    adopted: list[tuple[str, str]] = []
+    already: list[tuple[str, str]] = []
+    for (kind, envelope_id), remote_id in sorted(candidates.items()):
+        if state.is_managed(kind, envelope_id) and not refresh:
+            already.append((kind, envelope_id))
+            continue
+        adopted.append((kind, envelope_id))
+        if not dry_run:
+            # remember() only -- NOT merge_apply_results(): adoption is not
+            # an apply, so last_apply_sha / last_apply_at stay truthful.
+            state.remember(
+                kind, envelope_id,
+                remote_id=remote_id, sha=sha, status="adopted",
+            )
+
+    differs = report.changed + report.new
+    verb = "would adopt" if dry_run else "adopted"
+    for kind, envelope_id in adopted:
+        click.echo(f"  ADOPT    {kind:30} {envelope_id}")
+    for kind, envelope_id in already:
+        click.echo(f"  MANAGED  {kind:30} {envelope_id}  (already managed; --refresh to re-record)")
+    for entry in differs:
+        label = "CHANGED" if entry.kind == "changed" else "NEW"
+        where = f"  ({entry.local_path})" if entry.local_path else ""
+        click.echo(
+            f"  SKIP     {entry.asset.value:30} {entry.asset_id}  "
+            f"not adopted (differs from tenant: {label}){where}"
+        )
+
+    click.echo(
+        f"\nAdopt summary (env={env_name}) - {verb}: {len(adopted)}, "
+        f"already managed: {len(already)}, "
+        f"not adopted (differs): {len(differs)} "
+        f"(changed: {len(report.changed)}, new: {len(report.new)}), "
+        f"errors: 0"
+    )
+
+    if dry_run:
+        click.echo("[dry-run] state file not written.")
+        return
+    path = save_state(state)
+    click.echo(f"wrote {path}")
+    if push_state:
+        _push_state_or_exit(env_name, remote="origin", no_push=False)
+
+
 @state_group.group("sync")
 def state_sync_group() -> None:
     """Push / pull / status against the orphan-branch state convention.
@@ -121,22 +311,18 @@ def _state_env_default() -> str:
         return ""
 
 
-@state_sync_group.command("push")
-@click.option("--env", "env_name", default=None,
-              help="Tenant env slug (defaults to tenant.yml's name).")
-@click.option("--remote", default="origin",
-              help="Git remote (default: origin).")
-@click.option("--no-push", is_flag=True, default=False,
-              help="Update the local ref but skip the network push (CI debugging).")
-def state_sync_push(env_name: str | None, remote: str, no_push: bool) -> None:
-    """Push state/state.json onto refs/heads/state/<env> (orphan)."""
+def _push_state_or_exit(env_name: str, *, remote: str, no_push: bool) -> None:
+    """Push state/<env>/state.json onto refs/heads/state/<env>.
+
+    Shared by ``state sync push`` and ``state adopt --push`` so both
+    take the same code path. Exits 1 when the push fails -- including
+    a failed network push, which used to print ``pushed_remote=False``
+    and exit 0, so a CI step reported success while the durable state
+    never moved.
+    """
     from contentops.state import state_path
     from contentops.state_sync import StateSyncError, push as _push
 
-    env_name = env_name or _state_env_default()
-    if not env_name:
-        click.echo("error: no env (pass --env or set tenant.yml's name)", err=True)
-        sys.exit(2)
     state_file = state_path(env=env_name)
     try:
         result = _push(
@@ -152,6 +338,29 @@ def state_sync_push(env_name: str | None, remote: str, no_push: bool) -> None:
     )
     if result.detail:
         click.echo(f"  {result.detail}")
+    if not no_push and not result.pushed_remote:
+        click.echo(
+            "error: the remote push failed; the local ref was updated but "
+            f"{remote} still has the previous state.",
+            err=True,
+        )
+        sys.exit(1)
+
+
+@state_sync_group.command("push")
+@click.option("--env", "env_name", default=None,
+              help="Tenant env slug (defaults to tenant.yml's name).")
+@click.option("--remote", default="origin",
+              help="Git remote (default: origin).")
+@click.option("--no-push", is_flag=True, default=False,
+              help="Update the local ref but skip the network push (CI debugging).")
+def state_sync_push(env_name: str | None, remote: str, no_push: bool) -> None:
+    """Push state/<env>/state.json onto refs/heads/state/<env> (orphan)."""
+    env_name = env_name or _state_env_default()
+    if not env_name:
+        click.echo("error: no env (pass --env or set tenant.yml's name)", err=True)
+        sys.exit(2)
+    _push_state_or_exit(env_name, remote=remote, no_push=no_push)
 
 
 @state_sync_group.command("pull")
@@ -162,7 +371,7 @@ def state_sync_push(env_name: str | None, remote: str, no_push: bool) -> None:
 @click.option("--no-fetch", is_flag=True, default=False,
               help="Don't run `git fetch` first (rely on existing local ref).")
 def state_sync_pull(env_name: str | None, remote: str, no_fetch: bool) -> None:
-    """Pull refs/heads/state/<env> into state/state.json."""
+    """Pull refs/heads/state/<env> into state/<env>/state.json."""
     from contentops.state import state_path
     from contentops.state_sync import StateSyncError, pull as _pull
 

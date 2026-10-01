@@ -134,6 +134,32 @@ def test_silent_rules_query_includes_window() -> None:
     assert "closed_fp_30d" in kql
 
 
+def _incidents_let(kql: str) -> str:
+    """The ``let incidents = ...;`` statement of a query."""
+    start = kql.index("let incidents = SecurityIncident")
+    return kql[start:kql.index(";", start)]
+
+
+def test_silent_rules_query_dedupes_incidents_before_counting() -> None:
+    """SecurityIncident logs one row per incident update. Counting raw
+    rows inflated incidents_30d (the FP-rate denominator) and counted a
+    FalsePositive incident once per update. Dedupe to the latest row per
+    IncidentNumber BEFORE the counts."""
+    incidents = _incidents_let(silent_rules_query(since_days=30))
+    dedupe = incidents.find("summarize arg_max(TimeGenerated, *) by IncidentNumber")
+    counts = incidents.find("incidents_30d = count()")
+    fp = incidents.find('countif(Classification == "FalsePositive")')
+    assert dedupe != -1, incidents
+    assert -1 < dedupe < counts < fp, incidents
+
+
+def test_suppression_impact_query_dedupes_incidents_before_counting() -> None:
+    from contentops.workspace_kql import suppression_impact_query
+    incidents = _incidents_let(suppression_impact_query(rule_names=["X"]))
+    dedupe = incidents.find("summarize arg_max(TimeGenerated, *) by IncidentNumber")
+    assert -1 < dedupe < incidents.find("incidents_count = count()"), incidents
+
+
 def test_telemetry_query_matches_silent_rules_query() -> None:
     """F4 and F20 deliberately share one KQL — keeps the LA round-trip
     consistent and lets one fetch power both views."""

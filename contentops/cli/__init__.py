@@ -4,7 +4,7 @@
 """V2 CLI package.
 
 Re-exports the root Click `cli` group (defined in `contentops.cli.root`)
-so the entry point `pipeline = contentops.cli:cli` keeps working, and
+so the entry point `contentops = contentops.cli:cli` keeps working, and
 attaches the v2 commands (`plan`, `apply`, …) to that same group.
 
 Import order:

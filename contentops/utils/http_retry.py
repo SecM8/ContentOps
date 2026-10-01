@@ -39,6 +39,19 @@ RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     httpx.RemoteProtocolError,   # server closed mid-response / framing error
 )
 
+# Retry policy for NON-idempotent calls (a Graph POST that creates a rule).
+# A 5xx or a read timeout does not prove the server dropped the request: Graph
+# may have committed the create before the gateway gave up, so a blind retry
+# creates a second rule. Only faults that guarantee the request was never
+# processed are retried: 429 (throttled before processing) and failures to
+# establish the connection at all.
+NON_IDEMPOTENT_RETRYABLE_STATUS = frozenset({429})
+NON_IDEMPOTENT_RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+)
+
 # Belt-and-braces upper bound for pagination loops. Real ARM/Graph
 # tenants top out well below this; anything higher is almost certainly
 # a broken nextLink cycle.
@@ -78,6 +91,8 @@ def request_with_retry(
     max_retries: int = 3,
     sleep: Callable[[float], None] = time.sleep,
     label: str = "request",
+    retry_status: frozenset[int] = RETRYABLE_STATUS,
+    retry_exceptions: tuple[type[Exception], ...] = RETRYABLE_EXCEPTIONS,
 ) -> httpx.Response:
     """Issue ``do_request()`` and retry up to ``max_retries`` times on transient status.
 
@@ -89,12 +104,17 @@ def request_with_retry(
     a server that explicitly asks for a longer wait wins, but we never
     retry faster than the exponential default. Transport faults have no
     ``Retry-After``, so they use the exponential backoff alone.
+
+    ``retry_status`` / ``retry_exceptions`` narrow the policy for
+    non-idempotent calls: pass ``NON_IDEMPOTENT_RETRYABLE_STATUS`` /
+    ``NON_IDEMPOTENT_RETRYABLE_EXCEPTIONS`` so a POST is never replayed
+    after a fault the server may already have acted on.
     """
     attempts = 0
     while True:
         try:
             response = do_request()
-        except RETRYABLE_EXCEPTIONS as exc:
+        except retry_exceptions as exc:
             if attempts >= max_retries:
                 raise
             attempts += 1
@@ -105,7 +125,7 @@ def request_with_retry(
             )
             sleep(wait)
             continue
-        if response.status_code in RETRYABLE_STATUS and attempts < max_retries:
+        if response.status_code in retry_status and attempts < max_retries:
             attempts += 1
             header_wait = parse_retry_after(response)
             backoff = 2 ** attempts

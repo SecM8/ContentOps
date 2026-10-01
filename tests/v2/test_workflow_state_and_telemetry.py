@@ -76,3 +76,65 @@ def test_silent_rules_workflow_is_scheduled_read_only_and_uploads_reports() -> N
     assert "--format csv" in text
     assert "--format json" in text
     assert "actions/upload-artifact@" in text
+
+
+WORKFLOWS = ROOT / ".github" / "workflows"
+_STATE_PUSHERS = (
+    "deploy.yml",
+    "prune.yml",
+    "retry-failed.yml",
+    "rollback.yml",
+)
+
+
+def test_integration_lane_does_not_push_shared_state() -> None:
+    """State is keyed by tenant name, not role: an integration apply
+    pushing state would mark integration-only rules managed in prod."""
+    text = (WORKFLOWS / "promote-to-integration.yml").read_text(encoding="utf-8")
+    assert "contentops state sync push" not in text
+
+
+def test_state_push_gates_on_env_scoped_state_file() -> None:
+    """`state sync push` reads state/<env>/state.json. The old gate tested
+    the env-less state/state.json, which nothing writes, so every push
+    was skipped and the durable state branch never moved."""
+    for name in _STATE_PUSHERS:
+        text = (WORKFLOWS / name).read_text(encoding="utf-8")
+        assert "contentops state sync push" in text, name
+        assert "[ -f state/state.json ]" not in text, name
+        assert 'compgen -G "state/*/state.json"' in text, name
+
+
+def test_status_refresh_pulls_state_before_rendering() -> None:
+    path = WORKFLOWS / "status-refresh.yml"
+    steps = _load(path)["jobs"]["refresh"]["steps"]
+    names = [step.get("name", "") for step in steps]
+    assert "Pull durable state" in names
+    pull = names.index("Pull durable state")
+    render = next(i for i, n in enumerate(names) if n.startswith("Regenerate status pages"))
+    assert pull < render
+    assert "contentops state sync pull" in steps[pull]["run"]
+
+
+def test_state_adopt_workflow_is_manual_and_dry_run_by_default() -> None:
+    path = WORKFLOWS / "state-adopt.yml"
+    wf = _load(path)
+    triggers = _triggers(wf)
+    assert set(triggers) == {"workflow_dispatch"}
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert inputs["dry_run"]["default"] is True
+    assert inputs["role"]["default"] == "prod"
+    assert wf["permissions"] == {"id-token": "write", "contents": "write"}
+
+    job = wf["jobs"]["adopt"]
+    assert job["environment"] == "automation"
+    steps = job["steps"]
+    uses = [s.get("uses", "") for s in steps]
+    assert "./.github/actions/pipeline-setup" in uses
+    runs = "\n".join(s.get("run", "") for s in steps)
+    assert runs.index("contentops state sync pull") < runs.index("contentops state adopt")
+    assert runs.index("contentops state adopt") < runs.index("contentops state sync push")
+    # Free-text inputs reach the shell through env vars only.
+    assert "${{" not in runs
+    push_step = next(s for s in steps if "state sync push" in s.get("run", ""))
+    assert "inputs.dry_run == false" in push_step["if"]

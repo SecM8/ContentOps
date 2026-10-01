@@ -51,7 +51,7 @@ def undeployed_rules_cmd(
     applied-state file. Run ``contentops state sync pull`` first so the
     state is present (without it every rule looks undeployed).
     """
-    from contentops.state import load_state
+    from contentops.cli.commands.status import _load_status_state
     from contentops.undeployed import (
         find_undeployed, render_json, render_markdown,
     )
@@ -60,7 +60,8 @@ def undeployed_rules_cmd(
         click.echo(f"error: {detections_path} is not a directory", err=True)
         sys.exit(2)
 
-    state = load_state(env)
+    # Same default as the status page: the tenant env's state file.
+    state = _load_status_state(env)
     report = find_undeployed(detections_path, state)
     rendered = (
         render_json(report) if output_format == "json"

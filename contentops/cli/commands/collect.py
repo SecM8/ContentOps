@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""``contentops collect`` and ``pipeline clean`` commands.
+"""``contentops collect`` and ``contentops clean`` commands.
 
 Orchestration only — the mechanics (workspace resolution, the parallel
 ``list_remote`` fan-out, drift classification, summary bucketing, the
@@ -11,6 +11,7 @@ enrich/rename/clean/since helpers) live in :mod:`collect_support`, which
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -112,10 +113,12 @@ from contentops.core.drift import write_drift
 )
 @click.option(
     "--clear/--no-clear", default=False,
-    help="Delete local detection YAMLs (equivalent to `pipeline clean "
-         "--yes`) before collecting. Use for a true 'refresh from tenant' "
-         "snapshot - without this flag, collect is additive (writes new "
-         "or changed envelopes alongside existing files). Default off.",
+    help="Delete local detection YAMLs (equivalent to `contentops clean "
+         "--yes`) before writing the collected ones. Use for a true "
+         "'refresh from tenant' snapshot - without this flag, collect is "
+         "additive (writes new or changed envelopes alongside existing "
+         "files). Only kinds whose listing succeeded are cleared. "
+         "Default off.",
 )
 @click.option(
     "--enrich/--no-enrich", default=False,
@@ -157,6 +160,8 @@ def collect_cmd(
       without a remote timestamp ignore the flag.
     - The roundtrip contract is enforced by tests:
       collect -> drift returns no NEW or CHANGED entries.
+    - Exits 2 when any asset kind fails to list (as `contentops drift`
+      does); kinds that listed are still written.
     """
     _apply_log_levels()
 
@@ -184,22 +189,6 @@ def collect_cmd(
         },
     )
 
-    # --clear: empty local detections before collecting. Equivalent
-    # to running `contentops clean --yes` ahead of the collect — single
-    # command for the refresh-from-tenant use case.
-    if clear:
-        deleted, dirs_removed = _clean_local_detections(
-            detections_path, asset_kinds=None,
-        )
-        click.echo(
-            f"  [--clear] removed {deleted} YAML file(s) across "
-            f"{len(dirs_removed)} director{'y' if len(dirs_removed) == 1 else 'ies'}"
-        )
-
-    if rename_existing:
-        renamed = _rename_existing_to_slug(detections_path)
-        click.echo(f"  (--rename-existing: {len(renamed)} file(s) renamed)")
-
     drift_handlers = _collect_drift_handlers(target_asset)
 
     if not drift_handlers:
@@ -212,6 +201,32 @@ def collect_cmd(
     handler_results, failed_kinds = _list_remote_parallel(
         drift_handlers, workers=workers,
     )
+
+    # --clear: empty local detections before writing (equivalent to
+    # `contentops clean --yes`). Runs AFTER listing and only for kinds
+    # that listed: clearing first let a 403 on one kind wipe that kind's
+    # files with nothing collected to replace them.
+    if clear:
+        listed = {
+            h.asset for h in drift_handlers if h.asset.value not in failed_kinds
+        }
+        deleted, dirs_removed = _clean_local_detections(
+            detections_path, asset_kinds=listed,
+        ) if listed else (0, [])
+        click.echo(
+            f"  [--clear] removed {deleted} YAML file(s) across "
+            f"{len(dirs_removed)} director{'y' if len(dirs_removed) == 1 else 'ies'}"
+        )
+        if failed_kinds:
+            click.echo(
+                f"  [--clear] kept local files for kind(s) that failed to "
+                f"list: {', '.join(sorted(failed_kinds))}"
+            )
+
+    if rename_existing:
+        renamed = _rename_existing_to_slug(detections_path)
+        click.echo(f"  (--rename-existing: {len(renamed)} file(s) renamed)")
+
     report = _classify_collected_drift(
         drift_handlers, handler_results, detections_path, since_dt=since_dt,
     )
@@ -236,6 +251,17 @@ def collect_cmd(
         click.echo(f"\nWrote {len(written)} file(s).")
     else:
         click.echo("\nNo new or changed assets — local YAML is already in sync.")
+
+    # A kind that failed to list is a failed collect, not an empty one —
+    # exit 2 like `contentops drift` so CI does not open a PR from a
+    # partial snapshot as if it were complete.
+    if failed_kinds:
+        click.echo(
+            f"\nerror: {len(failed_kinds)} asset kind(s) failed to list: "
+            f"{', '.join(sorted(failed_kinds))}",
+            err=True,
+        )
+        sys.exit(2)
 
 
 @click.command("clean")

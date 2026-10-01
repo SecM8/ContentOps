@@ -273,19 +273,16 @@ jobs:
           fi
 
       - name: Push integration state after apply
-        # Only push when we actually deployed. Dry-run apply doesn't
-        # write state/state.json; the file-existence check below
-        # short-circuits cleanly.
+        # Deliberately NOT pushed. State is keyed by tenant.yml's `name`,
+        # not by workspace role, so on a single-tenant.yml deployment an
+        # integration apply would land on the same refs/heads/state/<env>
+        # branch as prod and mark integration-only rules as managed in
+        # prod. Until state is keyed per role, the integration lane keeps
+        # its state local to the run. (The old `[ -f state/state.json ]`
+        # gate never matched either, so behaviour is unchanged.)
         if: ${{ github.event.inputs.apply-dry-run != 'true' }}
-        env:
-          PIPELINE_ENV: integration
         run: |
-          set -euo pipefail
-          if [ -f state/state.json ]; then
-            contentops state sync push
-          else
-            echo "::notice::No state/state.json written; skipping state sync push."
-          fi
+          echo "::notice::Integration state is not pushed (shared state branch with prod; see workflow comment)."
 
       - name: Upload audit JSONL artefact
         if: always()

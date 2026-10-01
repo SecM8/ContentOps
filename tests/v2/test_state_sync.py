@@ -181,3 +181,79 @@ def test_status_remote_missing_when_never_pushed(repo: Path) -> None:
     assert result.local_present is True
     assert result.remote_present is False
     assert result.in_sync is False
+
+
+# ---------------------------------------------------------------------------
+# CI-runner behaviour (no git identity, failed remote push)
+# ---------------------------------------------------------------------------
+
+
+def _bare_identity_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A repo with no user.name / user.email anywhere -- the shape of a
+    fresh GitHub-hosted runner checkout."""
+    import os
+
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(var, raising=False)
+    repo = tmp_path / "runner"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    return repo
+
+
+def test_push_works_without_git_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _bare_identity_repo(tmp_path, monkeypatch)
+    state_file = repo / "state" / "production" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text("{}", encoding="utf-8")
+
+    result = push("production", state_file, repo=repo, push_remote=False)
+
+    committer = _git(repo, "log", "-1", "--format=%cn <%ce>", result.commit_sha)
+    assert committer == (
+        "contentops-state <contentops-state@users.noreply.github.com>"
+    )
+
+
+def test_push_keeps_configured_identity(repo: Path) -> None:
+    state_file = repo / "state" / "production" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text("{}", encoding="utf-8")
+
+    result = push("production", state_file, repo=repo, push_remote=False)
+
+    assert _git(repo, "log", "-1", "--format=%ce", result.commit_sha) == (
+        "test@example.com"
+    )
+
+
+def test_cli_push_exits_non_zero_when_remote_push_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed network push used to print pushed_remote=False and exit 0,
+    so the CI step went green while the durable state never moved."""
+    from click.testing import CliRunner
+
+    from contentops.cli import cli
+
+    monkeypatch.chdir(repo)
+    state_file = repo / "state" / "production" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text("{}", encoding="utf-8")
+
+    # No `origin` remote in the fixture repo -> the push fails.
+    result = CliRunner().invoke(
+        cli, ["state", "sync", "push", "--env", "production"],
+    )
+    assert result.exit_code == 1, result.output
+    assert "remote push failed" in result.output
+
+    ok = CliRunner().invoke(
+        cli, ["state", "sync", "push", "--env", "production", "--no-push"],
+    )
+    assert ok.exit_code == 0, ok.output
