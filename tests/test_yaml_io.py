@@ -53,10 +53,20 @@ class TestToSentinelBody:
 
 
 class TestToDefenderBody:
-    def test_passthrough(self) -> None:
+    def test_legacy_isenabled_becomes_status(self) -> None:
         payload = {"displayName": "Test", "isEnabled": True}
         body = to_defender_body(payload)
-        assert body is payload
+        assert body == {"displayName": "Test", "status": "enabled"}
+        # The authored payload is not mutated.
+        assert payload == {"displayName": "Test", "isEnabled": True}
+
+    def test_deprecated_sends_disabled(self) -> None:
+        body = to_defender_body({"displayName": "T", "status": "enabled"}, deprecated=True)
+        assert body["status"] == "disabled"
+
+    def test_auto_disabled_is_not_sent(self) -> None:
+        body = to_defender_body({"displayName": "T", "status": "autoDisabled"})
+        assert "status" not in body
 
 
 class TestIsTemplatePath:

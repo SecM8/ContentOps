@@ -76,7 +76,7 @@ class TestDeployDefenderRule:
         )
         assert result["result"] == "success"
         assert result["action"] == "updated"
-        mock_client.update_rule.assert_called_once_with("42", {"displayName": "Existing Rule", "isEnabled": True})
+        mock_client.update_rule.assert_called_once_with("42", {"displayName": "Existing Rule", "status": "enabled"})
 
     def test_deprecated_disables(self) -> None:
         mock_response = MagicMock()
@@ -91,8 +91,9 @@ class TestDeployDefenderRule:
             status="deprecated",
             name_map={"Old Rule": "42"},
         )
-        # Verify isEnabled was set to False
+        # Deprecated is sent as status: disabled; the removed isEnabled is never sent
         call_args = mock_client.update_rule.call_args
         body = call_args[0][1]
-        assert body["isEnabled"] is False
+        assert body["status"] == "disabled"
+        assert "isEnabled" not in body
         assert result["action"] == "disabled"

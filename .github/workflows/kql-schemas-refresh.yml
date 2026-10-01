@@ -31,9 +31,11 @@ concurrency:
 
 jobs:
   refresh:
-    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # Public-mirror gate: scheduled runs only fire on the operator repo,
+    # or on a deployment that opts in with the repo variable
+    # CONTENTOPS_SCHEDULES=true (docs/operations/github-actions-setup.md §6).
     # See drift.yml for the full rationale.
-    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: automation
@@ -94,6 +96,27 @@ jobs:
             tools/kql_strict/schemas_defender.json
             docs/whats-new/**
           token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Close superseded kql-schemas PRs
+        # Only after a fresh PR exists, so there is never a window with
+        # no open PR. Mirrors drift.yml's supersede-close; matching is
+        # by branch prefix so hand-made PRs are never touched.
+        if: steps.auto-pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NEW_PR: ${{ steps.auto-pr.outputs.pull-request-number }}
+          PREFIX: kql-schemas/auto-
+        run: |
+          set -euo pipefail
+          mapfile -t PRS < <(gh pr list --state open --limit 200 \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith(env.PREFIX))
+                      | select(.number != (env.NEW_PR | tonumber)) | .number')
+          for n in ${PRS[@]+"${PRS[@]}"}; do
+            gh pr close "$n" --delete-branch \
+              --comment "Superseded by #${NEW_PR}." || true
+          done
 
       - name: Step summary
         if: always()

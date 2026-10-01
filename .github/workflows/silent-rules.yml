@@ -23,9 +23,11 @@ concurrency:
 
 jobs:
   silent-rules:
-    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # Public-mirror gate: scheduled runs only fire on the operator repo,
+    # or on a deployment that opts in with the repo variable
+    # CONTENTOPS_SCHEDULES=true (docs/operations/github-actions-setup.md §6).
     # See drift.yml for the full rationale.
-    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: automation

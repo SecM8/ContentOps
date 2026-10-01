@@ -70,7 +70,7 @@ dataclass definition in
 |---|---|
 | `create` | Apply produced a remote PUT/POST that the handler classifies as a creation. (Most handlers don't differentiate create vs update — they emit `update` as the canonical upsert label.) |
 | `update` | Apply produced an upsert PUT/PATCH. |
-| `disable` | Apply rewrote the asset with `enabled:false` / `isEnabled:false` (envelope `status: deprecated`). |
+| `disable` | Apply rewrote the asset with `enabled:false` (Sentinel) / `status: disabled` (Defender) (envelope `status: deprecated`). |
 | `skip` | Asset skipped: experimental, locked without `--force-overwrite`, read-only handler, prune of a singleton. |
 | `noop` | Validation/apply error (envelope didn't reach the wire). |
 | `delete` | Prune deleted the orphan. |

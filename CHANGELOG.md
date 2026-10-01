@@ -10,8 +10,63 @@ from the commit history.
 
 ## [Unreleased]
 
+### Changed
+
+- **Scheduled workflows are opt-in per deployment, not slug-edited.**
+  Eleven cron gates read `github.repository == 'KustoKing/SIEMContent'`,
+  so every deployment fork had to rewrite the slug in eleven workflow
+  files — and every upstream sync then conflicted on exactly those
+  lines. The gate now also passes when the repo variable
+  `CONTENTOPS_SCHEDULES` is `true`. Result: forks set one variable
+  (`gh variable set CONTENTOPS_SCHEDULES --body true`), take upstream's
+  workflow files verbatim, and syncs stop conflicting. Forks that leave
+  it unset (the public mirror included) stay silent on cron, so this is
+  a no-op for anyone who has not opted in. See
+  [`github-actions-setup.md` §6](docs/operations/github-actions-setup.md#6-scheduled-workflows--opt-in-with-contentops_schedules).
+- **Bot PRs supersede-close.** `kql-schemas-refresh.yml`, `collect.yml`
+  and `upstream-watchers.yml` now close their own older open PRs (matched
+  by branch prefix, branch deleted) right after the new one opens, the
+  way `drift.yml` already did. Result: one open PR per kind instead of
+  one per run — an untended fork had piled up 85 daily schema PRs.
+
 ### Fixed
 
+- **Defender custom detections: `status` and `description` (Graph removed
+  `isEnabled` on 2026-10-01).** Graph beta replaced `isEnabled` with a
+  `status` enum (`enabled` / `disabled` / `autoDisabled`) and added an
+  authorable `description`. Collect copied both into YAML and the strict
+  `DefenderPayload` rejected them, so every drift PR touching a Defender
+  rule failed with `Extra inputs are not permitted`. The model now accepts
+  both, apply sends `status` (never the removed `isEnabled`), deprecated
+  envelopes deploy as `status: disabled`, and `autoDisabled` is left
+  alone on apply so re-enabling stays a deliberate edit. Legacy
+  `isEnabled` YAML still validates and is translated on the way out;
+  `description` joins the verify hash only when authored, so older YAML
+  keeps verifying against rules with a portal description. Result: drift
+  PRs validate again and Defender deploys keep working past the API
+  change. Shared logic lives in `contentops/defender/rule_status.py`.
+- **Failure alerts filed on the wrong repo.** In a job that adds an
+  `upstream` git remote, `gh` resolves `upstream` first, so
+  `notify-workflow-failure` searched, labelled and opened its issue on
+  `SecM8/ContentOps` and failed with `could not add label:
+  'pipeline-alert' not found`. The action now pins
+  `GH_REPO: ${{ github.repository }}`, reports label errors as warnings
+  instead of discarding them, and retries the issue unlabelled rather
+  than losing the alert.
+- **`alerts sync --date <old date>` deleted its own export.** The
+  retention prune ran after the export and removed any explicitly
+  requested day older than `ledgerRetentionDays`. Requested dates are
+  now exempt from the prune in that run. The matching test used a
+  hard-coded date and started failing once that date aged out of the
+  window; it is now relative to today.
+- **`deploy.yml` post-deploy verify ran on dry runs.** The step compared
+  the boolean `inputs.dry_run` with the string `'true'`, which is always
+  unequal. It now uses `!inputs.dry_run`.
+- **`test_render_uses_repo_relative_paths` failed on real deployment
+  content.** It asserted that no `C:` appeared anywhere in a rendered
+  detection page, which trips on KQL such as
+  `@"C:\Program Files\..."`. It now checks only the `source` row, which
+  is what it is meant to guard.
 - **Defender custom detections: no-op unchanged rules instead of force-PATCHing.**
   `apply()` used to PATCH every existing Defender rule on every deploy. With no
   `state/` branch (the deployment-fork norm) that re-pushes all rules, and

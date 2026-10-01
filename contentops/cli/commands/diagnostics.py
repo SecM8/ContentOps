@@ -647,9 +647,8 @@ def defender_patch_probe_cmd(
         clone_reason = ""
         if send and replicate:
             stamp = time.strftime("%Y%m%d%H%M%S")
-            clone = copy.deepcopy(to_defender_body(local_body))
+            clone = copy.deepcopy(to_defender_body(local_body, deprecated=True))
             clone["displayName"] = f"ZZ-probe-clone-{stamp}"
-            clone["isEnabled"] = False
             # Defender also enforces a unique alertTemplate.title - rename it
             # too, otherwise a clone of an otherwise-valid rule collides (409)
             # with the real rule's alert title instead of telling us the

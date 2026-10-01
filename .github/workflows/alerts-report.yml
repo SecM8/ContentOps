@@ -36,9 +36,11 @@ concurrency:
 
 jobs:
   alerts-pipeline:
-    # Public-mirror gate: scheduled runs only fire on the operator repo.
+    # Public-mirror gate: scheduled runs only fire on the operator repo,
+    # or on a deployment that opts in with the repo variable
+    # CONTENTOPS_SCHEDULES=true (docs/operations/github-actions-setup.md §6).
     # See drift.yml for the full rationale.
-    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+    if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true'
     runs-on: ubuntu-latest
     # 30, not 15: a --backfill pull time-slices Graph alerts_v2 into many
     # small requests (~350 for a busy 30-day tenant) and Graph throttles the

@@ -286,7 +286,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **165** files, **1882** test functions. Integration: **11** files, **15** test functions.
+Unit: **166** files, **1897** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -298,7 +298,7 @@ Unit: **165** files, **1882** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_alerts_models.py` | 31 |
 | `tests/v2/test_alerts_provider_paging.py` | 9 |
 | `tests/v2/test_alerts_rollup.py` | 25 |
-| `tests/v2/test_alerts_sync.py` | 12 |
+| `tests/v2/test_alerts_sync.py` | 13 |
 | `tests/v2/test_analytic_kinds.py` | 27 |
 | `tests/v2/test_apply_continue_on_error.py` | 4 |
 | `tests/v2/test_apply_json_report.py` | 10 |
@@ -347,6 +347,7 @@ Unit: **165** files, **1882** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_defender_extensions_probe.py` | 9 |
 | `tests/v2/test_defender_patch_probe.py` | 5 |
 | `tests/v2/test_defender_roundtrip.py` | 10 |
+| `tests/v2/test_defender_rule_status.py` | 14 |
 | `tests/v2/test_dependencies.py` | 7 |
 | `tests/v2/test_detect_production_promotions.py` | 9 |
 | `tests/v2/test_detection_docs.py` | 10 |

@@ -249,12 +249,35 @@ class TestSyncOrchestration:
         watermark = tmp_path / "watermark.json"
         daily_dir = tmp_path / "daily"
 
-        provider = _mock_provider(alerts=[_raw_graph_alert()])
-        target = _date(2026, 5, 20)
+        # Relative to today: a hard-coded date ages past the 90-day
+        # retention window and the test starts failing on its own.
+        target = _date.today() - timedelta(days=2)
+        provider = _mock_provider(alerts=[_raw_graph_alert(
+            created=f"{target.isoformat()}T10:00:00Z",
+            resolved=f"{target.isoformat()}T12:00:00Z",
+        )])
         result = sync_alerts(
             provider, ledger, watermark, daily_dir=daily_dir,
             target_date=target, reexport_days=0, enrich=False,
         )
 
         assert result.days_exported == 1
-        assert (daily_dir / "2026-05-20.jsonl").is_file()
+        assert (daily_dir / f"{target.isoformat()}.jsonl").is_file()
+
+    def test_specific_old_date_survives_retention_prune(self, tmp_path: Path) -> None:
+        """``--date`` older than the retention window: the exported file
+        must not be pruned in the same run that wrote it."""
+        from datetime import date as _date
+
+        daily_dir = tmp_path / "daily"
+        target = _date.today() - timedelta(days=200)
+        provider = _mock_provider(alerts=[_raw_graph_alert(
+            created=f"{target.isoformat()}T10:00:00Z",
+            resolved=f"{target.isoformat()}T12:00:00Z",
+        )])
+        sync_alerts(
+            provider, tmp_path / "ledger.jsonl", tmp_path / "watermark.json",
+            daily_dir=daily_dir, target_date=target, reexport_days=0, enrich=False,
+        )
+
+        assert (daily_dir / f"{target.isoformat()}.jsonl").is_file()

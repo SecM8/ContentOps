@@ -35,6 +35,7 @@ Open the repo's `Settings → Secrets and variables → Actions → Variables ta
 |---|---|---|
 | `AZURE_CLIENT_ID` | The App Registration's "Application (client) ID" GUID | A client ID by itself authenticates nothing — it just identifies the app. Treating it as a secret leaks the wrong threat model and breaks `${{ vars.AZURE_CLIENT_ID }}` references in workflows. |
 | `AZURE_TENANT_ID` | The Entra tenant GUID | Same — tenant IDs are public discovery information. Treat as a Variable. |
+| `CONTENTOPS_SCHEDULES` *(deployment forks)* | `true` | Opts this repo in to scheduled (cron) runs. Unset = cron runs no-op, which is what the public mirror wants. Not sensitive — see [§6](#6-scheduled-workflows--opt-in-with-contentops_schedules). | Lives in repo settings, so an upstream sync never overwrites or conflicts on it — unlike editing the slug in eleven workflow files. |
 | `CONTENTOPS_ALERTS_PAGE_SIZE` *(optional)* | `alerts_v2` `$top` page size for `alerts-report.yml`. Default 500. **`999` is validated and recommended** for busy tenants: on a ~50k-alerts/30-day workspace it dropped the backfill from 357 time-slices to 181, eliminated the Graph 429 throttling, and returned the **identical** total (no data lost). Validate after changing — re-run and confirm the alert total is unchanged, since Graph may silently cap an over-large `$top` (which would drop data on a value too high). Not sensitive; it's a tuning knob, so a Variable. | A bigger page = fewer time-slices = less throttling; not a secret, and referenced as `${{ vars.CONTENTOPS_ALERTS_PAGE_SIZE }}`. |
 
 The workflows reference these as `${{ vars.AZURE_CLIENT_ID }}` and
@@ -183,42 +184,45 @@ Plus:
 - Require signed commits (recommended)
 - Require pull request before merging (1+ reviewer)
 
-## 6. Scheduled workflows — re-point the repo-slug gate
+## 6. Scheduled workflows — opt in with `CONTENTOPS_SCHEDULES`
 
-Eleven workflows gate their **cron runs** on the operator's repo slug
-so nightly automation never fires on the public code-only mirror:
+Eleven workflows gate their **cron runs** so nightly automation never
+fires on the public code-only mirror:
 
 ```yaml
-if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent'
+if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true'
 ```
 
-That gate also skips **your fork**: enable `drift.yml`, `collect.yml`,
-`conformance.yml`, etc. and the scheduled runs will queue, evaluate
-the gate, and silently no-op. (Manual `workflow_dispatch` runs are
-unaffected — which is why a workflow can "work when I click it" yet
-never fire on cron.)
+Out of the box that gate also skips **your fork**: enable
+`drift.yml`, `collect.yml`, `conformance.yml`, etc. and the scheduled
+runs will queue, evaluate the gate, and silently no-op. (Manual
+`workflow_dispatch` runs are unaffected — which is why a workflow can
+"work when I click it" yet never fire on cron.)
 
-One-time fix — replace the slug with your own repo across the
-workflow files:
+One-time fix — set one repo **variable**. No workflow edits:
 
 ```powershell
-# PowerShell, from the repo root
-Get-ChildItem .github/workflows/*.yml | ForEach-Object {
-  (Get-Content $_ -Raw) -replace 'KustoKing/SIEMContent', '<org>/<repo>' |
-    Set-Content $_ -NoNewline
-}
+# PowerShell or bash, from anywhere
+gh variable set CONTENTOPS_SCHEDULES --body true -R <org>/<repo>
 ```
+
+Or in the UI: *Settings → Secrets and variables → Actions → Variables
+tab → New repository variable*, name `CONTENTOPS_SCHEDULES`, value
+`true`.
+
+Why a variable and not an edit: the variable lives in repo settings,
+not in the workflow files, so an upstream sync never overwrites it and
+never conflicts on it. Forks that leave it unset (the public mirror,
+someone's scratch fork) stay silent on cron.
+
+**Already rewrote the slug by hand?** That still works. On your next
+upstream sync, take upstream's version of the workflow files and set
+the variable instead; the hand edits are what made every sync
+conflict. To confirm it is set:
 
 ```bash
-# bash / zsh
-grep -rl "KustoKing/SIEMContent" .github/workflows/ \
-  | xargs sed -i 's#KustoKing/SIEMContent#<org>/<repo>#g'
+gh variable list -R <org>/<repo>
 ```
-
-Commit with `--signoff` and push. **Re-apply after any upstream sync
-that overwrites workflow files** — the `-X theirs` stitch merge in
-[`upstream-sync.md` §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history)
-does exactly that.
 
 ## 7. Verification — does this work?
 
@@ -246,7 +250,7 @@ For the full picture (L1–L7), drop the `--scope` flag.
 | `Error: tenant-config-yaml input is empty and config/tenant.yml is missing.` | `TENANT_CONFIG_YAML` secret unset or set on the wrong repo | `Get-Content config\tenant.yml -Raw \| gh secret set TENANT_CONFIG_YAML --repo <org>/<repo>` |
 | `AADSTS700213` from azure/login step | Federated credential subject doesn't match the workflow's `environment:` value | Compare the GitHub Environment name, workflow yaml `environment:`, and federated credential `subject` — all three must match exactly. |
 | Workflow run says success but skipped everything | Workspace not configured (e.g. no `integration` workspace in `tenant.yml`) | This is graceful skip, not failure — see the workflow's step summary. |
-| Scheduled workflow never fires on your fork (manual dispatch works) | Cron runs are gated on the operator repo slug (`github.repository == 'KustoKing/SIEMContent'`) | Re-point the gate to your own `<org>/<repo>` — see [§6](#6-scheduled-workflows--re-point-the-repo-slug-gate). |
+| Scheduled workflow never fires on your fork (manual dispatch works) | Cron runs are gated to the operator repo unless the fork opts in | Set the repo variable `CONTENTOPS_SCHEDULES=true` — see [§6](#6-scheduled-workflows--opt-in-with-contentops_schedules). |
 | DCO check fails on an upstream-sync PR with commits you didn't author | Upstream mirror commits carry no `Signed-off-by`; an old `dco.yml` predates the mirror-author skip | Sync `dco.yml` from upstream (it skips mirror-authored commits). **Never** `git rebase --signoff` a sync branch — it destroys the stitch merge ([upstream-sync.md §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history)). |
 | `GitHub Actions is not permitted to create or approve pull requests` on `collect` / `drift` / other auto-PR workflows | Org (or repo) policy disables PR creation by the built-in `GITHUB_TOKEN` | Preferred: enable `Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"` (if greyed out at repo level, an org admin must enable it at org level first). If the policy is intentional: set the `AUTO_PR_TOKEN` secret (see [§2](#2-secrets)) — the workflows use it automatically. PAT caveats: orgs can hold new fine-grained PATs in a pending state until an admin approves them. PATs **expire** — an expired or revoked PAT is still a non-empty secret, so it does not fall back to `GITHUB_TOKEN`; the PR step fails with `HttpError: Bad credentials`. GitHub emails the token owner ~1 week before expiry. When that arrives: re-issue the PAT and `gh secret set AUTO_PR_TOKEN --repo <org>/<repo>`. To avoid this entirely, set expiration to "No expiration" when creating the fine-grained PAT (if your org policy allows it). A failed run may leave a half-pushed `collect/<run_id>`-style branch behind (the branch push succeeds, the PR creation doesn't) — delete it or ignore it. |
 | `dco` fails on a `collect` / `drift` (or other auto-PR) PR with "missing a Signed-off-by trailer" | A PAT-opened PR (via `AUTO_PR_TOKEN`) is authored by the PAT owner — a real account, not on the `dco.yml` bot bypass list — and the `auto-pr` action's commit needs a sign-off trailer | Fixed upstream: `auto-pr` now passes `signoff: true` to `create-pull-request`, so every automated commit carries the trailer. Make sure your fork has synced that change (`Select-String AUTO_PR_TOKEN .github/actions/auto-pr/action.yml` *and* `Select-String signoff .github/actions/auto-pr/action.yml`). The fix only matters once collect PRs trigger `pull_request` CI, which only happens on the PAT path. |

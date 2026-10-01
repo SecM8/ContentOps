@@ -233,7 +233,11 @@ jobs:
         # the (rare) case where a crash mid-batch left a chain break.
         #
         # ``dry-run`` deploys skip this — there's nothing to verify.
-        if: ${{ inputs.dry_run != 'true' }}
+        # ``inputs.dry_run`` is a real boolean (unlike the string-typed
+        # ``github.event.inputs.*`` used below), so comparing it with
+        # 'true' was always true and the step ran on dry runs too. On
+        # push events it is null, so ``!`` keeps the step on.
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           if [ ! -f apply-report.json ]; then

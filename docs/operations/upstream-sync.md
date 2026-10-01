@@ -27,6 +27,23 @@ git remote set-url --push upstream DISABLED
 git remote -v        # upstream (push) now shows DISABLED
 ```
 
+**Pin `gh` to your own repo** wherever an `upstream` remote exists.
+With two remotes, the GitHub CLI prefers the one named `upstream`, so
+`gh pr list`, `gh issue create`, `gh label create` silently target
+`SecM8/ContentOps` instead of your fork. Locally, run
+`gh repo set-default <org>/<repo>` once. In a workflow that adds the
+remote (e.g. a scheduled sync job), set it on every `gh` step:
+
+```yaml
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
+```
+
+Symptom when it's missing: `could not add label: 'pipeline-alert' not
+found` although the label exists in your repo — see
+[troubleshooting](../troubleshooting.md#could-not-add-label-pipeline-alert-not-found).
+
 What the mirror ships: the **tool, templates, samples, and docs**. What it
 never ships: the operator's real detection content, `config/tenant.yml`,
 `audit/`, or `state/` (an allowlist + a forbidden-paths safety check
@@ -177,10 +194,11 @@ git merge --signoff --allow-unrelated-histories -X theirs upstream/main
 
 - `--allow-unrelated-histories` permits the one-time join.
 - `-X theirs` resolves every conflicting path in upstream's favour.
-  **Afterwards, re-apply any fork-local edits it clobbered** — most
-  commonly the scheduled-workflow repo-slug gate
-  ([github-actions-setup.md §6](github-actions-setup.md#6-scheduled-workflows--re-point-the-repo-slug-gate))
-  — as a follow-up commit on the same branch.
+  **Afterwards, re-apply any fork-local edits it clobbered** as a
+  follow-up commit on the same branch. The scheduled-workflow gate is
+  no longer one of them: it is opt-in via the repo variable
+  `CONTENTOPS_SCHEDULES`, which lives in repo settings and survives
+  any merge ([github-actions-setup.md §6](github-actions-setup.md#6-scheduled-workflows--opt-in-with-contentops_schedules)).
 - `--signoff` signs the merge commit for the DCO gate.
 
 Push the branch (`git push -u origin chore/upstream-sync`) and open a

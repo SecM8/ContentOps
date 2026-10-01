@@ -24,6 +24,7 @@ import click
 from contentops.core.asset import Asset, COLLECT_BASELINE_VERSION
 from contentops.core.handler import LoadedAsset
 from contentops.core.result import ActionResult, PlanAction
+from contentops.defender import rule_status
 from contentops.defender.client import DefenderClient
 from contentops.defender.deploy import build_display_name_map, deploy_defender_rule
 from contentops.handlers._verify import compute_content_hash, hash_mismatch_error
@@ -202,11 +203,12 @@ class DefenderCustomDetectionHandler:
         # Build the body the same way deploy_defender_rule does so the
         # sent-hash matches what actually goes over the wire.
         assert client is not None
-        body = to_defender_body(loaded.payload)
-        if loaded.envelope.status == "deprecated":
-            body["isEnabled"] = False
+        body = to_defender_body(
+            loaded.payload, deprecated=loaded.envelope.status == "deprecated",
+        )
         display_name = body.get("displayName", "")
-        sent_hash = compute_content_hash(body, _HASHED_FIELDS)
+        hashed_fields = rule_status.hashed_fields(_HASHED_FIELDS, body)
+        sent_hash = compute_content_hash(body, hashed_fields)
 
         graph_id = name_map.get(display_name)
         if graph_id:
@@ -216,17 +218,20 @@ class DefenderCustomDetectionHandler:
             # (e.g. `invoke FileProfile()` rules that run fine but can no
             # longer be re-saved as-is). Compare with the SAME canonicalisation
             # the post-apply verification uses (``_strip_server_fields`` +
-            # ``_HASHED_FIELDS``). ``isEnabled`` is NOT in ``_HASHED_FIELDS``,
+            # ``_HASHED_FIELDS``). ``status`` is NOT in ``_HASHED_FIELDS``,
             # so an enable/disable flip (e.g. ``status: deprecated``) must NOT
-            # be skipped, so guard it explicitly.
-            desired_enabled = bool(body.get("isEnabled", True))
+            # be skipped, so guard it explicitly. A body without ``status``
+            # (``autoDisabled`` authored) leaves the remote state alone.
             existing = client.get_rule(graph_id)
             if (
                 existing is not None
                 and compute_content_hash(
-                    _strip_server_fields(existing), _HASHED_FIELDS
+                    _strip_server_fields(existing), hashed_fields
                 ) == sent_hash
-                and bool(existing.get("isEnabled", True)) == desired_enabled
+                and (
+                    "status" not in body
+                    or rule_status.rule_status(existing) == body["status"]
+                )
             ):
                 click.echo(f"  no-change: {loaded.envelope.id} (graph:{graph_id})")
                 return ActionResult(
@@ -304,7 +309,7 @@ class DefenderCustomDetectionHandler:
         # reports MISMATCH because schedule.nextRunDateTime moves between
         # PUT and the verifying GET. See `_strip_server_fields` for the
         # rationale.
-        got_hash = compute_content_hash(_strip_server_fields(remote), _HASHED_FIELDS)
+        got_hash = compute_content_hash(_strip_server_fields(remote), hashed_fields)
         if got_hash != sent_hash:
             err = hash_mismatch_error(sent_hash, got_hash)
             return ActionResult(
@@ -363,7 +368,12 @@ class DefenderCustomDetectionHandler:
         # fields like id/timestamps plus nested ones like
         # schedule.nextRunDateTime / queryCondition.lastModifiedDateTime).
         payload = _strip_server_fields(remote)
-        is_enabled = remote.get("isEnabled", True)
+        status = rule_status.rule_status(remote)
+        if "status" in payload:
+            # Graph still echoes the deprecated boolean during the
+            # transition; ``status`` carries the same information, so
+            # collected YAML stops writing the removed field.
+            payload.pop("isEnabled", None)
         graph_id = str(remote.get("id") or "")
         envelope_id = displayname_slug(display_name, fallback_id=graph_id)
         if not envelope_id:
@@ -372,7 +382,10 @@ class DefenderCustomDetectionHandler:
             "id": envelope_id,
             "version": COLLECT_BASELINE_VERSION,
             "asset": Asset.DEFENDER_CUSTOM_DETECTION.value,
-            "status": "production" if is_enabled else "deprecated",
+            # ``autoDisabled`` stays ``production``: Defender switched it
+            # off, not the author. The payload keeps ``status:
+            # autoDisabled`` so drift and the status report surface it.
+            "status": "deprecated" if status == "disabled" else "production",
             "metadata": {"arm_name": graph_id} if graph_id else {},
             "payload": payload,
         }

@@ -416,6 +416,44 @@ justification referencing where it's tested instead) OR add a
 
 ---
 
+### `Extra inputs are not permitted` on a Defender `status` / `description`
+
+**Looks like (in `plan` / validate, usually on an auto-drift PR):**
+
+```
+  my-defender-rule   defender_custom_detection   noop   error-validate   -
+2 validation errors for DefenderPayload
+status
+  Extra inputs are not permitted [type=extra_forbidden, input_value='enabled', input_type=str]
+description
+  Extra inputs are not permitted [type=extra_forbidden, input_value='', input_type=str]
+```
+
+**Why:** Microsoft Graph beta replaced the `isEnabled` boolean on
+custom detection rules with a `status` enum (`enabled` /
+`disabled` / `autoDisabled`) and added an authorable
+`description`; `isEnabled` was removed from the resource on
+2026-10-01. `collect` and the drift job copy whatever Graph returns
+into YAML, and older tool versions rejected the two new fields — so
+every drift PR that touched a Defender rule failed validation.
+
+**Fix:** sync the tool from upstream (the fix ships in the
+`DefenderPayload` model and the Defender handler). Nothing to change
+in the YAML: both shapes are accepted.
+
+```yaml
+payload:
+  displayName: My rule
+  description: Why this rule exists.   # optional, now authorable
+  status: enabled                      # enabled | disabled | autoDisabled
+```
+
+Legacy `isEnabled: true|false` still validates and is translated to
+`status` on apply; it is never sent to Graph. `status: autoDisabled`
+means Defender switched the rule off after repeated run failures —
+apply leaves that state alone, so re-enabling is a deliberate edit to
+`status: enabled`.
+
 ## Apply errors
 
 ### `apply` returned `400: Failed to run the analytics rule query. One of the tables does not exist.`
@@ -571,6 +609,57 @@ issue (e.g. login.microsoftonline.com sometimes redirects oddly),
 add the substring to the workflow's `--allow` list.
 
 ---
+
+### `could not add label: 'pipeline-alert' not found`
+
+**Looks like (in a scheduled run's "Notify" step):**
+
+```
+Opening new pipeline-alert issue.
+could not add label: 'pipeline-alert' not found
+Error: Process completed with exit code 1.
+```
+
+…while the label clearly exists under *Issues → Labels*.
+
+**Why:** the job added a git remote named `upstream` (the fork's
+upstream-sync does exactly that). With two remotes, `gh` prefers
+`upstream`, so the label lookup, the dedup search and the issue
+itself all went to `SecM8/ContentOps`, not your repo. The label
+create step swallowed its error, so the failure surfaced one step
+later with a misleading message.
+
+**Fix:** sync the tool from upstream —
+`.github/actions/notify-workflow-failure` now pins
+`GH_REPO: ${{ github.repository }}`, prints label errors as warnings,
+and retries the issue without the label rather than losing the alert.
+Any fork-local workflow that adds an `upstream` remote and calls `gh`
+needs the same `GH_REPO` env — see
+[`upstream-sync.md` → Remote topology](operations/upstream-sync.md#remote-topology).
+
+### Dozens of open `chore(kql-schemas)` / `chore(collect)` PRs
+
+**Looks like:** one bot PR per scheduled run, never closed, each a
+near-duplicate of the last.
+
+**Why:** older tool versions only closed superseded PRs for the drift
+job. `kql-schemas-refresh.yml`, `collect.yml` and
+`upstream-watchers.yml` opened a fresh PR every run and left the
+previous ones open.
+
+**Fix:** sync the tool from upstream. Each of those workflows now
+closes its own older PRs (matched by branch prefix, branch deleted)
+right **after** the new PR opens, so there is always exactly one.
+Hand-made PRs are never touched. To clear an existing backlog once,
+keep the newest of each kind and close the rest:
+
+```bash
+gh pr list --state open --limit 300 --json number,headRefName \
+  --jq '.[] | select(.headRefName | startswith("kql-schemas/auto-")) | .number' \
+  | tail -n +2 | xargs -I{} gh pr close {} --delete-branch --comment "Superseded (backlog cleanup)."
+```
+
+`gh pr list` returns newest first, so `tail -n +2` keeps the latest.
 
 ## Fork PR limitations
 

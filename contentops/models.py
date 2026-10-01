@@ -446,7 +446,12 @@ class DefenderPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     displayName: str
-    isEnabled: bool = True
+    description: str | None = None
+    # ``status`` replaced ``isEnabled`` in Graph beta (isEnabled removed
+    # 2026-10-01). Both are accepted; ``status`` wins when both are set.
+    # See contentops/defender/rule_status.py.
+    status: Literal["enabled", "disabled", "autoDisabled"] | None = None
+    isEnabled: bool | None = None
     queryCondition: DefenderQueryCondition
     schedule: DefenderSchedule
     detectionAction: DefenderDetectionAction

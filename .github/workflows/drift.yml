@@ -148,8 +148,10 @@ jobs:
     # still fails loudly on the first Azure step on the mirror, per
     # the public-sync.yml posture ("visible failure, no destructive
     # side-effect"). See the mirror's GH Issues 1-4 for the noise this
-    # closes off.
-    if: github.event_name != 'pull_request' && (github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent')
+    # closes off. A deployment fork opts in to scheduled runs with the
+    # repo variable CONTENTOPS_SCHEDULES=true instead of editing the
+    # slug (docs/operations/github-actions-setup.md §6).
+    if: github.event_name != 'pull_request' && (github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: automation

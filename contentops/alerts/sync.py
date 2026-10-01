@@ -399,7 +399,9 @@ def sync_alerts(
         except Exception as exc:
             logger.warning("Reconciliation failed: %s", exc)
 
-    pruned_files = prune_daily_files(daily_dir, retention_days)
+    pruned_files = prune_daily_files(
+        daily_dir, retention_days, keep=primary_dates if target_date else (),
+    )
     if pruned_files > 0:
         logger.info("Pruned %d daily files older than %d days", pruned_files, retention_days)
 

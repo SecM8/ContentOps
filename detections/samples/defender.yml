@@ -1,11 +1,12 @@
 id: defender-encoded-powershell-001
-version: "1.0.0"
+version: "1.0.1"
 platform: defender
 status: production
 
 defender:
   displayName: "Suspicious Encoded PowerShell Command"
-  isEnabled: true
+  description: "Encoded PowerShell command lines, a common obfuscation technique."
+  status: enabled
   queryCondition:
     queryText: |
       DeviceProcessEvents

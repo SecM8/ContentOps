@@ -126,9 +126,17 @@ def to_sentinel_body(payload: dict[str, Any]) -> dict[str, Any]:
     return {"kind": kind, "properties": body}
 
 
-def to_defender_body(payload: dict[str, Any]) -> dict[str, Any]:
-    """Defender payload is already the API body — pass through."""
-    return payload
+def to_defender_body(
+    payload: dict[str, Any], *, deprecated: bool = False,
+) -> dict[str, Any]:
+    """Defender payload is the API body, with the enabled state normalised.
+
+    ``isEnabled`` becomes ``status`` (see
+    ``contentops.defender.rule_status.to_wire_body``). Returns a copy.
+    """
+    from contentops.defender.rule_status import to_wire_body
+
+    return to_wire_body(payload, deprecated=deprecated)
 
 
 def dump_rule(

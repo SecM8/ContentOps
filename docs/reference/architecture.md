@@ -346,7 +346,7 @@ how the v2 quality bar is enforced.
 | `experimental` | Skip — never deployed                                              | `SKIP`      |
 | `production`   | Deploy as-is                                                       | `UPDATE`    |
 | `test`         | Deploy as-is. Routing to a dedicated test workspace is a Phase-3 deliverable; see `roadmap.md` F8. | `UPDATE`    |
-| `deprecated`   | Deploy with `enabled:false` (Sentinel) / `isEnabled:false` (Defender) | `DISABLE`   |
+| `deprecated`   | Deploy with `enabled:false` (Sentinel) / `status: disabled` (Defender) | `DISABLE`   |
 
 All six current asset kinds support `delete`. (The historical
 singleton-like kinds that refused deletion — they would have taken

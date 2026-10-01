@@ -96,8 +96,11 @@ def _enabled(asset: Asset, payload: dict[str, Any]) -> bool | None:
         v = payload.get("enabled")
         return bool(v) if v is not None else None
     if asset is Asset.DEFENDER_CUSTOM_DETECTION:
-        v = payload.get("isEnabled")
-        return bool(v) if v is not None else None
+        if payload.get("status") is None and payload.get("isEnabled") is None:
+            return None
+        from contentops.defender.rule_status import is_enabled
+
+        return is_enabled(payload)
     return None
 
 

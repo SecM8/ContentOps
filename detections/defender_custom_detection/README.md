@@ -15,9 +15,9 @@ Each rule is one YAML file:
 detections/defender_custom_detection/<rule-id>.yml
 ```
 
-The `<rule-id>` is the canonical envelope id (kebab-case slug). Files
-under this directory are gitignored — they live on your local clone
-and never get committed back to this public pipeline repo.
+The `<rule-id>` is the canonical envelope id (kebab-case slug). Rule
+files are committed in your **deployment fork**; the public mirror
+never carries them (its sync allowlist ships only this README).
 
 ## Authoring
 
@@ -30,6 +30,37 @@ contentops new defender_custom_detection <rule-id>
 Defender rules are **tenant-scoped** — there's no per-workspace
 selector. `apply --role integration` skips Defender content silently
 when no integration workspace is configured.
+
+## Enabled state — `status`, not `isEnabled`
+
+Graph beta replaced the `isEnabled` boolean with a `status` enum and
+removed `isEnabled` from the resource on 2026-10-01. Author the new
+field:
+
+```yaml
+payload:
+  displayName: Suspicious encoded PowerShell
+  description: Why this rule exists and what it catches.   # optional
+  status: enabled          # enabled | disabled | autoDisabled
+```
+
+| `status` | On apply | On collect |
+|---|---|---|
+| `enabled` | Sent as-is | Envelope `status: production` |
+| `disabled` | Sent as-is | Envelope `status: deprecated` |
+| `autoDisabled` | **Not sent** — the live state is left alone | Envelope stays `production`; the payload keeps `status: autoDisabled` so drift shows it |
+
+- `autoDisabled` means Defender switched the rule off after repeated
+  run failures. Fix the query, then set `status: enabled` — re-enabling
+  is always a deliberate edit, never a side-effect of a deploy.
+- Envelope `status: deprecated` always deploys as `status: disabled`,
+  whatever the payload says.
+- Legacy `isEnabled: true|false` still validates and is translated to
+  `status` on apply. It is never sent to Graph. Collect stops writing
+  it as soon as Graph returns `status`.
+- `description` is hashed for post-apply verification **only when you
+  set a non-empty one**. YAML collected before the field existed keeps
+  verifying cleanly against rules that carry a portal description.
 
 ## Beta API risk
 

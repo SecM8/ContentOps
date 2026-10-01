@@ -195,7 +195,8 @@ def test_replicate_surfaces_graph_reason_and_cleans_up(detections_dir: Path, pat
     assert len(posts) == 1  # one exact clone of the rule
     # The clone displayName is renamed (guard-prefixed) and disabled.
     assert posts[0]["displayName"].startswith("ZZ-probe-clone-")
-    assert posts[0]["isEnabled"] is False
+    assert posts[0]["status"] == "disabled"
+    assert "isEnabled" not in posts[0]
     # Clone create returned 400 → nothing created → no cleanup delete needed.
     deletes = [path for m, path, _ in patched_client if m == "DELETE"]
     assert deletes == []

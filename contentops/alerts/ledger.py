@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -333,17 +334,25 @@ def rebuild_ledger_from_daily(
     return len(deduped)
 
 
-def prune_daily_files(daily_dir: Path, retention_days: int) -> int:
-    """Delete daily files older than retention_days. Returns count removed."""
+def prune_daily_files(
+    daily_dir: Path, retention_days: int, *, keep: Iterable[date] = (),
+) -> int:
+    """Delete daily files older than retention_days. Returns count removed.
+
+    ``keep`` lists dates that survive regardless of age: an explicit
+    ``alerts sync --date <old date>`` must not export a file and then
+    prune it in the same run.
+    """
     if not daily_dir.is_dir():
         return 0
     from datetime import timedelta as _td
     cutoff = date.today() - _td(days=retention_days)
+    kept = set(keep)
     removed = 0
     for f in daily_dir.glob("*.jsonl"):
         try:
             file_date = date.fromisoformat(f.stem)
-            if file_date < cutoff:
+            if file_date < cutoff and file_date not in kept:
                 f.unlink()
                 removed += 1
         except (ValueError, OSError):

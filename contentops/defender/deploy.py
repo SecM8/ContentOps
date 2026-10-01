@@ -54,12 +54,9 @@ def deploy_defender_rule(
 
     Returns a result dict with keys: id, platform, action, result.
     """
-    body = to_defender_body(payload)
+    # Deprecated rules get disabled remotely (``status: disabled``).
+    body = to_defender_body(payload, deprecated=status == "deprecated")
     display_name = body.get("displayName", "")
-
-    # Deprecated rules get disabled remotely
-    if status == "deprecated":
-        body["isEnabled"] = False
 
     if dry_run:
         action = "update" if display_name in name_map else "create"

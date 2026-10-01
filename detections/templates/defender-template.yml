@@ -7,13 +7,14 @@
 # =============================================================================
 
 id: ""                            # Slug ID (required, e.g., defender-encoded-powershell-001)
-version: "1.0.0"                  # Semver (required)
+version: "1.0.1"                  # Semver (required)
 platform: defender                # Fixed value
 status: experimental              # experimental | test | production | deprecated
 
 defender:
   displayName: ""                 # Required
-  isEnabled: true
+  description: ""                 # Optional — why this rule exists
+  status: enabled                 # enabled | disabled | autoDisabled
 
   queryCondition:
     queryText: |

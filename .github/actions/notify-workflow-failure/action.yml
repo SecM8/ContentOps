@@ -53,6 +53,12 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        # Pin gh to THIS repo. Without it, a caller that added a git
+        # remote named `upstream` (e.g. a fork's upstream-sync job) makes
+        # gh resolve the upstream repo instead: the label lookup, the
+        # issue search and the issue itself all land on the wrong repo
+        # ("could not add label: 'pipeline-alert' not found").
+        GH_REPO: ${{ github.repository }}
         WORKFLOW_NAME: ${{ inputs.workflow-name }}
         RUN_URL: ${{ inputs.run-url }}
       run: |
@@ -99,14 +105,23 @@ runs:
           echo "::warning::Unexpected issue number format '${existing}', skipping comment."
         else
           echo "Opening new pipeline-alert issue."
-          # ensure the label exists (idempotent — gh swallows the 422
-          # if the label is already there)
-          gh label create pipeline-alert \
-            --description "Auto-opened by .github/actions/notify-workflow-failure on scheduled-workflow failure." \
-            --color "d93f0b" \
-            --force >/dev/null 2>&1 || true
-          gh issue create \
-            --title "${TITLE}" \
-            --label pipeline-alert \
-            --body "${BODY}"
+          # Ensure the label exists. `--force` makes this idempotent; a
+          # failure here is surfaced as a warning, not hidden, because a
+          # silent failure is how the alert path broke unnoticed before.
+          if ! label_err=$(gh label create pipeline-alert \
+              --description "Auto-opened by .github/actions/notify-workflow-failure on scheduled-workflow failure." \
+              --color "d93f0b" \
+              --force 2>&1 >/dev/null); then
+            echo "::warning::Could not create/update label 'pipeline-alert': ${label_err}"
+          fi
+          # Never lose the alert over a label: retry unlabelled.
+          if ! gh issue create \
+              --title "${TITLE}" \
+              --label pipeline-alert \
+              --body "${BODY}"; then
+            echo "::warning::Labelled issue create failed; retrying without the label."
+            gh issue create \
+              --title "${TITLE}" \
+              --body "${BODY}"
+          fi
         fi

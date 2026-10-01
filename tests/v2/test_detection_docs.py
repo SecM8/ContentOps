@@ -111,8 +111,13 @@ def test_render_uses_repo_relative_paths() -> None:
     if not envelopes:
         pytest.skip("no envelopes in detections/")
     body = render_detection(envelopes[0], repo_root=REPO_ROOT)
-    assert "C:" not in body
-    assert "\\" not in body or "C:\\" not in body
+    # Only the ``source`` row carries a path. Detection KQL may
+    # legitimately contain Windows paths (``@"C:\Program Files\..."``),
+    # so asserting on the whole body fails on real deployment content.
+    source_rows = [line for line in body.splitlines() if line.startswith("| source |")]
+    assert len(source_rows) == 1
+    assert "C:" not in source_rows[0]
+    assert "\\" not in source_rows[0]
 
 
 # ---------------------------------------------------------------------------
