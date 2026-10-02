@@ -62,6 +62,13 @@ from the commit history.
 
 ### Fixed
 
+- **Template-link fix wrote `alertRuleTemplateName: null` into every
+  custom rule.** ARM returns the field as `null` on rules not built from
+  a template; keeping the link now also kept the null, which added a
+  meaningless line to ~200 rules on one fork and re-flagged all of them
+  as changed in drift. Empty values are dropped; a real link is kept.
+  Result: drift after the template-link fix only touches the rules that
+  are actually template-bound.
 - **Sentinel analytics lost their Content Hub template link.** For
   Scheduled, NRT and MicrosoftSecurityIncidentCreation rules,
   `collect` / `drift` dropped `alertRuleTemplateName` and

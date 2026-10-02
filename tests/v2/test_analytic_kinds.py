@@ -612,6 +612,37 @@ def test_to_envelope_keeps_template_metadata_for_scheduled() -> None:
     assert env["version"] == "1.0.3"
 
 
+@pytest.mark.parametrize("empty", [None, ""])
+def test_to_envelope_drops_empty_template_fields_for_custom_rules(empty) -> None:
+    """ARM returns ``alertRuleTemplateName: null`` on every custom rule.
+
+    Keeping the template link must not write that null into each custom
+    rule's YAML: it added a meaningless line to ~200 rules on one fork and
+    re-flagged them all as "changed".
+    """
+    h = SentinelAnalyticHandler(lambda: None)
+    remote = {
+        "name": "rule-2",
+        "kind": "Scheduled",
+        "properties": {
+            "displayName": "Custom",
+            "query": "print 1",
+            "severity": "Low",
+            "queryFrequency": "PT5M",
+            "queryPeriod": "PT5M",
+            "triggerOperator": "GreaterThan",
+            "triggerThreshold": 0,
+            "alertRuleTemplateName": empty,
+            "templateVersion": empty,
+            "enabled": True,
+        },
+    }
+    env = h.to_envelope(remote)
+    assert env is not None
+    assert "alertRuleTemplateName" not in env["payload"]
+    assert "templateVersion" not in env["payload"]
+
+
 def test_to_envelope_keeps_template_for_fusion() -> None:
     h = SentinelAnalyticHandler(lambda: None)
     remote = {

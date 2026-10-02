@@ -488,6 +488,14 @@ class SentinelAnalyticHandler:
         # to avoid "changed" noise, but the next deploy then PUT the rule
         # without its template link and the portal lost track of
         # Content Hub updates for it.
+        #
+        # ARM returns ``alertRuleTemplateName: null`` on every custom rule
+        # (no template). Writing that out added a meaningless line to each
+        # one and re-flagged ~200 rules as "changed" on one fork, so an
+        # empty value is dropped; only a real link is kept.
+        for k in ("alertRuleTemplateName", "templateVersion"):
+            if properties.get(k) in (None, ""):
+                properties.pop(k, None)
 
         properties["kind"] = kind
         enabled = properties.get("enabled", True)
