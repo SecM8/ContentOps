@@ -291,20 +291,19 @@ Defender-only).
 **Looks like:**
 
 ```
-Lint summary: 152 files scanned, 152 with findings, 1176 finding(s) total.
+Lint summary: <files-scanned> files scanned, <files-with-findings> with findings, <finding-count> finding(s) total.
 META rules in strict mode (tenant.policy.scaffoldStrict=true).
-608 finding(s) at-or-above severity 'error'.
+<error-count> finding(s) at-or-above severity 'error'.
 ```
 
 **Why:** you set `policy.scaffoldStrict: true` (explicitly or
 through an older example file). META002–005 — the authoring fields
 `description` / `attackDescription` / `references` /
-`falsePositives` — are CI-blocking in strict mode. The G24
-authoring backlog (51 production rules without these fields)
-hasn't been written yet.
+`falsePositives` — are CI-blocking in strict mode. Collected
+envelopes may need these fields added during review.
 
-**Fix (default, lenient):** since PR #241 the default is
-**lenient**. Set the policy block to false (or remove it entirely):
+**Fix (default, lenient):** the default is **lenient**. Set the
+policy block to false (or remove it entirely):
 
 ```yaml
 # config/tenant.yml
@@ -692,8 +691,8 @@ gh pr list --state open --limit 300 --json number,headRefName \
 
 ## Fork PR limitations
 
-If you opened a PR from a fork (not a branch in `KustoKing/SIEMContent`
-itself), some CI checks will skip or render degraded output. This is
+If you opened a PR from a fork (rather than a branch in the base
+repository), some CI checks will skip or render degraded output. This is
 **intentional** — GitHub doesn't mint OIDC tokens for fork PRs, so
 we can't trust them with tenant credentials.
 

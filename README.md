@@ -41,8 +41,9 @@ every write.
 
 ## What ships in this mirror
 
-`SecM8/ContentOps` is the **public, code-only mirror** of a private
-operator repo, rebuilt nightly through an allowlist sync. It ships:
+`SecM8/ContentOps` is the **public, code-only distribution** of
+ContentOps, refreshed nightly from its source repository through an
+allowlist sync. It ships:
 
 - the **tool** — the `contentops` Python package, its tests, and scripts;
 - **worked templates + samples** under `detections/templates/` and

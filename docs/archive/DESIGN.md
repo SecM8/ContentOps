@@ -1,5 +1,9 @@
 # Detection Pipeline — Design Document
 
+> **Archived historical design.** This describes an earlier version
+> of the project and is not deployment guidance. See the
+> [current architecture](../reference/architecture.md).
+
 ## Overview
 
 Python CLI + GitHub Actions pipeline for CRUD management of detection rules

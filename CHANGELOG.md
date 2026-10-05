@@ -39,16 +39,15 @@ from the commit history.
 
 - **KQL schema refresh runs weekly, not daily.** `kql-schemas-refresh.yml`
   now fires Mondays at 03:30 UTC (`30 3 * * 1`) instead of every day.
-  Table schemas change rarely, and a daily PR is more review than the
-  change is worth — one fork accumulated 83 daily schema PRs before
-  supersede-close landed. `gh workflow run kql-schemas-refresh.yml`
+  Table schemas change rarely, and daily PRs created more review than
+  the change was worth before supersede-close landed.
+  `gh workflow run kql-schemas-refresh.yml`
   still refreshes on demand. Result: at most one schema PR a week.
 - **Scheduled workflows are opt-in per deployment, not slug-edited.**
-  Eleven cron gates read `github.repository == 'KustoKing/SIEMContent'`,
-  so every deployment fork had to rewrite the slug in eleven workflow
-  files — and every upstream sync then conflicted on exactly those
-  lines. The gate now also passes when the repo variable
-  `CONTENTOPS_SCHEDULES` is `true`. Result: forks set one variable
+  Deployment forks previously had to edit workflow files to enable
+  schedules, creating conflicts on upstream sync. The gate now also
+  passes when the repo variable `CONTENTOPS_SCHEDULES` is `true`.
+  Result: forks set one variable
   (`gh variable set CONTENTOPS_SCHEDULES --body true`), take upstream's
   workflow files verbatim, and syncs stop conflicting. Forks that leave
   it unset (the public mirror included) stay silent on cron, so this is
@@ -58,15 +57,15 @@ from the commit history.
   and `upstream-watchers.yml` now close their own older open PRs (matched
   by branch prefix, branch deleted) right after the new one opens, the
   way `drift.yml` already did. Result: one open PR per kind instead of
-  one per run — an untended fork had piled up 85 daily schema PRs.
+  one per run.
 
 ### Fixed
 
 - **Template-link fix wrote `alertRuleTemplateName: null` into every
   custom rule.** ARM returns the field as `null` on rules not built from
   a template; keeping the link now also kept the null, which added a
-  meaningless line to ~200 rules on one fork and re-flagged all of them
-  as changed in drift. Empty values are dropped; a real link is kept.
+  meaningless line to collected rules and re-flagged them as changed in
+  drift. Empty values are dropped; a real link is kept.
   Result: drift after the template-link fix only touches the rules that
   are actually template-bound.
 - **Sentinel analytics lost their Content Hub template link.** For
@@ -75,8 +74,8 @@ from the commit history.
   `templateVersion` from the YAML (the code wrongly treated them as
   server-side audit fields), so the next deploy re-saved the rule
   without its template link and the portal stopped offering Content Hub
-  updates for it — 18 rules on one deployment fork. Both fields now
-  round-trip. A second bug hid behind it: apply strips `displayName`
+  updates for it. Both fields now round-trip. A second bug hid behind
+  it: apply strips `displayName`
   from template-bound bodies (the template owns it) but the verify hash
   still included it, so every template-bound rule reported
   `verified=False`. The hash for those rules now uses the template name
@@ -168,15 +167,15 @@ from the commit history.
 - **`collect` duplicated rules renamed in the portal.** Collect matched
   local files by the slug-derived `id` only, while `drift` matched by
   ARM name first. A portal rename changes the slug, so collect classified
-  the rule as new and wrote a second file pointing at the same live rule
-  (8 duplicates on one fork). Collect now uses drift's lookup — ARM name
+  the rule as new and wrote a second file pointing at the same live rule.
+  Collect now uses drift's lookup — ARM name
   / Graph id first, then `id` — so a rename is a change to the existing
   file.
 - **Portal renames changed a rule's `id` but not its file name.** Handlers
   derive `id` from the displayName, so renaming a rule in the portal made
   the drift re-import write a new `id` into the existing file (matched by
-  ARM name), leaving `id` != file name — 8 rules on one fork after a
-  prefix rename. The re-import now keeps the local `id`; the rename still
+  ARM name), leaving `id` != file name after a prefix rename. The
+  re-import now keeps the local `id`; the rename still
   lands through `displayName`.
 - **Drift PRs with portal edits always failed the version-bump gate.**
   A drift re-import kept the operator's `version` (so it never rolls
@@ -437,22 +436,13 @@ are the 1.0.0 baseline.
 
 ### Changed
 
-- **Source/deployment split — real detections no longer live in the
-  source repo.** The operator repo (`→` public mirror) was doubling as a
-  tenant deployment, carrying ~155 real per-tenant detection YAMLs plus
-  reports. Those are removed: the source now ships only
-  `detections/samples/`, `detections/templates/`, the per-kind READMEs,
-  and the empty `drift_suppressions.yml`. Real detection content now
-  lives in **private deployment forks** (one per tenant), each populated
-  by `collect` against its own tenant — so no tenant detection content
-  sits in, or syncs from, the public repo. `detections/<kind>/*.yml` are
-  **not** gitignored (the reverted PR #183 pattern is not reintroduced);
-  the source simply carries none. CLAUDE.md invariant #11 rewritten to
-  document the new topology. The `.gitignore` is unchanged — it is the
-  *deployment template* every fork inherits via the mirror, so its
-  tenant-data-hygiene rules (`config/tenant.yml`, `audit/`, `state/`,
-  `alerts-reports/`, the report-telemetry block) must stay or downstream
-  forks would leak.
+- **Source/deployment split — tenant detections belong in deployment
+  repositories.** The source ships templates, samples, per-kind
+  READMEs, and an empty `drift_suppressions.yml`, but no tenant
+  detection YAMLs. Detection paths are not gitignored, so deployment
+  repositories can track their own content normally; the public mirror
+  filters tenant-specific content through its allowlist and
+  forbidden-path checks.
 - **Fork-sync documentation hardened from a real downstream
   onboarding:**
   - `docs/operations/upstream-sync.md` gained §4 "One-time stitch —
@@ -489,9 +479,9 @@ are the 1.0.0 baseline.
   so a tenant carrying a backlog of collected-but-not-yet-enriched
   production rules can drain it incrementally without every PR going
   red. Operators who want the strict gate set
-  `policy.scaffoldStrict: true` in `config/tenant.yml`. The current
-  backlog (51 production rules without authoring metadata) is tracked
-  as **G24** in `docs/reference/gap-assessment.md`.
+  `policy.scaffoldStrict: true` in `config/tenant.yml`. Metadata gaps
+  vary by deployment and require human authoring; see
+  `docs/reference/gap-assessment.md`.
 - `contentops/config.py` raises a helpful `FileNotFoundError` when
   `config/tenant.yml` is missing, pointing at the `.example` template
   and the CI secret.

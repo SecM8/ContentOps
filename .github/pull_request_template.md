@@ -16,22 +16,9 @@
 - [ ] sentinel_analytic
 - [ ] sentinel_hunting
 - [ ] sentinel_watchlist
-- [ ] sentinel_workbook
-- [ ] sentinel_automation
-- [ ] sentinel_playbook
 - [ ] sentinel_data_connector
-- [ ] sentinel_solution
 - [ ] sentinel_parser
-- [ ] sentinel_hunt
-- [ ] sentinel_bookmark
-- [ ] sentinel_ti_indicator
-- [ ] sentinel_summary_rule
-- [ ] sentinel_metadata
 - [ ] defender_custom_detection
-- [ ] defender_tuning_rule
-- [ ] defender_suppression_rule
-- [ ] defender_saved_query
-- [ ] defender_ti_indicator
 - [ ] pipeline / workflow / docs only
 
 ## Plan output

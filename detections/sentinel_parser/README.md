@@ -15,9 +15,10 @@ Each parser is one YAML file:
 detections/sentinel_parser/<parser-id>.yml
 ```
 
-The `<parser-id>` is the canonical envelope id (kebab-case slug). Files
-under this directory are gitignored — they live on your local clone
-and never get committed back to this public pipeline repo.
+The `<parser-id>` is the canonical envelope id (kebab-case slug). This
+source repository ships no tenant parser YAMLs, and these paths are not
+gitignored. Commit parsers to your private deployment repository; do not
+commit tenant detections to a public repository.
 
 ## Authoring
 

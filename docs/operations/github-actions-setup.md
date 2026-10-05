@@ -35,8 +35,8 @@ Open the repo's `Settings → Secrets and variables → Actions → Variables ta
 |---|---|---|
 | `AZURE_CLIENT_ID` | The App Registration's "Application (client) ID" GUID | A client ID by itself authenticates nothing — it just identifies the app. Treating it as a secret leaks the wrong threat model and breaks `${{ vars.AZURE_CLIENT_ID }}` references in workflows. |
 | `AZURE_TENANT_ID` | The Entra tenant GUID | Same — tenant IDs are public discovery information. Treat as a Variable. |
-| `CONTENTOPS_SCHEDULES` *(deployment forks)* | `true` | Opts this repo in to scheduled (cron) runs. Unset = cron runs no-op, which is what the public mirror wants. Not sensitive — see [§6](#6-scheduled-workflows--opt-in-with-contentops_schedules). | Lives in repo settings, so an upstream sync never overwrites or conflicts on it — unlike editing the slug in eleven workflow files. |
-| `CONTENTOPS_ALERTS_PAGE_SIZE` *(optional)* | `alerts_v2` `$top` page size for `alerts-report.yml`. Default 500. **`999` is validated and recommended** for busy tenants: on a ~50k-alerts/30-day workspace it dropped the backfill from 357 time-slices to 181, eliminated the Graph 429 throttling, and returned the **identical** total (no data lost). Validate after changing — re-run and confirm the alert total is unchanged, since Graph may silently cap an over-large `$top` (which would drop data on a value too high). Not sensitive; it's a tuning knob, so a Variable. | A bigger page = fewer time-slices = less throttling; not a secret, and referenced as `${{ vars.CONTENTOPS_ALERTS_PAGE_SIZE }}`. |
+| `CONTENTOPS_SCHEDULES` *(deployment forks)* | `true` | Opts this repo in to scheduled (cron) runs. Unset leaves scheduled runs inactive. Not sensitive — see [§6](#6-scheduled-workflows--opt-in-with-contentops_schedules); the setting lives in repo configuration and is unaffected by upstream sync. |
+| `CONTENTOPS_ALERTS_PAGE_SIZE` *(optional)* | `alerts_v2` `$top` page size for `alerts-report.yml`. Default 500. **`999` is validated for a tested workload** and may reduce pagination for busy tenants. Verify the returned alert total after changing it: Graph may silently cap an over-large `$top`, which can drop data. Not sensitive; it's a tuning knob, so a Variable. |
 
 The workflows reference these as `${{ vars.AZURE_CLIENT_ID }}` and
 `${{ vars.AZURE_TENANT_ID }}` (see `.github/actions/pipeline-setup/action.yml`).
@@ -53,7 +53,6 @@ shell history or a `--body` flag.
 | `TENANT_CONFIG_INTEGRATION_YAML` | Contents of `config/tenant.integration.yml` if you have a separate integration tenant config. | Required only for `promote-to-integration.yml`. Skip unless you have a separate integration tenant. |
 | `GITLEAKS_LICENSE` | Your free org license key from https://gitleaks.io/ | Required for `secret-scan.yml` once your repo is org-owned. Adopter shortcut: skip the local pre-commit hook + wait for the license before pushing. |
 | `AUTO_PR_TOKEN` | Fine-grained PAT scoped to **this repo only**, **Contents: Read and write + Pull requests: Read and write**. The seven PR-opening workflows (`collect`, `drift`, `kql-schemas-refresh`, `attack-matrix-refresh`, `upstream-watchers`, `lock-unlock`, `emergency-disable`) use it when present and fall back to the built-in `GITHUB_TOKEN` when not. Bonus: PRs opened with a PAT trigger `on: pull_request` CI; PRs opened with `GITHUB_TOKEN` never do. | Only when your org disables `Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"` — the run fails with `GitHub Actions is not permitted to create or approve pull requests`. Skip if that toggle is on. |
-| `PUBLIC_MIRROR_PAT` | Fine-grained PAT scoped to the public mirror **only** (`SecM8/ContentOps`), **Contents: Read and write + Workflows: Read and write** (Workflows is required because the sync mirrors `.github/workflows/**` — a fine-grained PAT cannot push workflow files without it) — write-only, no access to the private repo. Not a classic `repo`-scope token. See `OPERATOR_MIRROR.md` for the full rotation procedure. | Only the operator needs this. Adopters don't run mirror sync. |
 
 ### Stdin form (PowerShell)
 
@@ -172,9 +171,10 @@ job names; spelling matters):
 - `production-promotion-check` — gates human-authored promotions
 
 Plus:
-- Require linear history — **only on the operator repo.** Forks that
-  pull from the public mirror via the merge flow in
-  [`upstream-sync.md`](upstream-sync.md) must leave this **off**:
+- **Require linear history** only if you do not need upstream-sync merge
+  commits. Repositories that pull from the public mirror using the
+  procedure in [`upstream-sync.md`](upstream-sync.md) must leave this
+  **off**:
   sync PRs (and especially the one-time
   [unrelated-histories stitch](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history))
   must land as true merge commits, and linear-history protection
@@ -186,16 +186,13 @@ Plus:
 
 ## 6. Scheduled workflows — opt in with `CONTENTOPS_SCHEDULES`
 
-Eleven workflows gate their **cron runs** so nightly automation never
-fires on the public code-only mirror:
+Scheduled workflows are inactive by default on the public code-only
+mirror and in deployment forks. This prevents unconfigured repositories
+from running tenant-facing automation.
 
-```yaml
-if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true'
-```
-
-Out of the box that gate also skips **your fork**: enable
+Out of the box this applies to **your fork** too: enable
 `drift.yml`, `collect.yml`, `conformance.yml`, etc. and the scheduled
-runs will queue, evaluate the gate, and silently no-op. (Manual
+runs will queue, evaluate the opt-in gate, and silently no-op. (Manual
 `workflow_dispatch` runs are unaffected — which is why a workflow can
 "work when I click it" yet never fire on cron.)
 
@@ -212,13 +209,12 @@ tab → New repository variable*, name `CONTENTOPS_SCHEDULES`, value
 
 Why a variable and not an edit: the variable lives in repo settings,
 not in the workflow files, so an upstream sync never overwrites it and
-never conflicts on it. Forks that leave it unset (the public mirror,
-someone's scratch fork) stay silent on cron.
+never conflicts on it. Leave it unset in repositories where scheduled
+tenant-facing workflows are not configured.
 
-**Already rewrote the slug by hand?** That still works. On your next
-upstream sync, take upstream's version of the workflow files and set
-the variable instead; the hand edits are what made every sync
-conflict. To confirm it is set:
+If you previously edited workflow files to enable schedules, restore
+the upstream versions and set the variable instead. To confirm it is
+set:
 
 ```bash
 gh variable list -R <org>/<repo>
@@ -250,7 +246,7 @@ For the full picture (L1–L7), drop the `--scope` flag.
 | `Error: tenant-config-yaml input is empty and config/tenant.yml is missing.` | `TENANT_CONFIG_YAML` secret unset or set on the wrong repo | `Get-Content config\tenant.yml -Raw \| gh secret set TENANT_CONFIG_YAML --repo <org>/<repo>` |
 | `AADSTS700213` from azure/login step | Federated credential subject doesn't match the workflow's `environment:` value | Compare the GitHub Environment name, workflow yaml `environment:`, and federated credential `subject` — all three must match exactly. |
 | Workflow run says success but skipped everything | Workspace not configured (e.g. no `integration` workspace in `tenant.yml`) | This is graceful skip, not failure — see the workflow's step summary. |
-| Scheduled workflow never fires on your fork (manual dispatch works) | Cron runs are gated to the operator repo unless the fork opts in | Set the repo variable `CONTENTOPS_SCHEDULES=true` — see [§6](#6-scheduled-workflows--opt-in-with-contentops_schedules). |
+| Scheduled workflow never fires on your deployment repo (manual dispatch works) | Scheduled runs are inactive until the repo opts in | Set the repo variable `CONTENTOPS_SCHEDULES=true` — see [§6](#6-scheduled-workflows--opt-in-with-contentops_schedules). |
 | DCO check fails on an upstream-sync PR with commits you didn't author | Upstream mirror commits carry no `Signed-off-by`; an old `dco.yml` predates the mirror-author skip | Sync `dco.yml` from upstream (it skips mirror-authored commits). **Never** `git rebase --signoff` a sync branch — it destroys the stitch merge ([upstream-sync.md §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history)). |
 | `GitHub Actions is not permitted to create or approve pull requests` on `collect` / `drift` / other auto-PR workflows | Org (or repo) policy disables PR creation by the built-in `GITHUB_TOKEN` | Preferred: enable `Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"` (if greyed out at repo level, an org admin must enable it at org level first). If the policy is intentional: set the `AUTO_PR_TOKEN` secret (see [§2](#2-secrets)) — the workflows use it automatically. PAT caveats: orgs can hold new fine-grained PATs in a pending state until an admin approves them. PATs **expire** — an expired or revoked PAT is still a non-empty secret, so it does not fall back to `GITHUB_TOKEN`; the PR step fails with `HttpError: Bad credentials`. GitHub emails the token owner ~1 week before expiry. When that arrives: re-issue the PAT and `gh secret set AUTO_PR_TOKEN --repo <org>/<repo>`. To avoid this entirely, set expiration to "No expiration" when creating the fine-grained PAT (if your org policy allows it). A failed run may leave a half-pushed `collect/<run_id>`-style branch behind (the branch push succeeds, the PR creation doesn't) — delete it or ignore it. |
 | `dco` fails on a `collect` / `drift` (or other auto-PR) PR with "missing a Signed-off-by trailer" | A PAT-opened PR (via `AUTO_PR_TOKEN`) is authored by the PAT owner — a real account, not on the `dco.yml` bot bypass list — and the `auto-pr` action's commit needs a sign-off trailer | Fixed upstream: `auto-pr` now passes `signoff: true` to `create-pull-request`, so every automated commit carries the trailer. Make sure your fork has synced that change (`Select-String AUTO_PR_TOKEN .github/actions/auto-pr/action.yml` *and* `Select-String signoff .github/actions/auto-pr/action.yml`). The fix only matters once collect PRs trigger `pull_request` CI, which only happens on the PAT path. |

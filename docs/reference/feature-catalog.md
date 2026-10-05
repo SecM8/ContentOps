@@ -29,10 +29,9 @@ For per-test detail see [`test-catalog.md`](test-catalog.md).
 
 ---
 
-## Recently shipped (2026-05-22 sprint cluster)
+## Shipped in the 2026-05-22 sprint cluster
 
-Four PRs landed in close sequence; each row above has been refreshed,
-but here's the high-level so reviewers and adopters see "what's new":
+Four PRs landed in close sequence; this section summarizes that sprint:
 
 - **PR #237** — NVISO Detection-as-Code borrowings (4 patterns):
   per-detection markdown docs (`contentops detection-docs`),
@@ -51,8 +50,8 @@ but here's the high-level so reviewers and adopters see "what's new":
   to False. Adopters with a fresh `config/tenant.yml` no longer get
   META002-005 as CI-blocking errors out of the box; opt INTO strict
   with `policy.scaffoldStrict: true` once the authoring backlog
-  drains. The operator's own internal posture is still "fail fast"
-  via explicit `scaffoldStrict: true` in their tenant.yml.
+  drains. Deployments that want a fail-fast posture set
+  `scaffoldStrict: true` explicitly in their own tenant.yml.
 
 ---
 
@@ -356,7 +355,7 @@ helper script were deleted in Phase 1's v1-legacy purge (PR #125).
 The 159 grandfathered detections were re-collected from the live
 tenant; no per-detection migration was kept. -->
 
-| Tenant config | `config/tenant.yml` (v3 multi-workspace schema). One Entra ID tenant; 0–1 Defender XDR; 0–N Sentinel workspaces tagged `role: prod\|integration\|dev`. Identity (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`) lives in env vars / GitHub Variables, not the YAML; subscription is derived per-workspace from the file. Loaded by [`contentops/config.py`](../../contentops/config.py); migration helper at [`scripts/migrate_tenant_config.py`](../../scripts/migrate_tenant_config.py). See [`docs/operations/multi-workspace.md`](../operations/multi-workspace.md). | [`config/tenant.yml`](../../config/tenant.yml). |
+| Tenant config | `config/tenant.yml` (v3 multi-workspace schema). One Entra ID tenant; 0–1 Defender XDR; 0–N Sentinel workspaces tagged `role: prod\|integration\|dev`. Identity (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`) lives in env vars / GitHub Variables, not the YAML; subscription is derived per-workspace from the file. Loaded by [`contentops/config.py`](../../contentops/config.py); migration helper at [`scripts/migrate_tenant_config.py`](../../scripts/migrate_tenant_config.py). See [`docs/operations/multi-workspace.md`](../operations/multi-workspace.md). | `config/tenant.yml` (gitignored; start from [`config/tenant.yml.example`](../../config/tenant.yml.example)). |
 
 ---
 
@@ -379,5 +378,5 @@ was removed in PR #148. -->
 | [`scripts/detect_production_promotions.py`](../../scripts/detect_production_promotions.py) | PR comment generator listing detections being promoted to `status: production`. |
 | [`scripts/check_references.py`](../../scripts/check_references.py) | HEAD-checks every URL in envelope `metadata.references[]` and `runbookUrl`. Two modes: full corpus (default; weekly cron) and `--diff-base REF` (PR-time, walks only URLs added in the diff). NVISO Part 3 borrowing. |
 | [`scripts/add_spdx_headers.py`](../../scripts/add_spdx_headers.py) | Add SPDX license headers to every Python file in the repo. Idempotent; CI invokes it with `--check` to fail fast when a new Python file lands without the header (CLAUDE.md invariant §4). |
-| [`scripts/list_missing_metadata.py`](../../scripts/list_missing_metadata.py) | List detection envelopes missing META002-005 authoring metadata (description, attackDescription, references, falsePositives) — operator assist for the G24 backlog drain. Emits a Markdown checklist by default or per-rule YAML stubs with `--format stubs`. Reporting only; never auto-authors content. |
+| [`scripts/list_missing_metadata.py`](../../scripts/list_missing_metadata.py) | List detection envelopes missing META002–005 authoring metadata (description, attackDescription, references, falsePositives). Emits a Markdown checklist by default or per-rule YAML stubs with `--format stubs`. Reporting only; never auto-authors content. |
 | [`scripts/refresh_attack_matrix.py`](../../scripts/refresh_attack_matrix.py) | Refresh the bundled MITRE ATT&CK Enterprise matrix by fetching the latest STIX bundle from MITRE's CTI GitHub and writing `contentops/coverage/data/mitre_attack_full.json`. One-shot generator (run ~quarterly); the pipeline never calls it at runtime. |

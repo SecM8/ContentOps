@@ -207,9 +207,10 @@ the bytes that get sent to ARM or Microsoft Graph. Distinct from
 A thin wrapper around one backend HTTP API that handlers compose. The Sentinel provider is `contentops/providers/sentinel_arm.py` (`SentinelArmProvider`, ARM REST); the Defender path is `contentops/defender/client.py` + `contentops/defender/deploy.py` (Graph beta). Handlers hold the per-asset-kind logic; providers hold the transport.
 
 ### Public mirror
-The `SecM8/ContentOps` repo on GitHub, rebuilt nightly from
-this private operator repo via `public-sync.yml` and
-`.github/sync-allowlist.txt`. One-way; never receives PRs back.
+The code-only `SecM8/ContentOps` repository, refreshed from the
+maintained source through a one-way allowlisted sync. Adopters keep
+their own tenant configuration and detection content in their
+deployment repositories.
 
 ## R
 
@@ -223,10 +224,9 @@ The `policy.scaffoldStrict` knob in `config/tenant.yml`. Controls
 whether the META002–META005 authoring-metadata lint rules
 (description / attackDescription / references / falsePositives)
 fire as **warnings** (lenient) or **errors** (strict, CI-blocking).
-**Default since PR #241 is False (lenient)** so adopters with a
-fresh tenant.yml aren't blocked by the G24 authoring backlog out of
-the box. Operators with a drained backlog set `scaffoldStrict: true`
-to upgrade to CI-blocking. See `contentops/config.py:is_scaffold_strict()`.
+The default is False (lenient), so deployments are not blocked by
+incomplete metadata on collected detections. Set `scaffoldStrict: true`
+to make the rules CI-blocking. See `contentops/config.py:is_scaffold_strict()`.
 
 ### Silent rule
 A deployed analytic rule that has fired zero alerts over a recent

@@ -205,8 +205,8 @@ displayName slug exceeds 80 chars). Address each:
   envelope was authored fully, so you shouldn't see META002–005;
   if you do, you missed a paragraph).
 
-> If you see hundreds of META errors on rules you didn't touch,
-> that's the G24 backlog showing through. See
+> If you see META findings on rules you didn't touch, those
+> collected envelopes may need authoring metadata. See
 > [`troubleshooting.md`](../troubleshooting.md#600-meta002005-errors-on-a-fresh-tenantyml)
 > for the `scaffoldStrict` knob.
 

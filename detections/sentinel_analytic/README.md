@@ -17,9 +17,10 @@ Each rule is one YAML file:
 detections/sentinel_analytic/<rule-id>.yml
 ```
 
-The `<rule-id>` is the canonical envelope id (kebab-case slug). Files
-under this directory are gitignored — they live on your local clone
-and never get committed back to this public pipeline repo.
+The `<rule-id>` is the canonical envelope id (kebab-case slug). This
+source repository ships no tenant rule YAMLs, and these paths are not
+gitignored. Commit rules to your private deployment repository; do not
+commit tenant detections to a public repository.
 
 ## Authoring
 

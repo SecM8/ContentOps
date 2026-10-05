@@ -6,10 +6,12 @@ A copy-pasteable script for a live demo. Two acts:
   offline. No Azure, no tenant — just clone, install, and show the tool +
   the quality gates.
 - **Act 2 — Drift loop (≈8 min):** the operational story against a
-  *connected* repo (one with a real `config/tenant.yml` + credentials):
-  prove live tenant reach, then run the daily **Drift detection** workflow
-  so a portal edit is captured as a reviewable **pull request** — plus a
-  live pre-flight plan.
+  *connected deployment repository* and a dedicated demo tenant:
+  verify access, then run **Drift detection** so a portal edit is
+  captured as a reviewable **pull request** — plus a pre-flight plan.
+
+> Run Act 2 only against a dedicated, non-customer demo tenant or
+> workspace. Do not edit production detection rules for a demonstration.
 
 > All commands use the `python -m contentops` form (works on locked-down
 > Windows). The bare `contentops` console script is equivalent after
@@ -32,20 +34,18 @@ For **Act 1** (any machine):
   an auth prompt means the mirror is missing or still private — check the
   latest `public-sync.yml` run before going live. Cross-check the SHA is
   recent (the mirror rebuilds nightly): `gh api repos/SecM8/ContentOps/commits/HEAD --jq .commit.committer.date`.
-  - *Fallback if the mirror is unavailable:* run Act 1 from a fresh clone
-    of the operator repo into a scratch dir instead — the tool, templates,
-    and quality gates behave identically. Just don't put the repo URL on
-    screen, and skip the "this is the public mirror" line.
+  - *Fallback if the mirror is unavailable:* postpone Act 1 or use a
+    previously verified public release. Do not substitute an internal
+    source repository.
 
-For **Act 2** (the connected repo — your private operator repo or a
-configured fork):
+For **Act 2** (your connected deployment repository):
 - `config/tenant.yml` filled in, and credentials working
   (`az login`, or a `.env` with the App Registration secret).
 - Confirm it's healthy ahead of time: `python -m contentops doctor --matrix --role prod`
   should be all green (token acquisition + per-handler tenant reads).
   **Do this before the audience is watching** — token acquisition + RBAC
   propagation are the usual day-of surprises.
-- Pin two browser tabs on your operator repo: **Actions** (the workflow
+- Pin two browser tabs on your deployment repository: **Actions** (the workflow
   list) and **Pull requests** — Act 2 drives both from the UI.
 - Pre-run the **Drift detection** + **Conformance** workflows once so a
   recent green run is on hand as a fallback if a live run is slow.
@@ -155,7 +155,7 @@ query, or just describe it.
 
 ---
 
-## Act 2 — Drift loop on a live tenant (≈8 min)
+## Act 2 — Drift loop on a demo tenant (≈8 min)
 
 > Switch to the **connected repo** (real `config/tenant.yml` + creds).
 > Story: "Git is the source of truth. The pipeline continuously proves
@@ -223,16 +223,17 @@ custom detection, then **Save** in the portal. (Editing the *query* is the
 robust choice — it's always part of the drift comparison, unlike fields that
 may be normalised.)
 
-**The production loop — GitHub Actions UI:**
-operator repo → **Actions** → **Drift detection** → **Run workflow** (branch
-`main`) → **Run**. It reads the live tenant (~1 min) and, when it finds
+**The demo loop — GitHub Actions UI:**
+deployment repository → **Actions** → **Drift detection** → **Run workflow** (branch
+`main`) → **Run**. It reads the demo tenant (~1 min) and, when it finds
 drift, **opens a pull request** on a `drift/auto-<run_id>` branch.
 
 Then: **Pull requests** → open the new drift PR → **Files changed** → point
 at your KQL edit on the Sentinel (and Defender) rule.
 
-**Say:** "A portal edit is now a *reviewable PR*, not a silent divergence.
-In production this runs daily — a reviewer accepts the portal change, or
+**Say:** "A portal edit in the demo environment is now a *reviewable PR*,
+not a silent divergence. In a configured deployment this can run daily —
+a reviewer accepts the portal change, or
 rejects the PR and the next deploy restores git's version. Either way it
 never drifts in the dark."
 

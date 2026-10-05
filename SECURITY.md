@@ -34,13 +34,12 @@ and the GHSA advisory.
 
 ## Incident history
 
-### 2026-05 — production tenant + subscription GUIDs in public repo
+### 2026-05 — tenant configuration accidentally published
 
-`config/tenant.yml` was committed to the public repository at
-`KustoKing/SIEMContent` carrying real Entra ID tenant +
-subscription GUIDs (commits `52d5b13`, `76fbaad`). The values were
-not credentials, but they are reconnaissance-grade infrastructure
-identifiers.
+`config/tenant.yml` was committed to a public repository in the
+project's distribution history, carrying real Entra ID tenant and
+subscription GUIDs. The values were not credentials, but they are
+reconnaissance-grade infrastructure identifiers.
 
 **Actions taken**:
 - `config/tenant.yml` deleted from the working tree, replaced with
@@ -62,9 +61,10 @@ identifiers.
   subscription are the responsibility of the repository owner and
   were performed out-of-band.
 
-**Lessons learned**: documented in `docs/operations/branch-protection.md`
-and `CONTRIBUTING.md`. Pre-commit + CI gates now close the recurrence
-path.
+**Lessons learned**: documented in
+[`docs/operations/github-actions-setup.md`](docs/operations/github-actions-setup.md)
+and [`CONTRIBUTING.md`](CONTRIBUTING.md). Pre-commit and CI gates now
+close the recurrence path.
 
 If you cloned the repository before the rotation and still hold a
 copy that contains the original GUIDs, please delete it.

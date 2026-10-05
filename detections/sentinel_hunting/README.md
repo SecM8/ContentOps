@@ -15,9 +15,10 @@ Each hunting query is one YAML file:
 detections/sentinel_hunting/<query-id>.yml
 ```
 
-The `<query-id>` is the canonical envelope id (kebab-case slug). Files
-under this directory are gitignored — they live on your local clone
-and never get committed back to this public pipeline repo.
+The `<query-id>` is the canonical envelope id (kebab-case slug). This
+source repository ships no tenant query YAMLs, and these paths are not
+gitignored. Commit queries to your private deployment repository; do not
+commit tenant detections to a public repository.
 
 ## Authoring
 

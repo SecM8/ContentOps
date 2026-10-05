@@ -245,14 +245,11 @@ for the rule reference.
 | `tenant.yml` present, `scaffoldStrict: false` | warning | exit 0 unless `--fail-on-warn` |
 | `tenant.yml` present, `scaffoldStrict: true` | **error** | exit 1 on first META hit |
 
-**Lenient-by-default** as of PR #241. Adopters with a fresh
+**Lenient by default.** Adopters with a fresh
 `config/tenant.yml` see warnings, not CI-blocking errors, for the
-META002–005 authoring fields — this matches the operational
-reality that the G24 metadata-authoring backlog still exists on
-collected envelopes. Operators with a drained backlog set
+META002–005 authoring fields. Teams may set
 `scaffoldStrict: true` explicitly to upgrade those four rules to
-errors. See [[feedback_internal_fail_fast_public_smooth]] for the
-operator-vs-adopter posture distinction.
+errors.
 
 META006–007 (`blindSpots`, `responseActions`) stay info in both
 modes — "known evasion catalogue" and "inline response steps"
@@ -293,10 +290,9 @@ total on destructive ops.
 
 ### Defaults reasoning
 
-- `writeAllowed: true` — adopters expect a working pipeline on day
-  one. A surprise refusal on first `apply` would be a worse
-  user experience than the unlikely "wrong env" mishap that the
-  gate would catch ([[feedback_internal_fail_fast_public_smooth]]).
+- `writeAllowed: true` — enables deployment workflows by default.
+  Review this setting against your environment's change-control
+  requirements.
 - `purgeAllowed: false` — irreversibly destructive; the burden is
   on the operator to explicitly opt in. Matches the four-eyes
   posture of all the other prune brakes.

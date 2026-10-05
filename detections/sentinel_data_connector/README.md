@@ -17,8 +17,9 @@ detections/sentinel_data_connector/<connector-id>.yml
 ```
 
 The `<connector-id>` is the canonical envelope id (kebab-case slug).
-Files under this directory are gitignored — they live on your local
-clone and never get committed back to this public pipeline repo.
+This source repository ships no tenant connector YAMLs, and these paths
+are not gitignored. Commit connectors to your private deployment
+repository; do not commit tenant detections to a public repository.
 
 ## Authoring
 

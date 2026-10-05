@@ -65,24 +65,22 @@ flowchart LR
     H -- restore --> J[close PR<br/>next deploy re-applies]
 ```
 
-### 3. Deployment topology (one runner, one tenant, public mirror)
+### 3. Deployment topology (one runner, one tenant)
 
 ```mermaid
 flowchart LR
-    subgraph private["KustoKing/SIEMContent (private operator)"]
+    subgraph private["Your private deployment repository"]
         REPO[main branch] --> DEP[deploy.yml]
         DEP --> RUN[GitHub-hosted runner]
     end
     RUN -- "OIDC token (id-token: write)" --> APP[Azure App Registration]
     APP -- ARM REST<br/>2025-07-01-preview --> SENT[Microsoft Sentinel<br/>workspaces]
     APP -- Graph beta<br/>security/rules --> MDE[Microsoft Defender XDR<br/>custom detection rules]
-    REPO -. "nightly public-sync.yml<br/>+ sync-allowlist.txt" .-> PUB[SecM8/ContentOps<br/>public mirror]
 ```
 
-The state branch (`refs/heads/state/<env>`) and the audit JSONL
-artifact are deploy-time outputs of `deploy.yml`; they don't
-appear in the topology diagram because they're internal to the
-repo, not part of the deploy surface.
+The state branch (`refs/heads/state/<env>`) and audit JSONL artifact
+are deploy-time outputs of `deploy.yml`. The public code distribution
+contains no tenant-specific deployment data.
 
 ---
 

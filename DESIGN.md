@@ -562,9 +562,9 @@ public). Auth flows:
 * **Local dev** — `.env` populates env vars; `DefaultAzureCredential`
   picks up the `ClientSecretCredential` chain.
 * **CI** — `azure/login@v2` uses OIDC federated credentials (no
-  client secret in CI). Federated credential subject is bound to
-  `repo:KustoKing/SIEMContent:environment:<production|integration>`
-  on the App Registration.
+  client secret in CI). The federated credential subject is bound to
+  `repo:<org>/<repo>:environment:<production|integration>` on the
+  App Registration.
 
 GitHub Variables (not Secrets) hold `AZURE_CLIENT_ID` and
 `AZURE_TENANT_ID`. No `AZURE_SUBSCRIPTION_ID` variable is needed at

@@ -213,11 +213,11 @@ python -m contentops lint --strict
 `lint --strict` is what CI runs; fixing locally means the PR is green
 from the first push.
 
-> **Heads up — META002–005 default since PR #241.** A fresh
+> **Heads up — META002–005 are lenient by default.** A fresh
 > `config/tenant.yml` runs the META authoring rules in **lenient**
 > mode (warnings, not CI-blocking errors). This matches the
-> operational reality that the G24 authoring backlog still exists
-> on collected envelopes — adopters shouldn't get blocked the
+> possibility that collected envelopes need authoring metadata —
+> adopters shouldn't get blocked the
 > moment they configure tenant.yml. Set
 > `policy.scaffoldStrict: true` explicitly once your team has
 > drained the authoring backlog and wants META002–005 to gate CI.
@@ -383,11 +383,12 @@ click **Configure SSO** next to it, **Authorize** the org.
 ## Public mirror sync cadence
 
 The public mirror at `https://github.com/SecM8/ContentOps` is
-rebuilt nightly from the private operator repo. It ships the **tool,
-templates, samples, and docs** — never the operator's real detection
-content, `config/tenant.yml`, or `audit/`/`state/` (an allowlist plus a
+refreshed nightly from its source repository. It ships the **tool,
+templates, samples, and docs** — not tenant-specific detections,
+`config/tenant.yml`, or `audit/`/`state/` (an allowlist plus a
 forbidden-paths safety check enforce that boundary). **You bring your own
-detections** under `detections/<kind>/`. If you cloned recently and the
+detections** under `detections/<kind>/` in your private deployment
+repository. If you cloned recently and the
 code looks older than expected (CLI banner says `pipeline` rather than
 `contentops`, or you see asset kinds beyond the canonical six listed in
 CLAUDE.md), the mirror just hadn't synced yet. Pull fresh:

@@ -12,6 +12,11 @@
 > preview looks identical to HTTP 200 from a stable GA endpoint, and
 > HTTP 405 (see 2026-05-15 finding below) means the path now exists
 > but the verb is rejected — the rollout is in progress, not done.
+>
+> **Historical probe results:** the latest result recorded here is from
+> 2026-05-23. It is not a current endpoint-status check; verify against
+> Microsoft documentation and your own test environment before relying
+> on it.
 
 The master spec called for handlers covering three Defender XDR
 extension surfaces:
@@ -24,25 +29,24 @@ extension surfaces:
 
 ### 2026-05-06 — endpoints don't exist
 
-A live probe of the production tenant's Microsoft Graph beta
-(`/beta/security/...`) on **2026-05-06** found:
+A project probe of Microsoft Graph beta (`/beta/security/...`) on
+**2026-05-06** found:
 
 | Endpoint | Result |
 |---|---|
 | `/beta/security/savedQueries` | `400 Bad Request — Resource not found for the segment 'savedQueries'` |
 | `/beta/security/rules/detectionTuningRules` | `400 Bad Request — Resource not found for the segment 'detectionTuningRules'` |
-| `/beta/security/alerts_v2` | `403 Forbidden — Missing application roles. API required roles: SecurityAlert.Read.All, SecurityAlert.ReadWrite.All, SecurityIncident.Read.All, SecurityIncident.ReadWrite.All` |
+| `/beta/security/alerts_v2` | `403 Forbidden — the test identity lacked required application roles` |
 
 Two of the three endpoints **do not exist** at the path the spec
 listed. The third (`alerts_v2`) exists but the suppression-rule
-sub-resource path the spec implies isn't documented; even getting a
-listing response requires `SecurityAlert.*` permissions the
-pipeline's service principal doesn't currently hold.
+sub-resource path the spec implies isn't documented; the authorization
+failure alone does not establish whether the API is available.
 
 ### 2026-05-15 — rollout in progress (HTTP 405)
 
-Re-probed during PR #161 (CI run on `chore/o3-p3-backlog`). Path
-segments now resolve, but the verb is rejected:
+A later probe on **2026-05-15** found that the path segments resolved,
+but the verb was rejected:
 
 | Endpoint | Status | Detail |
 |---|---:|---|
@@ -63,9 +67,8 @@ Tuesday at 06:00 UTC and will surface the next transition.
 
 ### 2026-05-23 — still 405; probe tightened to match this rule
 
-Re-probed via manual dispatch (run
-[26328263924](https://github.com/KustoKing/SIEMContent/actions/runs/26328263924)).
-All three endpoints **still return HTTP 405** — same state as
+Re-probed via manual dispatch on **2026-05-23**. All three endpoints
+**still returned HTTP 405** — same state as
 2026-05-15, no movement in the eight days since. Microsoft Learn
 search still returns no Graph CRUD documentation for any of the three
 resource paths (only the related audit-record type
@@ -83,21 +86,17 @@ exits 2 when there's something genuinely new to act on. Code at
 `contentops/defender_extensions_probe.py:_classify`; tests at
 `tests/v2/test_defender_extensions_probe.py::test_probe_405_is_NOT_available_but_keeps_verb_note`.
 
-**Permissions update.** The pipeline's App Registration now holds
-`CustomDetection.ReadWrite.All` (verified end-to-end via the live
-CRUD round-trip at `tests/integration/test_defender_custom_detection_crud.py`,
-6-second pass on 2026-05-23) and `ThreatHunting.Read.All` (new). The
-runtime is therefore ready the moment any of the three deferred
-endpoints transitions to a documented GA-with-CRUD surface and a
-matching application permission is published — no further App Reg
-work needed for the most likely Defender-XDR shapes.
+For adopter permission requirements, use
+[`authentication-setup.md`](../operations/authentication-setup.md).
+The grants on a project test identity are not a permission template for
+other deployments.
 
 ## Status
 
 These three handlers are **deferred until Microsoft ships the
 endpoints** (or until the spec is corrected to point at the real
 endpoints, if they exist on a different path). The pipeline's
-`DefenderClient` (`contentops/defender/client.py`) is the production
+`DefenderClient` (`contentops/defender/client.py`) is the
 Graph beta client; a new handler would either use it directly (if
 the new endpoint sits under `/beta/security/rules/...`) or take a
 small refactor to parameterise the base URL. Either way the gating

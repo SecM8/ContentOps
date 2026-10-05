@@ -134,9 +134,10 @@ These are non-negotiable; the envelope won't parse without them.
 `description`, `attackDescription`, `references`,
 `falsePositives`, `blindSpots`, `responseActions`. The scaffold
 seeds each with a `TODO (METAxxx)` placeholder; fill them in
-before opening the PR. The lint rules (META002-005) escalate to
-**errors** when the tenant has `policy.scaffoldStrict` unset or
-true, which is the strict-by-default Fortune 500 posture.
+before opening the PR. META002-005 are **warnings by default**;
+set `policy.scaffoldStrict: true` in `config/tenant.yml` to make
+those four rules CI-blocking errors once the authoring backlog is
+drained.
 
 Treat the Section T fields as the analyst-context block that
 SOC triage will read first. The
@@ -163,7 +164,8 @@ contentops plan --asset sentinel_analytic
 Both must exit 0. Common reasons a fresh scaffold won't pass lint:
 
 - `KQL001 unbalanced-bracket` — check inline JSON / parens.
-- `META002-005` at error severity — fill the Section T fields.
+- `META002-005` warnings (errors once `policy.scaffoldStrict: true`)
+  — fill the Section T fields.
 - `META001` warning — bump `lastValidatedAt` once you've validated
   the rule (manual KQL run, fixture replay, dry-run apply).
 
@@ -410,9 +412,8 @@ the partial PR; the next deploy will reapply git's version and the
 tenant will catch up.
 
 Persistent `CHANGED` on the same rules every day is a handler bug.
-(G2 — 46 defender_custom_detection rules that once reported this —
-was resolved by unifying the server-field strip logic; see
-[`reference/gap-assessment.md`](reference/gap-assessment.md).)
+The handler strips server-managed fields before comparison; see
+[`reference/gap-assessment.md`](reference/gap-assessment.md).
 
 ---
 

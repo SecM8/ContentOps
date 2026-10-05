@@ -8,7 +8,6 @@ exchange contention against Azure Entra ID.
 
 | Time  | Workflow                    | OIDC | Notes                              |
 |-------|-----------------------------|------|------------------------------------|
-| 03:00 | Public mirror sync          | No   | PAT-based mirror push              |
 | 04:00 | Status refresh              | Yes  | Regenerate L1-L7 status pages      |
 | 04:17 | Secret scan                 | No   | Full-history scan                  |
 | 06:00 | Drift detection             | Yes  | Drift detection + auto-PR          |
@@ -45,10 +44,8 @@ exchange contention against Azure Entra ID.
 - No two OIDC workflows share the same cron minute.
 - Monday workflows are spread across 04:00-08:00 (previously
   clustered at 06:00-07:00).
-- All scheduled OIDC workflows have a public-mirror gate
-  (`github.repository == 'KustoKing/SIEMContent' ||
-  vars.CONTENTOPS_SCHEDULES == 'true'`) so they silently skip on the
-  code-only mirror — **and on any fork that has not opted in**.
-  Forks opt in by setting the repo variable
-  `CONTENTOPS_SCHEDULES=true`, no workflow edits; see
+- Scheduled tenant-facing workflows are inactive on the code-only
+  mirror and in deployment forks by default. Deployment repositories
+  opt in by setting the repo variable `CONTENTOPS_SCHEDULES=true`,
+  with no workflow edits; see
   [`github-actions-setup.md` §6](github-actions-setup.md#6-scheduled-workflows--opt-in-with-contentops_schedules).

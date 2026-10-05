@@ -103,18 +103,19 @@ A downstream consumer reviewing the release artefacts:
 
 ```bash
 # Pull the wheel + SBOM + provenance from the release.
-gh release download v0.1.1 --repo KustoKing/SIEMContent --pattern '*.whl' --pattern 'sbom*' 
+gh release download v0.1.1 --repo <org>/<repo> --pattern '*.whl' --pattern 'sbom*'
 
 # Verify the wheel was built from this tag.
-gh attestation verify contentops-0.1.1-py3-none-any.whl --owner KustoKing
+gh attestation verify contentops-0.1.1-py3-none-any.whl --owner <org>
 
 # Scan the SBOM for known advisories.
 grype sbom:sbom.cdx.json --output table
 osv-scanner --sbom=sbom.cdx.json
 ```
 
-The attestation verification establishes "this artefact came from a
-GitHub Actions runner building from `v0.1.1` of `KustoKing/SIEMContent`".
+The attestation verification establishes that the artefact came from a
+GitHub Actions runner building tag `v0.1.1` in the repository you
+downloaded it from.
 Combine it with the wheel's checksum to pin a known good artefact in
 your downstream lockfile.
 
@@ -158,8 +159,8 @@ when **at least one of these criteria is met**:
 
 1. **Milestone completion** — a phase from the operationalisation roadmap
    (or another tracked initiative) finished and the milestone is worth
-   citing. Example: "v0.2.0 — closes G24 metadata backlog + Phase 2
-   lifecycle gating."
+   citing. Example: "v0.2.0 — closes the metadata backlog + lifecycle
+   gating."
 2. **Security-relevant fix landed** — any bandit/semgrep/pip-audit
    advisory was suppressed or resolved, OR a tenant-config or OIDC
    surface changed in a way external adopters need to know about. These
@@ -194,8 +195,8 @@ install a prerelease unless explicitly requested.
 Before `git tag -a v...`, the tag author confirms each of the following:
 
 - [ ] **Lint backlog state** — `contentops lint --strict --path detections/`
-  exits 0; or if it doesn't, the residual count is documented in the
-  release notes (e.g. "G24 still has 12 rules pending enrichment").
+  exits 0; or if it doesn't, the remaining work is documented in the
+  release notes.
 - [ ] **Audit-verify is green** — the latest scheduled `audit-verify.yml`
   run passed; if there's an open chain break, do not tag until recovery
   per [`operations/audit-recovery.md`](../operations/audit-recovery.md).
@@ -252,4 +253,4 @@ distinct concern), see
 - [`CHANGELOG.md`](../../CHANGELOG.md) — durable human-curated
   changelog (Keep a Changelog format).
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — workflow source.
-- [GitHub Releases](https://github.com/KustoKing/SIEMContent/releases) — published artefacts.
+- GitHub Releases for your source repository — published artefacts.
