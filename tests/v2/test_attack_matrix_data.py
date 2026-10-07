@@ -79,3 +79,67 @@ def test_defense_evasion_technique_resolves_at_runtime() -> None:
     )
     lookup = _technique_to_tactics()
     assert "DefenseEvasion" in lookup.get(tid, ())
+
+
+# ---------------------------------------------------------------------------
+# Release metadata: version + retired ids (review finding: revoked ids were
+# dropped silently, so T1562.x tags scored zero).
+# ---------------------------------------------------------------------------
+
+
+def test_full_matrix_records_attack_version() -> None:
+    import re
+
+    version = _load_full_matrix()["attack_version"]
+    assert re.fullmatch(r"\d+(\.\d+)?", version), version
+
+
+def test_revoked_ids_map_to_current_techniques() -> None:
+    doc = _load_full_matrix()
+    current = {t["id"] for t in doc["techniques"]} | {t["id"] for t in doc["sub_techniques"]}
+    revoked = doc["revoked"]
+    assert revoked, "expected MITRE revoked-by mappings in the bundled matrix"
+    assert not set(revoked) & current, "a revoked id is also listed as current"
+    assert set(revoked.values()) <= current, "a revocation points at a non-current id"
+    assert not set(doc["deprecated"]) & current
+
+
+def test_impair_defenses_resolves_to_a_current_defense_evasion_technique() -> None:
+    from contentops.coverage.matrix import load_matrix
+
+    matrix = load_matrix()
+    current, status = matrix.resolve("T1562.001")
+    assert status == "revoked" and current is not None
+    assert "DefenseEvasion" in matrix.tactics_for(current)
+
+
+def test_curated_list_follows_the_full_matrix() -> None:
+    from contentops.coverage.gaps import load_techniques
+    from contentops.coverage.matrix import load_matrix
+
+    matrix = load_matrix()
+    curated, _ = load_techniques(mode="curated")
+    assert curated
+    for ref in curated:
+        assert matrix.is_current(ref.id), ref.id
+        assert set(ref.tactics) == set(matrix.tactics_for(ref.id)), ref.id
+    path = resources.files("contentops.coverage.data") / "mitre_attack_techniques.json"
+    raw_ids = {t["id"] for t in json.loads(path.read_text(encoding="utf-8"))["techniques"]}
+    assert raw_ids <= set(matrix.technique_tactics), (
+        f"curated file lists retired ids: {sorted(raw_ids - set(matrix.technique_tactics))}"
+    )
+
+
+def test_custom_reference_list_remaps_revoked_ids(tmp_path) -> None:
+    from contentops.coverage.gaps import load_techniques
+
+    custom = tmp_path / "mine.json"
+    custom.write_text(json.dumps({"techniques": [
+        {"id": "T1562.001", "name": "Disable or Modify Tools", "tactics": ["DefenseEvasion"]},
+        {"id": "T9999", "name": "Org-specific", "tactics": ["Impact"]},
+    ]}), encoding="utf-8")
+    refs, label = load_techniques(custom)
+    assert label == "custom: mine.json"
+    ids = [r.id for r in refs]
+    assert "T1562.001" not in ids and ids[1] == "T9999"
+    assert ids[0] != "T1562.001" and refs[0].tactics == ("DefenseEvasion",)

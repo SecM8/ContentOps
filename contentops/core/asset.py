@@ -32,6 +32,27 @@ class Asset(str, enum.Enum):
     DEFENDER_CUSTOM_DETECTION = "defender_custom_detection"
 
 
+# The detection-class kinds: assets that carry a query and MITRE ATT&CK
+# attribution. Single definition; coverage, report and portfolio alias it.
+DETECTION_ASSETS: frozenset[Asset] = frozenset({
+    Asset.SENTINEL_ANALYTIC,
+    Asset.SENTINEL_HUNTING,
+    Asset.DEFENDER_CUSTOM_DETECTION,
+})
+
+
+def payload_display_name(payload: object) -> str:
+    """The rule's display name as the platform shows it (``displayName``;
+    ``DisplayName`` on some collected payloads), or ``""``."""
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("displayName", "DisplayName"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 # Baseline ``version`` stamped on a freshly collected / scaffolded
 # envelope. The remote tenant has no semver concept for these assets, so
 # collect/`to_envelope` must invent a starting version. We use 1.0.0

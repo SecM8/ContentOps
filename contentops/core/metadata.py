@@ -32,7 +32,11 @@ Tactic = Literal[
 
 Severity = Literal["informational", "low", "medium", "high"]
 
-_TECHNIQUE_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
+# Canonical ATT&CK technique id: T#### or T####.### (upper-case T).
+# Public so coverage normalises payload ids with the same rule metadata
+# validation uses; ``_TECHNIQUE_RE`` stays as the historical alias.
+TECHNIQUE_ID_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
+_TECHNIQUE_RE = TECHNIQUE_ID_RE
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # D3FEND technique id format: D3-XXX (capital letters / digits after the
 # hyphen). Examples: D3-NTA (Network Traffic Analysis),

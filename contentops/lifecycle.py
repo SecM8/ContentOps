@@ -339,12 +339,15 @@ def gate_fp_rate_threshold(
 
     Behaviour:
       * KQL call fails -> fail-closed.
-      * Rule's ``payload.displayName`` not in response rows ->
+      * Rule not in response rows (its rule-id rows --
+        ``metadata.arm_name`` / envelope id -- and ``payload.displayName``
+        rows, summed; see :mod:`contentops.rule_keys`) ->
         passed=True (rule hasn't fired; no data to evaluate).
-      * incidents_30d == 0 -> passed=True (no incidents; FP-rate
-        undefined).
-      * Otherwise compare ``closed_fp_30d / incidents_30d`` against
-        ``threshold`` and pass iff the ratio is at or below the cap.
+      * No incident closed as TP / FP / BP -> passed=True (FP-rate
+        undefined; open and Undetermined incidents carry no verdict).
+      * Otherwise compare :func:`contentops.workspace_kql.closed_fp_rate`
+        (closed FP / closed TP + FP + BP) against ``threshold`` and pass
+        iff the rate is at or below the cap.
     """
     if not workspace_id or not token:
         return _no_workspace_gate("fp_rate_threshold", workspace_error)
@@ -355,6 +358,7 @@ def gate_fp_rate_threshold(
 
     from contentops.workspace_kql import (
         WorkspaceKqlError,
+        closed_fp_rate,
         telemetry_query,
     )
 
@@ -377,10 +381,11 @@ def gate_fp_rate_threshold(
             detail=f"workspace query crashed: {exc}",
         )
 
+    from contentops.rule_keys import TelemetryIndex, rule_keys_from_raw
+
     payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
     display_name = str(payload.get("displayName") or "")
-    by_name = {str(r.get("rule_name") or ""): r for r in (result.rows or [])}
-    row = by_name.get(display_name)
+    row = TelemetryIndex(result.rows or []).lookup(rule_keys_from_raw(envelope))
     if row is None:
         return GateResult(
             name="fp_rate_threshold",
@@ -389,13 +394,21 @@ def gate_fp_rate_threshold(
         )
     incidents = int(row.get("incidents_30d") or 0)
     closed_fp = int(row.get("closed_fp_30d") or 0)
-    if incidents == 0:
+    closed = sum(
+        int(row.get(column) or 0)
+        for column in ("closed_tp_30d", "closed_fp_30d", "closed_bp_30d")
+    )
+    pending = max(incidents - closed, 0)
+    fp_rate = closed_fp_rate(row)
+    if fp_rate is None:
         return GateResult(
             name="fp_rate_threshold",
             passed=True,
-            detail="no incidents in window — FP-rate undefined",
+            detail=(
+                f"no incident closed TP/FP/BP over {since_days}d "
+                f"({pending} open or undetermined) — FP-rate undefined"
+            ),
         )
-    fp_rate = closed_fp / incidents
     passed = fp_rate <= threshold
     return GateResult(
         name="fp_rate_threshold",
@@ -403,7 +416,8 @@ def gate_fp_rate_threshold(
         detail=(
             f"fp_rate={fp_rate:.3f} "
             f"({'<=' if passed else '>'} threshold {threshold:.3f}; "
-            f"closed_fp={closed_fp}/incidents={incidents} over {since_days}d)"
+            f"closed_fp={closed_fp} of {closed} closed TP/FP/BP, "
+            f"{pending} open or undetermined, over {since_days}d)"
         ),
     )
 

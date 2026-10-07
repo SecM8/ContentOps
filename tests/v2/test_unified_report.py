@@ -414,3 +414,46 @@ class TestFriendlyServiceSource:
         result = _friendly_service_source('<script>microsoft</script>')
         assert "<script>" not in result
         assert "&lt;script&gt;" in result
+
+
+# ---------------------------------------------------------------------------
+# Coverage scope (review: one shared coverage source / honest headline)
+# ---------------------------------------------------------------------------
+
+
+def _scoped_row(rule_id: str, tactics: tuple[str, ...], *, in_scope: bool) -> ReportRow:
+    return ReportRow(
+        rule_id=rule_id, asset_kind="sentinel_analytic", path=f"{rule_id}.yml",
+        title=rule_id, status="production" if in_scope else "experimental",
+        severity="high", tactics=tactics, techniques=("T1059",),
+        merge_date=None, deployment_date=None, last_review_date=None,
+        in_coverage_scope=in_scope,
+    )
+
+
+def test_unified_heatmap_counts_only_in_scope_rules_and_shows_gaps() -> None:
+    from contentops.report.unified import _render_ciso
+
+    rows = [
+        _scoped_row("prod-exec", ("Execution",), in_scope=True),
+        _scoped_row("exp-impact", ("Impact",), in_scope=False),
+    ]
+    html = _render_ciso(_summary(), None, rows)
+    assert "MITRE ATT&amp;CK Coverage" in html or "MITRE ATT&CK Coverage" in html
+    impact_row = html.split("Impact", 1)[1].split("</tr>", 1)[0]
+    # The experimental Impact rule is out of scope -> Impact is a gap.
+    assert "GAP" in impact_row
+    assert "Reconnaissance" in html  # every Enterprise tactic is listed
+
+
+def test_unified_active_detections_card_uses_the_coverage_scope() -> None:
+    summary = ReportSummary(
+        total=5, production=4, experimental=1, deprecated=0,
+        coverage_pct=10, coverage_covered=22, coverage_total=222,
+        generated_at="2026-05-23T16:00:00Z", in_scope_detections=3,
+        coverage_scope="enabled production detections (hunting queries excluded)",
+    )
+    html = render_unified_html([], summary)
+    # _card renders the value just before the title.
+    value = html.split(">Active Detections<", 1)[0].rsplit("</div>", 2)[-2]
+    assert value.endswith(">3")

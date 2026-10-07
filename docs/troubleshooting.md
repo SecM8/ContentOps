@@ -796,6 +796,7 @@ drift-gated, so trust it over this table if they ever disagree.
 
 | Rule | Severity | What it flags | Fix |
 |---|---|---|---|
+| `ENVELOPE001` | error | A YAML file under `detections/` doesn't load as an envelope (invalid YAML, empty, missing `id` / `version` / `asset` / `status`, unknown asset kind, or a field that fails validation). `plan` and `apply` would skip it, so it never deploys. | Fix what the message names: the YAML line, the field and its error, or the missing key. |
 | `KQL000` | warning | Strict-lint plumbing: the Kusto.Language wrapper failed to invoke / exited non-zero, or an allowlist entry was unparseable; also the channel for wrapper-emitted diagnostics. | Read the appended detail; fix the allowlist entry or rebuild the wrapper (`scripts/build_kql_strict.*`). |
 | `KQL001` | error | Unbalanced bracket — an unexpected `)`/`]`/`}` or an opener that's never closed. | Balance the brackets in the KQL. |
 | `KQL002` | error | Unterminated string at end of query. | Close the open quote. |

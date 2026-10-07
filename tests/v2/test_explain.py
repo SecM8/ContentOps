@@ -318,3 +318,76 @@ def test_cli_explain_json_format(workspace: Path) -> None:
     parsed = json.loads(result.output)
     assert parsed["found"] is True
     assert parsed["asset"] == "sentinel_analytic"
+
+
+# ---------------------------------------------------------------------------
+# ATT&CK from the payload (collected rules) via the coverage extractor
+# ---------------------------------------------------------------------------
+
+
+_COLLECTED = """\
+id: collected-rule
+version: 1.0.0
+asset: sentinel_analytic
+status: production
+metadata:
+  arm_name: 6babf568-0000-4000-8000-000000000001
+payload:
+  displayName: Collected Rule
+  tactics: [CredentialAccess]
+  techniques: [T1110, T1086, T1026, T9999, "T1`|x\\nbad"]
+  query: SecurityEvent | take 1
+"""
+
+
+def _explain_collected(tmp_path: Path) -> ex.Explain:
+    detections = tmp_path / "detections" / "sentinel_analytic"
+    detections.mkdir(parents=True)
+    (detections / "collected-rule.yml").write_text(_COLLECTED, encoding="utf-8")
+    return ex.build_explain(
+        "collected-rule",
+        detections_root=tmp_path / "detections",
+        audit_dir=tmp_path / "audit", state_root=tmp_path, drift_root=tmp_path,
+    )
+
+
+def test_collected_rule_shows_its_payload_attack_tags(tmp_path: Path) -> None:
+    """A collected rule carries its ATT&CK tags in the payload only;
+    explain used to read metadata and show none."""
+    e = _explain_collected(tmp_path)
+    assert e.severity is None
+    assert e.tactics == ["CredentialAccess"]
+    # T1086 was revoked -> T1059.001; deprecated and unknown ids are shown
+    # but noted; the malformed value is dropped.
+    assert e.techniques == ["T1026", "T1059.001", "T1110", "T9999"]
+    md = ex.render_markdown(e)
+    assert "ATT&CK:     Tactics: CredentialAccess  •  Techniques: T1026, T1059.001" in md
+
+
+def test_attack_notes_name_bad_ids_inertly(tmp_path: Path) -> None:
+    e = _explain_collected(tmp_path)
+    assert e.attack_notes[:3] == [
+        "`T1086` was revoked by MITRE; counted as `T1059.001`. Update the tag.",
+        "`T1026` is deprecated in ATT&CK v19.2; not counted.",
+        "`T9999` is not in ATT&CK v19.2; not counted.",
+    ]
+    malformed = e.attack_notes[3]
+    # Backticks, pipes and the line break can't escape the code span.
+    assert malformed.startswith("`T1'/x bad` is not a technique id")
+    assert "\n" not in malformed
+    md = ex.render_markdown(e)
+    assert "            note: `T1086` was revoked" in md
+    assert json.loads(ex.render_json(e))["attack_notes"] == e.attack_notes
+
+
+def test_authored_rule_keeps_its_metadata_tags(workspace: Path) -> None:
+    e = ex.build_explain(
+        "brute-force-ssh-001",
+        detections_root=workspace / "detections",
+        audit_dir=workspace / "audit",
+        state_root=workspace, drift_root=workspace,
+    )
+    assert (e.tactics, e.techniques, e.attack_notes) == (["CredentialAccess"], ["T1110"], [])
+    md = ex.render_markdown(e)
+    assert "Severity:   medium\n" in md
+    assert "ATT&CK:     Tactics: CredentialAccess  •  Techniques: T1110\n" in md

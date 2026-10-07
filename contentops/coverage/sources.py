@@ -29,9 +29,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from contentops.core.asset import kql_body_from_payload
-from contentops.core.discovery import iter_loaded_assets
-from contentops.coverage.report import DETECTION_ASSETS
-from contentops.report.enrich import _load_schema_tables
+from contentops.coverage.corpus import Corpus, CoverageScope, load_corpus
+from contentops.utils.kql_schema import load_schema_tables
 
 # Repo-root-anchored schema files (committed; also mirrored to adopters).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -69,7 +68,7 @@ def load_known_tables() -> frozenset[str]:
     source as unrecognised, with a clear note, rather than crashing)."""
     names: set[str] = set()
     for path in _SCHEMA_FILES:
-        names |= _load_schema_tables(path)
+        names |= load_schema_tables(path)
     return frozenset(names)
 
 
@@ -112,28 +111,31 @@ class SourceCoverageReport:
     detections_without_known_source: int     # no recognised table (custom/parser/typo)
     unrecognised_tables: tuple[str, ...]     # extracted but not in the schema surface
     known_tables_available: bool
+    scope_label: str = ""
 
 
-def compute_source_coverage(detections_root: Path) -> SourceCoverageReport:
-    """Bucket detection-class envelopes by the data source(s) they read."""
+def compute_source_coverage(
+    detections_root: Path,
+    *,
+    scope: CoverageScope | None = None,
+    corpus: Corpus | None = None,
+) -> SourceCoverageReport:
+    """Bucket the in-scope detections by the data source(s) they read
+    (same scope as every other coverage view)."""
     known = load_known_tables()
     per_source: dict[str, SourceCoverage] = {}
     unrecognised: set[str] = set()
     total = 0
     with_known = 0
 
+    corpus = corpus or load_corpus(detections_root, scope=scope)
     if detections_root.is_dir():
-        for la in iter_loaded_assets(detections_root):
-            if la.envelope.asset not in DETECTION_ASSETS:
-                continue
-            query = kql_body_from_payload(la.envelope.asset, la.payload)
+        for entry in corpus.in_scope():
+            query = kql_body_from_payload(entry.asset, dict(entry.payload))
             if not query:
                 continue
             total += 1
-            is_prod = (
-                str(getattr(la.envelope, "status", "") or "").strip().lower()
-                == "production"
-            )
+            is_prod = entry.is_production
             tables = extract_source_tables(query, known)
             if tables:
                 with_known += 1
@@ -157,6 +159,7 @@ def compute_source_coverage(detections_root: Path) -> SourceCoverageReport:
         detections_without_known_source=total - with_known,
         unrecognised_tables=tuple(sorted(unrecognised)),
         known_tables_available=bool(known),
+        scope_label=corpus.scope.label,
     )
 
 
@@ -197,6 +200,9 @@ def render_markdown(report: SourceCoverageReport) -> str:
         lines.append("")
         return "\n".join(lines)
 
+    if report.scope_label:
+        lines.append(f"_Scope: {report.scope_label}._")
+        lines.append("")
     lines.append(
         f"**{report.total_detections}** detection(s); "
         f"**{report.detections_with_a_known_source}** map to a known data "

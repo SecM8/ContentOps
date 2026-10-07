@@ -6,13 +6,20 @@
 The score is a single number per rule, weighting the three behaviours a
 detection-engineer typically watches:
 
-* **true positives** (``incidents_30d - closed_fp_30d``) — incidents
-  raised by the rule that the analyst kept open. Positive contribution.
+* **true positives** (``closed_tp_30d``) — incidents the analyst
+  closed as TruePositive. Positive contribution. Open, BenignPositive
+  and Undetermined incidents are not TPs (this used to be
+  ``incidents_30d - closed_fp_30d``, which credited every open or
+  benign incident as one).
 * **false positives** (``closed_fp_30d``) — incidents the analyst
-  closed as benign. Negative contribution, weighted higher than TPs
-  because analyst time burned on bad alerts is the dominant cost.
-* **silence** (``alerts_30d == 0``) — rule didn't fire at all in the
-  lookback window. A flat penalty rather than scaled, since silence
+  closed as FalsePositive. Negative contribution, weighted higher than
+  TPs because analyst time burned on bad alerts is the dominant cost.
+* **silence** (``alerts_30d == 0`` and ``incidents_30d == 0``) — rule
+  didn't fire at all in the lookback window. Incidents count as firing:
+  a rule can have incidents and no alerts of its own in the window (a
+  Microsoft Security incident-creation rule, whose alerts belong to
+  another product; an incident updated in the window whose alert
+  predates it). A flat penalty rather than scaled, since silence
   is a binary "is this rule still useful?" signal more than a
   magnitude.
 
@@ -101,19 +108,16 @@ def compute_score(row: dict[str, Any], weights: ScoreWeights) -> float | None:
     """
     alerts = row.get("alerts_30d")
     incidents = row.get("incidents_30d")
+    closed_tp = row.get("closed_tp_30d")
     closed_fp = row.get("closed_fp_30d")
 
     # No telemetry merged at all — distinct from "telemetry says zero."
-    if alerts is None and incidents is None and closed_fp is None:
+    if alerts is None and incidents is None and closed_tp is None and closed_fp is None:
         return None
 
-    incidents_val = int(incidents or 0)
-    closed_fp_val = int(closed_fp or 0)
-    alerts_val = int(alerts or 0)
-
-    tp = max(0, incidents_val - closed_fp_val)
-    fp = closed_fp_val
-    silent = alerts_val == 0
+    tp = int(closed_tp or 0)
+    fp = int(closed_fp or 0)
+    silent = int(alerts or 0) == 0 and int(incidents or 0) == 0
 
     score = (tp * weights.tp) - (fp * weights.fp)
     if silent:

@@ -57,6 +57,8 @@ from typing import Any, Literal
 import httpx
 import yaml
 
+from contentops.utils.http_retry import is_same_origin, url_origin
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,7 +82,9 @@ def _az_signed_in() -> bool:
         return False
     return result.returncode == 0
 
-Status = Literal["PASS", "FAIL", "SKIP", "INFO"]
+# WARN: needs attention but is a supported configuration -- never fails the
+# report (``ConformanceReport.failed`` counts FAIL only).
+Status = Literal["PASS", "FAIL", "WARN", "SKIP", "INFO"]
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +310,7 @@ _GUID_RE = re.compile(
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
 )
 _PLACEHOLDER_GUID = "00000000-0000-0000-0000-000000000000"
+_GRAPH_V1_BASE = "https://graph.microsoft.com/v1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -851,7 +856,7 @@ def check_l4_graph_permissions(
     # the 404/403/non-200 early returns below — without relying on a
     # trailing ``finally`` that a future early return could outrun.
     with httpx.Client(
-        base_url="https://graph.microsoft.com/v1.0",
+        base_url=_GRAPH_V1_BASE,
         headers=headers,
         timeout=httpx.Timeout(connect=10.0, read=15.0, write=15.0, pool=10.0),
     ) as client:
@@ -901,6 +906,16 @@ def check_l4_graph_permissions(
             next_link = ar_body.get("@odata.nextLink")
             _pages = 0
             while next_link and _pages < 50:
+                # The client carries a Graph bearer token: never follow a
+                # nextLink that leaves the Graph origin.
+                if not is_same_origin(next_link, url_origin(_GRAPH_V1_BASE)):
+                    report.add(ConformanceCheck(
+                        layer, "app_role_assignments_paging", "FAIL",
+                        "refused to follow an appRoleAssignments @odata.nextLink "
+                        "outside graph.microsoft.com; the assignment list may be "
+                        "incomplete",
+                    ))
+                    break
                 nr = client.get(next_link)
                 if nr.status_code != 200:
                     break
@@ -1507,6 +1522,97 @@ def check_l7_github(
                 f"main requires {len(config.github_required_checks)} checks",
             ))
 
+    _check_pr_environments(report, config, repo, layer)
+
+
+# GitHub environments whose credentials same-repository pull_request jobs
+# receive (fork PRs never do: the workflows guard on head.repo). The names
+# are hard-coded in the workflows, so they are here too.
+_PR_ENVIRONMENTS: tuple[tuple[str, str], ...] = (
+    ("integration", "integration-deploy"),
+    ("automation", "drift-pr and tuning-impact-preview"),
+)
+
+
+def _check_pr_environments(
+    report: ConformanceReport, config: ConformanceConfig, repo: str, layer: str,
+) -> None:
+    """WARN when a PR-reachable environment hands out credentials without a
+    required reviewer.
+
+    Never FAIL: a deployment may deliberately run one shared identity
+    (``identity_mode: single``) and accept the risk -- the check makes the
+    trade-off visible instead of blocking it. ``automation`` in split mode
+    is INFO: its identity is the read-only one, which L5 checks holds no
+    write.
+    """
+    rc, body = _gh_api(f"repos/{repo}/environments")
+    if rc != 0 or not isinstance(body, dict):
+        report.add(ConformanceCheck(
+            layer, "environment_protection", "SKIP",
+            f"environments unreadable with this token: {str(body)[:200]}",
+        ))
+        return
+    environments = {
+        str(env.get("name")): env
+        for env in body.get("environments") or []
+        if isinstance(env, dict)
+    }
+    single = config.identity_mode == "single"
+    for env_name, jobs in _PR_ENVIRONMENTS:
+        name = f"environment_protection[{env_name}]"
+        env = environments.get(env_name)
+        if env is None:
+            report.add(ConformanceCheck(
+                layer, name, "SKIP", f"no '{env_name}' environment in {repo}",
+            ))
+            continue
+        rules = env.get("protection_rules") or []
+        if any(isinstance(r, dict) and r.get("type") == "required_reviewers" for r in rules):
+            report.add(ConformanceCheck(
+                layer, name, "PASS",
+                f"'{env_name}' requires a reviewer before same-repo PR jobs "
+                f"({jobs}) get its credentials",
+            ))
+            continue
+        if env_name == "automation" and not single:
+            report.add(ConformanceCheck(
+                layer, name, "INFO",
+                f"same-repo PR jobs ({jobs}) run with the read-only automation "
+                "identity (identity_mode: split; L5 checks it holds no write) "
+                "-- no reviewer needed",
+            ))
+            continue
+        if env_name == "automation":
+            detail = (
+                f"same-repo PR jobs ({jobs}) run PR code with the shared write "
+                "identity (identity_mode: single) and no required reviewer"
+            )
+            remediation = (
+                "Prefer identity_mode: split (a read-only automation identity). "
+                "A required reviewer on 'automation' also gates its scheduled "
+                "runs. A single shared identity stays supported; this is a "
+                "warning, not a failure."
+            )
+        else:
+            identity = (
+                "the shared identity that also deploys to production "
+                "(identity_mode: single)" if single
+                else "the 'integration' identity"
+            )
+            detail = (
+                f"same-repo PR jobs ({jobs}) run PR code with {identity} and "
+                "no required reviewer -- a pull request can deploy before "
+                "anyone approves it"
+            )
+            remediation = (
+                "Add required reviewers to the 'integration' environment, or "
+                "scope its identity to the integration workspace only "
+                "(identity_mode: split). A single shared identity stays "
+                "supported; this is a warning, not a failure."
+            )
+        report.add(ConformanceCheck(layer, name, "WARN", detail, remediation))
+
 
 # ---------------------------------------------------------------------------
 # Orchestration
@@ -1569,6 +1675,7 @@ _LAYER_TITLES: dict[str, str] = {
 _STATUS_GLYPHS: dict[str, str] = {
     "PASS": "[PASS]",
     "FAIL": "[FAIL]",
+    "WARN": "[WARN]",
     "SKIP": "[SKIP]",
     "INFO": "[INFO]",
 }
@@ -1600,8 +1707,8 @@ def render_text(report: ConformanceReport) -> str:
         for c in by_layer[layer]:
             glyph = _STATUS_GLYPHS.get(c.status, c.status)
             lines.append(f"  {glyph}  {c.name}: {c.detail}")
-            if c.status == "FAIL" and c.remediation:
-                # Indent remediation under the failing check.
+            if c.status in ("FAIL", "WARN") and c.remediation:
+                # Indent remediation under the failing / warning check.
                 lines.append(f"         remediation: {c.remediation}")
         lines.append("")
 
@@ -1609,16 +1716,18 @@ def render_text(report: ConformanceReport) -> str:
     pass_n = sum(1 for c in report.checks if c.status == "PASS")
     skip_n = sum(1 for c in report.checks if c.status == "SKIP")
     info_n = sum(1 for c in report.checks if c.status == "INFO")
+    warn_n = sum(1 for c in report.checks if c.status == "WARN")
+    warn_bit = f", {warn_n} WARN" if warn_n else ""
     lines.append("-" * 60)
     if fail == 0:
         lines.append(
-            f"Conformance: PASS  ({pass_n} PASS, "
+            f"Conformance: PASS  ({pass_n} PASS{warn_bit}, "
             f"{skip_n} SKIP, {info_n} INFO)",
         )
     else:
         lines.append(
             f"Conformance: FAIL — {fail} check(s) require action "
-            f"({pass_n} PASS, {skip_n} SKIP, {info_n} INFO)",
+            f"({pass_n} PASS{warn_bit}, {skip_n} SKIP, {info_n} INFO)",
         )
     return "\n".join(lines) + "\n"
 

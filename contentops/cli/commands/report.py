@@ -25,6 +25,7 @@ from contentops.report import (
     render_html,
     render_markdown,
 )
+from contentops.cli.commands._shared import coverage_scope_options
 from contentops.report.snapshot import (
     compute_delta,
     find_previous_snapshot,
@@ -179,6 +180,7 @@ from contentops.report.snapshot import (
         "dated files prunes nothing."
     ),
 )
+@coverage_scope_options
 def report_cmd(
     detections_path: Path,
     out_html: Path,
@@ -197,6 +199,8 @@ def report_cmd(
     with_alerts: bool,
     unified: bool,
     retention_days: int | None,
+    include_non_production: bool,
+    include_hunting: bool,
 ) -> None:
     """Generate the SOC-grade detection inventory report.
 
@@ -212,7 +216,15 @@ def report_cmd(
     will be added in a follow-up; this command stays pure today so
     it works offline / in fork CI without credentials.
     """
-    rows, summary = assemble_report(detections_path, audit_dir=audit_dir)
+    from contentops.coverage import CoverageScope
+
+    rows, summary = assemble_report(
+        detections_path, audit_dir=audit_dir,
+        scope=CoverageScope.from_flags(
+            include_non_production=include_non_production,
+            include_hunting=include_hunting,
+        ),
+    )
 
     # Live-enrichment passes (additive; each one mutates rows in
     # place via dataclasses.replace). Failures are reported as
@@ -240,10 +252,9 @@ def report_cmd(
                 telemetry_query(since_days=telemetry_since_days),
                 workspace_id=workspace_id, token=token,
             )
-            tel_by_name = {
-                str(r.get("rule_name") or ""): r for r in result.rows
-            }
-            rows = enrich_with_telemetry(rows, tel_by_name)
+            from contentops.rule_keys import TelemetryIndex
+
+            rows = enrich_with_telemetry(rows, TelemetryIndex(result.rows))
         except Exception as exc:  # noqa: BLE001
             click.echo(
                 f"[warn] --with-telemetry failed: {exc}; continuing "
@@ -398,10 +409,14 @@ def report_cmd(
         prev = load_snapshot(prev_path)
         if prev is not None:
             delta = compute_delta(prev, rows, summary)
+            coverage_part = (
+                f"{delta.coverage_techniques_delta:+d} techniques covered"
+                if delta.coverage_comparable else delta.coverage_note
+            )
             click.echo(
                 f"delta vs {prev_path}: "
                 f"{delta.total_delta:+d} rules, "
-                f"{delta.coverage_techniques_delta:+d} techniques covered, "
+                f"{coverage_part}, "
                 f"{len(delta.new_rule_ids)} added, "
                 f"{len(delta.removed_rule_ids)} removed.",
                 err=True,

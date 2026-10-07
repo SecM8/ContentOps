@@ -45,7 +45,7 @@ drift.
 | `config list-workspaces` | command | Print the configured Sentinel workspaces. |
 | `config validate` | command | Load and validate the tenant configuration. |
 | `conformance` | command | Verify the ContentOps deployment is wired correctly (read-only). |
-| `coverage` | command | Render a MITRE ATT&CK coverage heatmap (or --gaps / --d3fend) from detection metadata. |
+| `coverage` | command | Render a MITRE ATT&CK coverage heatmap (or --gaps / --d3fend / --by-source). |
 | `defender-extensions-probe` | command | Probe Defender Graph extension endpoints for availability (F11). |
 | `defender-patch-probe` | command | Isolate which field the Defender beta detectionRules API rejects. |
 | `defender-roundtrip-diff` | command | Diagnose a Defender custom-detection MISMATCH after apply. |
@@ -74,7 +74,7 @@ drift.
 | `rollback` | command | Replay the YAML at SHA against the tenant. |
 | `rule-test` | command | Run a detection's KQL against the live workspace. |
 | `sentinel-roundtrip-diff` | command | Diagnose a Sentinel rule MISMATCH after apply. |
-| `silent-rules` | command | List rules that haven't fired in the lookback window (F4). |
+| `silent-rules` | command | List the repo's deployed rules with their telemetry, silent first (F4). |
 | `snapshot-diff` | command | Content-aware diff between two `contentops collect` archives. |
 | `state` | group | Inspect and manage the per-env state file (DESIGN section 13). |
 | `state adopt` | command | Mark assets already in sync with the live tenant as managed. |
@@ -124,9 +124,9 @@ Every registered command, the Click callback that implements it (the Function), 
 | `audit verify` | `audit_verify_cmd` | `contentops.cli.commands.audit` | `.github/workflows/audit-verify.yml`, `.github/workflows/deploy.yml` |
 | `auto-disabled-rules` | `auto_disabled_rules_cmd` | `contentops.cli.commands.auto_disabled` | `.github/workflows/silent-rules.yml` |
 | `bootstrap` | `bootstrap_cmd` | `contentops.cli.commands.bootstrap` | `.github/workflows/promote-to-integration.yml` |
-| `catalog` | `catalog_group` | `contentops.cli.commands.catalog` | `.github/workflows/ci.yml` |
+| `catalog` | `catalog_group` | `contentops.cli.commands.catalog` | `.github/workflows/attack-matrix-refresh.yml`, `.github/workflows/ci.yml` |
 | `catalog check` | `catalog_check` | `contentops.cli.commands.catalog` | `.github/workflows/ci.yml` |
-| `catalog regenerate` | `catalog_regenerate` | `contentops.cli.commands.catalog` | _(local-only)_ |
+| `catalog regenerate` | `catalog_regenerate` | `contentops.cli.commands.catalog` | `.github/workflows/attack-matrix-refresh.yml` |
 | `clean` | `clean_cmd` | `contentops.cli.commands.collect` | _(local-only)_ |
 | `collect` | `collect_cmd` | `contentops.cli.commands.collect` | `.github/workflows/collect.yml`, `.github/workflows/promote-to-integration.yml` |
 | `config` | `config_group` | `contentops.cli.commands.config` | `.github/workflows/ci.yml` |
@@ -178,7 +178,7 @@ Every registered command, the Click callback that implements it (the Function), 
 | `status deployments` | `status_deployments_cmd` | `contentops.cli.commands.status` | _(local-only)_ |
 | `test` | `test_cmd` | `contentops.cli.commands.test_runner` | _(local-only)_ |
 | `tuning` | `tuning_group` | `contentops.cli.commands.tuning` | `.github/workflows/tuning-impact-preview.yml` |
-| `tuning preview` | `tuning_preview_cmd` | `contentops.cli.commands.tuning` | _(local-only)_ |
+| `tuning preview` | `tuning_preview_cmd` | `contentops.cli.commands.tuning` | `.github/workflows/tuning-impact-preview.yml` |
 | `undeployed-rules` | `undeployed_rules_cmd` | `contentops.cli.commands.undeployed` | _(local-only)_ |
 | `unlock` | `unlock_cmd` | `contentops.cli.commands.lifecycle` | _(local-only)_ |
 | `upstream` | `upstream_group` | `contentops.cli.commands.upstream` | `.github/workflows/kql-schemas-refresh.yml`, `.github/workflows/upstream-watchers.yml` |
@@ -205,6 +205,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 | Rule ID | Severity | Module |
 |---|---|---|
+| `ENVELOPE001` | error | `contentops.lint.runner` |
 | `KQL000` | warning | `contentops.lint.strict` |
 | `KQL001` | error | `contentops.lint.kql` |
 | `KQL002` | error | `contentops.lint.kql` |
@@ -289,7 +290,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **171** files, **1952** test functions. Integration: **11** files, **15** test functions.
+Unit: **182** files, **2105** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -314,14 +315,14 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_apply_verify_watchlist.py` | 13 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
 | `tests/v2/test_arm_name_matching.py` | 11 |
-| `tests/v2/test_attack_matrix_data.py` | 5 |
+| `tests/v2/test_attack_matrix_data.py` | 10 |
 | `tests/v2/test_audit.py` | 13 |
 | `tests/v2/test_audit_chain.py` | 23 |
 | `tests/v2/test_audit_concurrent_write.py` | 10 |
 | `tests/v2/test_audit_query.py` | 19 |
 | `tests/v2/test_audit_timestamp_monotonicity.py` | 18 |
 | `tests/v2/test_auth.py` | 6 |
-| `tests/v2/test_auth_credential_chain.py` | 7 |
+| `tests/v2/test_auth_credential_chain.py` | 12 |
 | `tests/v2/test_bootstrap_cli.py` | 3 |
 | `tests/v2/test_catalog.py` | 21 |
 | `tests/v2/test_check_references_diff.py` | 5 |
@@ -340,11 +341,13 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_config_envs.py` | 7 |
 | `tests/v2/test_config_reports.py` | 7 |
 | `tests/v2/test_conformance_auth_env.py` | 3 |
-| `tests/v2/test_conformance_layers.py` | 34 |
-| `tests/v2/test_coverage.py` | 24 |
+| `tests/v2/test_conformance_layers.py` | 39 |
+| `tests/v2/test_coverage.py` | 25 |
+| `tests/v2/test_coverage_corpus.py` | 11 |
 | `tests/v2/test_coverage_d3fend.py` | 12 |
-| `tests/v2/test_coverage_extract.py` | 14 |
+| `tests/v2/test_coverage_extract.py` | 23 |
 | `tests/v2/test_coverage_gaps.py` | 23 |
+| `tests/v2/test_coverage_matrix.py` | 6 |
 | `tests/v2/test_coverage_sources.py` | 11 |
 | `tests/v2/test_daily_store.py` | 8 |
 | `tests/v2/test_defender_dry_run_resolve.py` | 4 |
@@ -355,8 +358,8 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_defender_rule_status.py` | 14 |
 | `tests/v2/test_dependencies.py` | 7 |
 | `tests/v2/test_detect_production_promotions.py` | 9 |
-| `tests/v2/test_detection_docs.py` | 10 |
-| `tests/v2/test_detection_health.py` | 46 |
+| `tests/v2/test_detection_docs.py` | 12 |
+| `tests/v2/test_detection_health.py` | 50 |
 | `tests/v2/test_devex_doctor.py` | 9 |
 | `tests/v2/test_devex_scaffold.py` | 9 |
 | `tests/v2/test_disable.py` | 5 |
@@ -383,18 +386,19 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_env_status_filter.py` | 6 |
 | `tests/v2/test_envelope_lifecycle_stage.py` | 6 |
 | `tests/v2/test_envelope_metadata_fallback.py` | 5 |
-| `tests/v2/test_explain.py` | 13 |
+| `tests/v2/test_explain.py` | 16 |
 | `tests/v2/test_extract_etag.py` | 5 |
 | `tests/v2/test_git_diff.py` | 5 |
 | `tests/v2/test_handler_coverage.py` | 3 |
-| `tests/v2/test_http_retry.py` | 17 |
+| `tests/v2/test_http_retry.py` | 22 |
 | `tests/v2/test_hunting_handler.py` | 6 |
 | `tests/v2/test_hunting_model.py` | 6 |
+| `tests/v2/test_import_cycles.py` | 1 |
 | `tests/v2/test_integration_guard.py` | 5 |
 | `tests/v2/test_l2_kql101_production_gating.py` | 2 |
-| `tests/v2/test_lifecycle_promote.py` | 50 |
-| `tests/v2/test_lint.py` | 24 |
-| `tests/v2/test_lint_coverage.py` | 5 |
+| `tests/v2/test_lifecycle_promote.py` | 53 |
+| `tests/v2/test_lint.py` | 27 |
+| `tests/v2/test_lint_coverage.py` | 6 |
 | `tests/v2/test_lint_graduated_strict.py` | 10 |
 | `tests/v2/test_lint_new_rules.py` | 21 |
 | `tests/v2/test_lint_payload002_slug_truncation.py` | 13 |
@@ -404,45 +408,49 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_lint_strict_dotnet.py` | 5 |
 | `tests/v2/test_lint_strict_take_limit.py` | 12 |
 | `tests/v2/test_lock_unlock_retry.py` | 12 |
+| `tests/v2/test_materialise_tenant_config.py` | 8 |
 | `tests/v2/test_meta001_lint.py` | 26 |
 | `tests/v2/test_metadata.py` | 12 |
 | `tests/v2/test_metadata_schema.py` | 14 |
 | `tests/v2/test_migrate_tenant_config.py` | 4 |
 | `tests/v2/test_multi_workspace_config.py` | 28 |
 | `tests/v2/test_multi_workspace_targeting.py` | 15 |
-| `tests/v2/test_navigator_extract.py` | 14 |
-| `tests/v2/test_navigator_render.py` | 8 |
+| `tests/v2/test_navigator_extract.py` | 21 |
+| `tests/v2/test_navigator_render.py` | 10 |
 | `tests/v2/test_optional_engines.py` | 14 |
 | `tests/v2/test_plan_against_tenant.py` | 4 |
-| `tests/v2/test_portfolio.py` | 13 |
-| `tests/v2/test_portfolio_score.py` | 19 |
-| `tests/v2/test_portfolio_telemetry.py` | 5 |
+| `tests/v2/test_portfolio.py` | 15 |
+| `tests/v2/test_portfolio_score.py` | 21 |
+| `tests/v2/test_portfolio_telemetry.py` | 6 |
 | `tests/v2/test_pr_l_chunks.py` | 12 |
 | `tests/v2/test_product_filter_enum.py` | 3 |
 | `tests/v2/test_production_promotion_detector.py` | 8 |
 | `tests/v2/test_prune.py` | 22 |
+| `tests/v2/test_refresh_attack_matrix.py` | 3 |
 | `tests/v2/test_registry_and_handler.py` | 6 |
 | `tests/v2/test_registry_close.py` | 5 |
 | `tests/v2/test_remediate_payload001.py` | 8 |
-| `tests/v2/test_report.py` | 31 |
-| `tests/v2/test_report_enrich.py` | 16 |
-| `tests/v2/test_report_snapshot.py` | 19 |
+| `tests/v2/test_report.py` | 34 |
+| `tests/v2/test_report_enrich.py` | 17 |
+| `tests/v2/test_report_snapshot.py` | 25 |
 | `tests/v2/test_resolve_workspace_id.py` | 7 |
 | `tests/v2/test_restore.py` | 11 |
 | `tests/v2/test_retry_failed_since.py` | 19 |
 | `tests/v2/test_rollback.py` | 16 |
 | `tests/v2/test_rollback_gates.py` | 5 |
+| `tests/v2/test_rule_keys.py` | 13 |
 | `tests/v2/test_rule_test_cli.py` | 7 |
 | `tests/v2/test_sentinel_arm_retry.py` | 6 |
 | `tests/v2/test_sentinel_pagination.py` | 1 |
 | `tests/v2/test_sentinel_roundtrip.py` | 24 |
+| `tests/v2/test_silent_rules.py` | 8 |
 | `tests/v2/test_slug_arm_name.py` | 12 |
 | `tests/v2/test_snapshot_diff.py` | 15 |
 | `tests/v2/test_snippets.py` | 36 |
 | `tests/v2/test_state_adopt.py` | 10 |
 | `tests/v2/test_state_file.py` | 10 |
 | `tests/v2/test_state_sync.py` | 13 |
-| `tests/v2/test_status_configuration.py` | 8 |
+| `tests/v2/test_status_configuration.py` | 9 |
 | `tests/v2/test_status_deployments.py` | 13 |
 | `tests/v2/test_status_redact.py` | 13 |
 | `tests/v2/test_status_state_env.py` | 8 |
@@ -450,9 +458,9 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_strict_allowlist.py` | 14 |
 | `tests/v2/test_tenant_policy.py` | 6 |
 | `tests/v2/test_token_auth.py` | 6 |
-| `tests/v2/test_tuning.py` | 10 |
+| `tests/v2/test_tuning.py` | 13 |
 | `tests/v2/test_undeployed.py` | 8 |
-| `tests/v2/test_unified_report.py` | 41 |
+| `tests/v2/test_unified_report.py` | 43 |
 | `tests/v2/test_upstream_cli.py` | 5 |
 | `tests/v2/test_upstream_defender_schema.py` | 18 |
 | `tests/v2/test_upstream_manifest.py` | 14 |
@@ -460,10 +468,14 @@ Unit: **171** files, **1952** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_upstream_schemas.py` | 11 |
 | `tests/v2/test_upstream_templates.py` | 1 |
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
+| `tests/v2/test_url_path_safety.py` | 8 |
 | `tests/v2/test_watchlist_model.py` | 7 |
+| `tests/v2/test_workflow_hardening.py` | 4 |
 | `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
-| `tests/v2/test_workspace_kql.py` | 20 |
+| `tests/v2/test_workspace_kql.py` | 30 |
+| `tests/v2/test_workspace_kql_emulator.py` | 3 |
 | `tests/v2/test_workspace_kql_joined.py` | 16 |
+| `tests/v2/test_workspace_kql_strict.py` | 2 |
 | `tests/v2/test_workspace_role_test.py` | 4 |
 | `tests/v2/test_yaml_block_scalar.py` | 4 |
 

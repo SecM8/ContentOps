@@ -54,10 +54,23 @@ jobs:
           set -euo pipefail
           python scripts/refresh_attack_matrix.py
 
+      - name: Regenerate the generated catalog
+        # docs/reference/generated-catalog.md embeds the matrix totals
+        # ("Covered: N / <techniques>"); CI byte-compares it, so a refresh
+        # that changes the totals must carry the regenerated catalog or
+        # the bot PR fails `catalog check`.
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
+          pip install -e . --no-deps
+          contentops catalog regenerate
+
       - name: Open PR if the matrix changed
         id: auto-pr
         uses: ./.github/actions/auto-pr
         with:
+          # The catalog only changes when the matrix does, so detecting the
+          # matrix file is enough (detect-paths is a single pathspec).
           detect-paths: contentops/coverage/data/mitre_attack_full.json
           branch: attack-matrix/auto-${{ github.run_id }}
           commit-message: "chore(attack-matrix): refresh MITRE ATT&CK Enterprise matrix"
@@ -75,6 +88,7 @@ jobs:
           labels: attack-matrix,automated
           add-paths: |
             contentops/coverage/data/mitre_attack_full.json
+            docs/reference/generated-catalog.md
           token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Step summary

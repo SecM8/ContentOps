@@ -101,6 +101,10 @@ def parse_envelope(raw: dict[str, Any]) -> tuple[EnvelopeV2, dict[str, Any]]:
     its output back through ``parse_envelope`` without inventing
     placeholder author-time fields.
     """
+    if not isinstance(raw, dict):
+        # An empty file loads as None; a list or scalar isn't an envelope
+        # either. Say so instead of failing on the ``in`` / ``[]`` below.
+        raise ValueError("envelope is empty or not a YAML mapping")
     if "asset" not in raw:
         raise ValueError("Envelope must contain 'asset'")
 

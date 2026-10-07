@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from contentops.cli import cli
 from contentops.coverage import (
     ALL_TACTICS,
+    CoverageScope,
     CoverageSummary,
     compute_coverage,
     coverage_summary,
@@ -76,7 +77,10 @@ def test_compute_coverage_buckets_by_tactic(tmp_path: Path) -> None:
     rep = compute_coverage(tmp_path)
     by = {tc.tactic: tc for tc in rep.tactics}
     assert by["InitialAccess"].detection_count == 1
-    assert by["InitialAccess"].techniques == {"T1059": 1}
+    # T1059 is an Execution technique: ATT&CK does not file it under
+    # InitialAccess, so it is not listed there even though the rule
+    # claims that tactic (review finding C2).
+    assert by["InitialAccess"].techniques == {}
     assert by["InitialAccess"].by_severity["high"] == 1
     assert by["Execution"].detection_count == 1
     assert by["Execution"].techniques == {"T1059.001": 1}
@@ -120,7 +124,11 @@ def test_compute_coverage_handles_multi_tactic_detection(tmp_path: Path) -> None
     assert by["InitialAccess"].detection_count == 1
     assert by["Execution"].detection_count == 1
     assert by["Persistence"].detection_count == 1
-    assert by["InitialAccess"].techniques == {"T1059": 1, "T1547": 1}
+    # Each technique only under the tactics ATT&CK files it under (C2):
+    # T1059 -> Execution, T1547 -> Persistence; none under InitialAccess.
+    assert by["InitialAccess"].techniques == {}
+    assert by["Execution"].techniques == {"T1059": 1}
+    assert by["Persistence"].techniques == {"T1547": 1}
     assert rep.total_detections == 1
     assert rep.total_with_mitre_data == 1
 
@@ -503,10 +511,16 @@ def _status_envelope(rule_id: str, status: str, tactics: list[str]) -> dict:
     return env
 
 
+# Experimental rules only count with --include-non-production (the default
+# scope is enabled production rules); these tests opt in to exercise the
+# production column.
+_WITH_NON_PRODUCTION = CoverageScope.from_flags(include_non_production=True)
+
+
 def test_coverage_counts_production_separately(tmp_path: Path) -> None:
     _write(tmp_path, "prod", _status_envelope("r-prod", "production", ["Execution"]))
     _write(tmp_path, "exp", _status_envelope("r-exp", "experimental", ["Execution"]))
-    report = compute_coverage(tmp_path)
+    report = compute_coverage(tmp_path, scope=_WITH_NON_PRODUCTION)
     execu = next(tc for tc in report.tactics if tc.tactic == "Execution")
     assert execu.detection_count == 2
     assert execu.production_detection_count == 1
@@ -516,7 +530,7 @@ def test_coverage_counts_production_separately(tmp_path: Path) -> None:
 
 def test_tactic_covered_only_by_experimental_flags_zero_production(tmp_path: Path) -> None:
     _write(tmp_path, "exp", _status_envelope("r-exp", "experimental", ["Persistence"]))
-    report = compute_coverage(tmp_path)
+    report = compute_coverage(tmp_path, scope=_WITH_NON_PRODUCTION)
     pers = next(tc for tc in report.tactics if tc.tactic == "Persistence")
     assert pers.detection_count == 1 and pers.production_detection_count == 0
     # The heatmap row carries the ⚠️ "no production coverage" marker.
@@ -526,16 +540,29 @@ def test_tactic_covered_only_by_experimental_flags_zero_production(tmp_path: Pat
 
 def test_render_markdown_has_production_column_and_total(tmp_path: Path) -> None:
     _write(tmp_path, "prod", _status_envelope("r-prod", "production", ["Execution"]))
-    md = render_markdown(compute_coverage(tmp_path))
+    md = render_markdown(compute_coverage(tmp_path, scope=_WITH_NON_PRODUCTION))
     assert "# Production" in md
     assert "1 production," in md  # totals line
+
+
+def test_render_markdown_default_scope_states_scope_and_drops_production_column(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, "prod", _status_envelope("r-prod", "production", ["Execution"]))
+    _write(tmp_path, "exp", _status_envelope("r-exp", "experimental", ["Execution"]))
+    md = render_markdown(compute_coverage(tmp_path))
+    # Only production rules count, so a production column would repeat
+    # the detection count; the scope line says what was counted instead.
+    assert "# Production" not in md
+    assert "_Scope: enabled production detections (hunting queries excluded)" in md
+    assert "excluded: 1 non-production" in md
 
 
 def test_render_json_includes_production_fields(tmp_path: Path) -> None:
     import json
     _write(tmp_path, "prod", _status_envelope("r-prod", "production", ["Execution"]))
     _write(tmp_path, "exp", _status_envelope("r-exp", "experimental", ["Execution"]))
-    data = json.loads(render_json(compute_coverage(tmp_path)))
+    data = json.loads(render_json(compute_coverage(tmp_path, scope=_WITH_NON_PRODUCTION)))
     assert data["total_production_detections"] == 1
     execu = next(t for t in data["tactics"] if t["tactic"] == "Execution")
     assert execu["production_detection_count"] == 1 and execu["detection_count"] == 2

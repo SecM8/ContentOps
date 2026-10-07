@@ -9,13 +9,18 @@ markdown bodies out. The CI drift gate
 under ``docs/detections/`` against the renderer's output.
 
 Stdlib-only — no Jinja2. The plan deliberately chose stdlib templating
-to preserve the lean six-package runtime in ``pyproject.toml``.
+to preserve the lean six-package runtime in ``pyproject.toml``. ATT&CK
+tags come from the shared coverage extractor
+(:func:`contentops.coverage.extract.extract_mitre_for`).
 """
 
 from __future__ import annotations
 
 from contentops.core.envelope import EnvelopeV2
 from contentops.core.handler import LoadedAsset
+from contentops.coverage.extract import extract_mitre_for
+from contentops.coverage.matrix import load_matrix
+from contentops.coverage.report import rule_attack_notes
 
 DETECTION_DOCS_DIR = "docs/detections"
 INDEX_FILE = f"{DETECTION_DOCS_DIR}/README.md"
@@ -78,6 +83,26 @@ def _kql_block(envelope: EnvelopeV2, payload: dict) -> str:
     return f"```kql\n{candidate.rstrip()}\n```\n"
 
 
+def _attack_section(loaded: LoadedAsset) -> list[str]:
+    """The ``## MITRE ATT&CK`` section: tags from metadata *and* payload as
+    coverage reads them (a collected rule carries them in the payload
+    only), plus inert notes for revoked / deprecated / unknown /
+    malformed ids. Empty when the rule has none."""
+    matrix = load_matrix()
+    attack = extract_mitre_for(loaded, matrix=matrix)
+    notes = rule_attack_notes(attack, attack_version=matrix.attack_version)
+    if not (attack.tactics or attack.techniques or notes):
+        return []
+    lines = ["## MITRE ATT&CK", ""]
+    if attack.tactics:
+        lines += ["**Tactics:** " + ", ".join(f"`{t}`" for t in attack.tactics), ""]
+    if attack.techniques:
+        lines += ["**Techniques:** " + ", ".join(f"`{t}`" for t in attack.techniques), ""]
+    if notes:
+        lines += [f"- {note}" for note in notes] + [""]
+    return lines
+
+
 def _relative_source(loaded: LoadedAsset, repo_root: object | None = None) -> str:
     """Return a repo-relative POSIX path for the envelope file.
 
@@ -131,15 +156,7 @@ def render_detection(loaded: LoadedAsset, *, repo_root: object | None = None) ->
     lines.append(f"| source | `{_safe(_relative_source(loaded, repo_root))}` |")
     lines.append("")
 
-    if meta is not None and (meta.tactics or meta.techniques):
-        lines.append("## MITRE ATT&CK")
-        lines.append("")
-        if meta.tactics:
-            lines.append("**Tactics:** " + ", ".join(f"`{t}`" for t in meta.tactics))
-            lines.append("")
-        if meta.techniques:
-            lines.append("**Techniques:** " + ", ".join(f"`{t}`" for t in meta.techniques))
-            lines.append("")
+    lines.extend(_attack_section(loaded))
 
     if meta is not None and meta.description:
         lines.append("## Description")

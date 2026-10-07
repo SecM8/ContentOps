@@ -10,12 +10,15 @@ from pathlib import Path
 
 import click
 
+from contentops.cli.commands._shared import coverage_scope_options
 from contentops.coverage import (
+    CoverageScope,
     compute_coverage,
-    coverage_summary,
+    load_corpus,
     render_badge,
     render_json,
     render_markdown,
+    summary_from_corpus,
 )
 from contentops.core.registry import default_registry
 
@@ -104,11 +107,13 @@ from contentops.core.registry import default_registry
     type=click.Path(path_type=Path),
     default=None,
     help=(
-        "Also write a shields.io-endpoint JSON to this path (covered / "
-        "total / pct). Designed for a README badge that updates on "
-        "every push-to-main. See docs/reference/feature-catalog.md."
+        "Also write a shields.io-endpoint JSON to this path ('<n>% "
+        "techniques - <m>% sub-techniques'), in any mode. Designed for a "
+        "README badge that updates on every push-to-main. See "
+        "docs/reference/feature-catalog.md."
     ),
 )
+@coverage_scope_options
 def coverage_cmd(
     detections_path: Path,
     output_format: str,
@@ -121,29 +126,40 @@ def coverage_cmd(
     d3fend_file: Path | None,
     by_source_mode: bool,
     out_badge: Path | None,
+    include_non_production: bool,
+    include_hunting: bool,
 ) -> None:
-    """Render a MITRE ATT&CK coverage heatmap (or --gaps / --d3fend) from detection metadata."""
+    """Render a MITRE ATT&CK coverage heatmap (or --gaps / --d3fend / --by-source)."""
     try:
-        report = compute_coverage(detections_path)
+        scope = CoverageScope.from_flags(
+            include_non_production=include_non_production,
+            include_hunting=include_hunting,
+        )
+        # One corpus walk feeds every view and the badge, so they always
+        # count the same detections.
+        corpus = load_corpus(detections_path, scope=scope)
+        report = compute_coverage(detections_path, corpus=corpus)
 
         want_md = output_format in ("markdown", "both")
         want_json = output_format in ("json", "both")
 
         if output_format == "both":
-            if out_md is None:
-                if d3fend_mode:
-                    out_md = Path("coverage-d3fend.md")
-                elif gaps_mode:
-                    out_md = Path("coverage-gaps.md")
-                else:
-                    out_md = Path("coverage.md")
-            if out_json is None:
-                if d3fend_mode:
-                    out_json = Path("coverage-d3fend.json")
-                elif gaps_mode:
-                    out_json = Path("coverage-gaps.json")
-                else:
-                    out_json = Path("coverage.json")
+            stem = (
+                "coverage-by-source" if by_source_mode
+                else "coverage-d3fend" if d3fend_mode
+                else "coverage-gaps" if gaps_mode
+                else "coverage"
+            )
+            out_md = out_md or Path(f"{stem}.md")
+            out_json = out_json or Path(f"{stem}.json")
+
+        def _emit(text: str, target: Path | None, what: str) -> None:
+            if target is not None:
+                target.write_text(text, encoding="utf-8")
+                click.echo(f"wrote {what}: {target}")
+            else:
+                sys.stdout.buffer.write(text.encode("utf-8"))
+                sys.stdout.flush()
 
         if by_source_mode:
             from contentops.coverage.sources import (
@@ -151,32 +167,12 @@ def coverage_cmd(
                 render_json as render_sources_json,
                 render_markdown as render_sources_markdown,
             )
-            src_report = compute_source_coverage(detections_path)
+            src_report = compute_source_coverage(detections_path, corpus=corpus)
             if want_md:
-                md = render_sources_markdown(src_report)
-                target = out_md if out_md is not None else (
-                    Path("coverage-by-source.md") if output_format == "both" else None
-                )
-                if target is not None:
-                    target.write_text(md, encoding="utf-8")
-                    click.echo(f"wrote markdown by-source report: {target}")
-                else:
-                    sys.stdout.buffer.write(md.encode("utf-8"))
-                    sys.stdout.flush()
+                _emit(render_sources_markdown(src_report), out_md, "markdown by-source report")
             if want_json:
-                js = render_sources_json(src_report)
-                target = out_json if out_json is not None else (
-                    Path("coverage-by-source.json") if output_format == "both" else None
-                )
-                if target is not None:
-                    target.write_text(js, encoding="utf-8")
-                    click.echo(f"wrote json by-source report: {target}")
-                else:
-                    sys.stdout.buffer.write(js.encode("utf-8"))
-                    sys.stdout.flush()
-            return
-
-        if d3fend_mode:
+                _emit(render_sources_json(src_report), out_json, "json by-source report")
+        elif d3fend_mode:
             from contentops.coverage.d3fend import (
                 compute_d3fend_report, load_d3fend_techniques,
                 render_json as render_d3fend_json,
@@ -187,24 +183,10 @@ def coverage_cmd(
                 detections_path, techniques, source_label=source_label,
             )
             if want_md:
-                md = render_d3fend_markdown(d3fend_report)
-                if out_md is not None:
-                    out_md.write_text(md, encoding="utf-8")
-                    click.echo(f"wrote markdown D3FEND report: {out_md}")
-                else:
-                    sys.stdout.buffer.write(md.encode("utf-8"))
-                    sys.stdout.flush()
+                _emit(render_d3fend_markdown(d3fend_report), out_md, "markdown D3FEND report")
             if want_json:
-                js = render_d3fend_json(d3fend_report)
-                if out_json is not None:
-                    out_json.write_text(js, encoding="utf-8")
-                    click.echo(f"wrote json D3FEND report: {out_json}")
-                else:
-                    sys.stdout.buffer.write(js.encode("utf-8"))
-                    sys.stdout.flush()
-            return
-
-        if gaps_mode:
+                _emit(render_d3fend_json(d3fend_report), out_json, "json D3FEND report")
+        elif gaps_mode:
             from contentops.coverage.gaps import (
                 compute_gaps, load_techniques,
                 render_json as render_gaps_json,
@@ -235,51 +217,24 @@ def coverage_cmd(
                     f"Use --matrix-mode curated for the high-value shortlist.",
                     err=True,
                 )
-
             if want_md:
-                md = render_gaps_markdown(gaps_report)
-                if out_md is not None:
-                    out_md.write_text(md, encoding="utf-8")
-                    click.echo(f"wrote markdown gaps report: {out_md}")
-                else:
-                    sys.stdout.buffer.write(md.encode("utf-8"))
-                    sys.stdout.flush()
-
+                _emit(render_gaps_markdown(gaps_report), out_md, "markdown gaps report")
             if want_json:
-                js = render_gaps_json(gaps_report)
-                if out_json is not None:
-                    out_json.write_text(js, encoding="utf-8")
-                    click.echo(f"wrote json gaps report: {out_json}")
-                else:
-                    sys.stdout.buffer.write(js.encode("utf-8"))
-                    sys.stdout.flush()
-            return
-
-        if want_md:
-            md = render_markdown(report)
-            if out_md is not None:
-                out_md.write_text(md, encoding="utf-8")
-                click.echo(f"wrote markdown report: {out_md}")
-            else:
-                sys.stdout.buffer.write(md.encode("utf-8"))
-                sys.stdout.flush()
-
-        if want_json:
-            js = render_json(report)
-            if out_json is not None:
-                out_json.write_text(js, encoding="utf-8")
-                click.echo(f"wrote json report: {out_json}")
-            else:
-                sys.stdout.buffer.write(js.encode("utf-8"))
-                sys.stdout.flush()
+                _emit(render_gaps_json(gaps_report), out_json, "json gaps report")
+        else:
+            if want_md:
+                _emit(render_markdown(report), out_md, "markdown report")
+            if want_json:
+                _emit(render_json(report), out_json, "json report")
 
         if out_badge is not None:
-            summary = coverage_summary(detections_path)
+            summary = summary_from_corpus(corpus)
             out_badge.parent.mkdir(parents=True, exist_ok=True)
             out_badge.write_text(render_badge(summary), encoding="utf-8")
             click.echo(
                 f"wrote badge: {out_badge} "
-                f"({summary.pct}% — {summary.covered}/{summary.total})"
+                f"({summary.pct}% — {summary.covered}/{summary.total}; "
+                f"{summary.scope_label})"
             )
     finally:
         default_registry.close_all()

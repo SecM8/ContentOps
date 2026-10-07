@@ -23,6 +23,7 @@ from contentops.report.enrich import (
     extract_primary_table,
     primary_tables_for_rows,
 )
+from contentops.rule_keys import TelemetryIndex
 
 
 def _row(**over) -> ReportRow:
@@ -101,20 +102,42 @@ def test_primary_table_returns_none_for_unparseable_start() -> None:
 
 def test_enrich_telemetry_populates_all_fields() -> None:
     rows = [_row(rule_id="rule-a", title="Failed Logins")]
-    tel = {
-        "Failed Logins": {
-            "alerts_30d": 50,
-            "incidents_30d": 10,
-            "closed_fp_30d": 3,
-        },
-    }
+    tel = TelemetryIndex([{
+        "rule_name": "Failed Logins",
+        "alerts_30d": 50,
+        "incidents_30d": 10,
+        "closed_tp_30d": 5,
+        "closed_fp_30d": 3,
+        "closed_bp_30d": 1,
+    }])
     out = enrich_with_telemetry(rows, tel)
     assert out[0].alerts_30d == 50
-    assert out[0].true_positives_30d == 7    # 10 - 3
+    # TP = incidents closed TruePositive; the open / benign ones are not
+    # TPs (this used to report 10 - 3 = 7).
+    assert out[0].true_positives_30d == 5
     assert out[0].false_positives_30d == 3
-    assert out[0].fp_rate == 0.3              # 3/10
-    # Default ScoreWeights: 7*1 - 3*2 = 1
-    assert out[0].effectiveness_score == 1
+    # FP / incidents closed TP + FP + BP; the 1 open incident is left out.
+    assert out[0].fp_rate == 0.333            # 3/9
+    # Default ScoreWeights: 5*1 - 3*2 = -1
+    assert out[0].effectiveness_score == -1
+
+
+def test_enrich_telemetry_matches_by_rule_id_before_display_name() -> None:
+    """A rule using alertDisplayNameFormat fires as "Brute Force from
+    <ip>": joined by display name it looked silent. Its telemetry_keys
+    carry the rule id, which the id-keyed row matches."""
+    rows = [_row(
+        rule_id="brute-force", title="Brute Force",
+        telemetry_keys=("id:brute-force", "name:brute force"),
+    )]
+    tel = TelemetryIndex([
+        {"rule_key": "id:brute-force", "rule_name": "Brute Force from 10.0.0.1",
+         "alerts_30d": 12, "incidents_30d": 2, "closed_tp_30d": 2, "closed_fp_30d": 0},
+    ])
+    out = enrich_with_telemetry(rows, tel)
+    assert out[0].alerts_30d == 12
+    assert out[0].true_positives_30d == 2
+    assert out[0].effectiveness_score == 2
 
 
 def test_enrich_telemetry_no_match_leaves_row_untouched() -> None:
@@ -122,7 +145,7 @@ def test_enrich_telemetry_no_match_leaves_row_untouched() -> None:
     keeps every enrichment field as None — 'unknown' distinct from
     'known to be zero'."""
     rows = [_row(rule_id="r1", title="Unknown Rule")]
-    out = enrich_with_telemetry(rows, {})
+    out = enrich_with_telemetry(rows, TelemetryIndex([]))
     assert out[0].alerts_30d is None
     assert out[0].true_positives_30d is None
     assert out[0].effectiveness_score is None
@@ -133,7 +156,9 @@ def test_enrich_telemetry_silent_rule_hits_silence_penalty() -> None:
     drops by the silence penalty (default 30); confirms the score
     column tracks the portfolio --rank formula."""
     rows = [_row(rule_id="r1", title="Silent")]
-    tel = {"Silent": {"alerts_30d": 0, "incidents_30d": 0, "closed_fp_30d": 0}}
+    tel = TelemetryIndex([
+        {"rule_name": "Silent", "alerts_30d": 0, "incidents_30d": 0, "closed_fp_30d": 0},
+    ])
     out = enrich_with_telemetry(rows, tel)
     assert out[0].effectiveness_score == -30
 

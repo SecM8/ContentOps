@@ -20,6 +20,7 @@ from contentops.utils.http_retry import (
     request_with_retry,
 )
 from contentops.utils.token_auth import BearerTokenAuth
+from contentops.utils.url_path import safe_path_segment
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +103,18 @@ class DefenderClient:
             lambda u: self._request_with_retry("GET", u),
             "/detectionRules",
             next_link_key="@odata.nextLink",
+            base_url=BASE_URL,
         )
+
+    @staticmethod
+    def _rule_path(graph_id: str) -> str:
+        # The id comes from YAML (``metadata.arm_name``) on some paths, so it
+        # is validated and encoded as one path segment before use.
+        return f"/detectionRules/{safe_path_segment(graph_id, kind='Defender rule id')}"
 
     def get_rule(self, graph_id: str) -> dict | None:
         """GET a single detection rule by Graph ID. Returns None on 404."""
-        response = self._request_with_retry("GET", f"/detectionRules/{graph_id}")
+        response = self._request_with_retry("GET", self._rule_path(graph_id))
         if response.status_code == 404:
             return None
         response.raise_for_status()
@@ -124,11 +132,11 @@ class DefenderClient:
 
     def update_rule(self, graph_id: str, body: dict) -> httpx.Response:
         """PATCH an existing detection rule."""
-        return self._request_with_retry("PATCH", f"/detectionRules/{graph_id}", json=body)
+        return self._request_with_retry("PATCH", self._rule_path(graph_id), json=body)
 
     def delete_rule(self, graph_id: str) -> httpx.Response:
         """DELETE a detection rule."""
-        return self._request_with_retry("DELETE", f"/detectionRules/{graph_id}")
+        return self._request_with_retry("DELETE", self._rule_path(graph_id))
 
     def close(self) -> None:
         """Close the HTTP client."""

@@ -146,7 +146,7 @@ firing patterns — without leaving the CLI.
 |---|---|---|
 | [`contentops/navigator/`](../../contentops/navigator/) | MITRE ATT&CK Navigator layer renderer. Three extractors (repo envelopes, deployed Sentinel/Defender rules, live `SecurityAlert` firings) feed `score_techniques()` and `render_layer()`. Stdlib-only, no Jinja2. | JSON layer file uploadable to https://mitre-attack.github.io/attack-navigator/ |
 | [`contentops/docs/`](../../contentops/docs/) | Per-detection markdown generator (NVISO Part 4). Pure-function renderer with byte-identical drift gate. Mirrors `contentops/catalog/render.py` shape. | `docs/detections/<asset>/<id>.md` + index |
-| [`contentops/tuning.py`](../../contentops/tuning.py) | PR-time tuning-impact preview (NVISO Part 8). Diffs `drift_suppressions.yml` between two refs; resolves envelope id → displayName; renders a markdown blast-radius table for the PR comment. | Markdown report; consumed by `tuning-impact-preview.yml` workflow |
+| [`contentops/tuning.py`](../../contentops/tuning.py) | PR-time tuning-impact preview (NVISO Part 8). Diffs `drift_suppressions.yml` between two refs; resolves envelope id → rule keys (deployed rule id, then display name — see [`contentops/rule_keys.py`](../../contentops/rule_keys.py)); renders a markdown blast-radius table for the PR comment. | Markdown report; consumed by `tuning-impact-preview.yml` workflow |
 | [`contentops/coverage/d3fend.py`](../../contentops/coverage/d3fend.py) | MITRE D3FEND defensive-axis companion to the ATT&CK coverage report. Reads `metadata.defensiveTechniques: [D3-XXX]` from every envelope. | Markdown + JSON coverage report |
 | [`contentops/workspace_kql.py`](../../contentops/workspace_kql.py) | Thin httpx wrapper over the Log Analytics Query API + tenant.yml-driven workspace-ID auto-derive. Shared infra for `silent-rules`, `auto-disabled-rules`, `portfolio --with-telemetry`, `lifecycle promote` (fp_rate gate), `tuning preview`, and `navigator`. | `QueryResult` (rows + column names) |
 
@@ -189,8 +189,8 @@ Unified Report (all audiences)
 
 Four-tier matching (priority order):
 
-1. **ARM GUID** — `detectorId` from Graph or `relatedAnalyticRuleIds` from Sentinel
-2. **Exact title** — `alert.title == detection.displayName`
+1. **Rule id** — `detectorId` from Graph, `relatedAnalyticRuleIds` / `AlertType` (`<workspace-guid>_<rule>`) from Sentinel, against the name the rule deploys under (`metadata.arm_name`, else the envelope id)
+2. **Exact title** — `alert.title == detection.displayName` (Defender: also `alertTemplate.title`)
 3. **Alert format prefix** — static prefix from `alertDetailsOverride.alertDisplayNameFormat`
 4. **Substring containment** — displayName within alert title or vice versa (min 8 chars)
 

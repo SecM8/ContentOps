@@ -129,37 +129,135 @@ def query(
 # ---------------------------------------------------------------------------
 
 
+# Rule identity in telemetry (see contentops/rule_keys.py, which normalises
+# repo-side keys the same way). Incidents list the analytic rules their alerts
+# came from in RelatedAnalyticRuleIds (possibly full ARM ids -> last path
+# segment). A Sentinel alert takes its rule from the incident it belongs to
+# when that incident has exactly one related rule (Microsoft documents that
+# field); otherwise from AlertType, which Microsoft documents only as "taken
+# from the rule ID" and is seen as "<workspace-guid>_<rule name>".
+_SENTINEL_PRODUCTS = '("Azure Sentinel", "Microsoft Sentinel")'
+_WS_PREFIXED_RULE = (
+    r'@"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+    r'[0-9A-Fa-f]{12}_(.+)$"'
+)
+
+
+def _alert_rule_id_expr() -> str:
+    """KQL: lower-cased rule name of a Sentinel analytic alert, else "".
+
+    Needs ``linked_rule_id`` from :func:`_alert_rule_link_lets`. Only
+    Sentinel alerts get a rule id: a Defender alert in an incident that
+    also holds one Sentinel rule's alert must not be credited to that rule.
+    """
+    from_alert_type = f"tolower(coalesce(extract({_WS_PREFIXED_RULE}, 1, AlertType), AlertType))"
+    return (
+        f"iff(ProductName in {_SENTINEL_PRODUCTS}, "
+        f"coalesce(linked_rule_id, {from_alert_type}), "
+        f'"")'
+    )
+
+
+def _incident_rule_id_expr(ref: str) -> str:
+    """KQL: lower-cased rule name from one RelatedAnalyticRuleIds entry."""
+    last = f'extract(@"([^/]+)$", 1, {ref})'
+    return f"tolower(coalesce(extract({_WS_PREFIXED_RULE}, 1, {last}), {last}))"
+
+
+def _name_key_expr(column: str) -> str:
+    return f'strcat("name:", tolower(trim(@"\\s+", {column})))'
+
+
+def _alert_rule_link_lets() -> str:
+    """KQL ``let`` statements shared by the telemetry queries.
+
+    ``incident_latest``: one row per incident, its latest state
+    (SecurityIncident logs a row per update). ``alert_rule_link``: for
+    every alert in an incident with exactly one related analytic rule, that
+    rule's id (``AlertIds`` holds ``SystemAlertId`` values, as in
+    :func:`_security_alerts_joined_base`).
+    """
+    return f"""let incident_latest = materialize(SecurityIncident
+| where TimeGenerated > ago(window)
+| summarize arg_max(TimeGenerated, *) by IncidentNumber);
+let alert_rule_link = incident_latest
+| where array_length(RelatedAnalyticRuleIds) == 1
+| extend linked_rule_id = {_incident_rule_id_expr("tostring(RelatedAnalyticRuleIds[0])")}
+| mv-expand AlertId = AlertIds to typeof(string)
+| where isnotempty(AlertId) and isnotempty(linked_rule_id)
+| summarize linked_rule_id = take_any(linked_rule_id) by AlertId;"""
+
+
+def _latest_alerts() -> str:
+    """KQL: one row per alert (latest state) with its ``linked_rule_id``."""
+    return """SecurityAlert
+| where TimeGenerated > ago(window)
+| summarize arg_max(TimeGenerated, AlertName, AlertType, ProductName) by SystemAlertId
+| join kind=leftouter (alert_rule_link) on $left.SystemAlertId == $right.AlertId"""
+
+
 def silent_rules_query(*, since_days: int = 30) -> str:
     """Return the canonical KQL that powers `contentops silent-rules`.
 
-    For every rule's displayName, count SecurityAlert rows and
-    SecurityIncident incidents in the window. Rules with zero rows are
-    "silent".
+    One row per **rule key** with SecurityAlert and SecurityIncident
+    counts in the window. A rule key is ``id:<rule name>`` when the alert /
+    incident identifies its Sentinel analytic rule and ``name:<display
+    name>`` otherwise -- joining by display name alone missed every rule
+    using ``alertDisplayNameFormat`` and every renamed incident, which then
+    looked silent. A Sentinel alert's rule is the single related rule of
+    its incident when there is one, else the rule id in ``AlertType``;
+    incidents use ``RelatedAnalyticRuleIds`` (one row per related rule).
+    Every alert therefore lands in exactly one row and every incident in at
+    most one row per rule, so ``contentops.rule_keys.TelemetryIndex`` can
+    sum a rule's rows (ids and names) without double counting.
 
-    SecurityIncident logs one row per incident UPDATE (assign, comment,
-    close), so incidents are first deduped to their latest row per
-    ``IncidentNumber`` -- the same ``arg_max`` pattern as
-    ``_security_alerts_joined_base``. Counting raw rows inflated
-    ``incidents_30d`` and let ``closed_fp_30d`` reflect intermediate
-    states, skewing the FP-rate gate and portfolio telemetry.
+    De-duplication:
+
+    * SecurityAlert writes a new row on each status change, so alerts are
+      first reduced to their latest row per ``SystemAlertId``.
+    * SecurityIncident logs one row per incident UPDATE (assign, comment,
+      close), so incidents are reduced to their latest row per
+      ``IncidentNumber`` -- the same ``arg_max`` pattern as
+      ``_security_alerts_joined_base``. Counting raw rows inflated
+      ``incidents_30d`` and let ``closed_fp_30d`` reflect intermediate
+      states.
+
+    ``closed_tp_30d`` / ``closed_fp_30d`` / ``closed_bp_30d`` count
+    incidents whose latest row is ``Status == "Closed"`` with
+    classification TruePositive / FalsePositive / BenignPositive. The
+    status check matters: ``Classification`` is the value given when the
+    incident was last closed and survives a reopen, so a reopened incident
+    still carries it. Open, reopened and Undetermined incidents are in
+    ``incidents_30d`` only.
     """
     return f"""
 let window = {since_days}d;
-let alerts = SecurityAlert
-| where TimeGenerated > ago(window)
-| summarize alerts_30d = count() by AlertName;
-let incidents = SecurityIncident
-| where TimeGenerated > ago(window)
-| summarize arg_max(TimeGenerated, *) by IncidentNumber
+{_alert_rule_link_lets()}
+let alerts = {_latest_alerts()}
+| extend rule_id = {_alert_rule_id_expr()}
+| extend rule_key = iff(isnotempty(rule_id), strcat("id:", rule_id), {_name_key_expr("AlertName")})
+| summarize alerts_30d = count(), alert_name = take_any(AlertName) by rule_key;
+let incidents = incident_latest
+| extend rule_refs = iff(array_length(RelatedAnalyticRuleIds) > 0, RelatedAnalyticRuleIds, dynamic([""]))
+| mv-expand rule_ref = rule_refs to typeof(string)
+| extend rule_id = {_incident_rule_id_expr("rule_ref")}
+| extend rule_key = iff(isnotempty(rule_id), strcat("id:", rule_id), {_name_key_expr("Title")})
+| distinct IncidentNumber, rule_key, Title, Classification, Status
 | summarize incidents_30d = count(),
-            closed_fp_30d = countif(Classification == "FalsePositive")
-            by Title;
+            closed_tp_30d = countif(Status == "Closed" and Classification == "TruePositive"),
+            closed_fp_30d = countif(Status == "Closed" and Classification == "FalsePositive"),
+            closed_bp_30d = countif(Status == "Closed" and Classification == "BenignPositive"),
+            incident_title = take_any(Title)
+            by rule_key;
 alerts
-| join kind=fullouter (incidents) on $left.AlertName == $right.Title
-| project rule_name = coalesce(AlertName, Title),
+| join kind=fullouter (incidents) on rule_key
+| project rule_key = coalesce(rule_key, rule_key1),
+          rule_name = coalesce(alert_name, incident_title),
           alerts_30d = coalesce(alerts_30d, 0),
           incidents_30d = coalesce(incidents_30d, 0),
-          closed_fp_30d = coalesce(closed_fp_30d, 0)
+          closed_tp_30d = coalesce(closed_tp_30d, 0),
+          closed_fp_30d = coalesce(closed_fp_30d, 0),
+          closed_bp_30d = coalesce(closed_bp_30d, 0)
 | order by alerts_30d asc, rule_name asc
 """.strip()
 
@@ -174,66 +272,111 @@ def telemetry_query(*, since_days: int = 30) -> str:
     return silent_rules_query(since_days=since_days)
 
 
+def closed_fp_rate(row: Any) -> float | None:
+    """A rule's false-positive rate from one (merged) telemetry row.
+
+    ``closed_fp_30d / (closed_tp_30d + closed_fp_30d + closed_bp_30d)``:
+    the FalsePositive share of the incidents closed with a verdict. Open
+    incidents and incidents closed as Undetermined carry none, so they
+    are left out of both sides. ``None`` when no incident was closed as
+    TP, FP or BP. The one definition behind the ``lifecycle promote``
+    gate, the report and ``portfolio --with-telemetry``.
+    """
+    tp, fp, bp = (
+        int(row.get(column) or 0)
+        for column in ("closed_tp_30d", "closed_fp_30d", "closed_bp_30d")
+    )
+    closed = tp + fp + bp
+    return fp / closed if closed else None
+
+
 # ---------------------------------------------------------------------------
 # Tuning impact preview — NVISO Part 8
 # ---------------------------------------------------------------------------
 
 
-def suppression_impact_query(*, rule_names: list[str], since_days: int = 30) -> str:
+def _kql_string_literal(value: str) -> str:
+    """Render a value as a KQL string literal with full escape coverage."""
+    return (
+        '"'
+        + value
+        .replace('\\', '\\\\')
+        .replace('"', '\\"')
+        .replace('\n', '\\n')
+        .replace('\r', '\\r')
+        .replace('\t', '\\t')
+        .replace('\0', '')
+        + '"'
+    )
+
+
+def suppression_impact_query(
+    *,
+    rule_names: list[str] | None = None,
+    rule_keys: list[str] | None = None,
+    since_days: int = 30,
+) -> str:
     """KQL that counts alerts + incidents that would be silenced by
-    suppressing the given rule displayNames over the lookback window.
+    suppressing the given rules over the lookback window.
 
     NVISO Part 8 ("21 incidents, 309 alerts" example) — gives reviewers
     a concrete blast-radius estimate before approving a new drift
-    suppression. The list is matched verbatim against SecurityAlert
-    .AlertName and SecurityIncident.Title (Sentinel's own rule-name
-    fields), so the caller must resolve each suppression's envelope
-    id → displayName before invoking this.
+    suppression.
 
-    Incidents are deduped to one row per ``IncidentNumber`` first
-    (SecurityIncident logs a row per update), as in
+    Rules are given as rule keys (``id:<rule name>`` / ``name:<display
+    name>``, see ``contentops.rule_keys``); plain ``rule_names`` become
+    ``name:`` keys. Each alert / incident is attributed to the first key
+    it matches -- its rule id when that is one of the keys, else its
+    display name -- so the caller can sum a rule's keys without double
+    counting. Alerts are de-duplicated per ``SystemAlertId`` and
+    incidents per ``IncidentNumber`` first (both tables log a row per
+    update), and a Sentinel alert takes its rule id as in
     :func:`silent_rules_query`.
 
-    Returns one row per rule_name with two count columns. Rules that
-    fired zero times will not appear (left as a gap that the renderer
-    fills with 0 / 0).
+    Returns one row per matched key (``match_key``) with
+    ``alerts_count`` / ``incidents_count``; keys that matched nothing
+    don't appear (the renderer fills 0 / 0).
     """
-    if not rule_names:
-        # Avoid emitting a bare `in ()` which LA rejects.
-        return "print rule_name=''| where false"
-    # Render the names as KQL string literals with full escape coverage.
-    def _kql_string_literal(name: str) -> str:
-        return (
-            '"'
-            + name
-            .replace('\\', '\\\\')
-            .replace('"', '\\"')
-            .replace('\n', '\\n')
-            .replace('\r', '\\r')
-            .replace('\t', '\\t')
-            .replace('\0', '')
-            + '"'
-        )
+    from contentops.rule_keys import NAME_PREFIX, normalise_rule_name
 
-    names_kql = ", ".join(_kql_string_literal(n) for n in rule_names)
+    keys: list[str] = list(rule_keys or [])
+    for name in rule_names or []:
+        normalised = normalise_rule_name(name)
+        if normalised:
+            keys.append(NAME_PREFIX + normalised)
+    keys = list(dict.fromkeys(k for k in keys if k))
+    if not keys:
+        # Avoid emitting a bare `in ()` which LA rejects.
+        return "print match_key=''| where false"
+
+    keys_kql = ", ".join(_kql_string_literal(k) for k in keys)
     return f"""
 let window = {since_days}d;
-let names = dynamic([{names_kql}]);
-let alerts = SecurityAlert
-| where TimeGenerated > ago(window)
-| where AlertName in (names)
-| summarize alerts_count = count() by rule_name = AlertName;
-let incidents = SecurityIncident
-| where TimeGenerated > ago(window)
-| where Title in (names)
-| summarize arg_max(TimeGenerated, *) by IncidentNumber
-| summarize incidents_count = count() by rule_name = Title;
+let keys = dynamic([{keys_kql}]);
+{_alert_rule_link_lets()}
+let alerts = {_latest_alerts()}
+| extend rule_id = {_alert_rule_id_expr()}
+| extend id_key = iff(isnotempty(rule_id), strcat("id:", rule_id), ""),
+         name_key = {_name_key_expr("AlertName")}
+| extend match_key = iff(id_key in (keys), id_key, iff(name_key in (keys), name_key, ""))
+| where isnotempty(match_key)
+| summarize alerts_count = count() by match_key;
+let incidents = incident_latest
+| extend rule_refs = iff(array_length(RelatedAnalyticRuleIds) > 0, RelatedAnalyticRuleIds, dynamic([""]))
+| mv-expand rule_ref = rule_refs to typeof(string)
+| extend rule_id = {_incident_rule_id_expr("rule_ref")}
+| extend id_key = iff(isnotempty(rule_id), strcat("id:", rule_id), ""),
+         name_key = {_name_key_expr("Title")}
+| extend match_key = iff(id_key in (keys), id_key, iff(name_key in (keys), name_key, ""))
+| where isnotempty(match_key)
+| distinct IncidentNumber, match_key
+| summarize incidents_count = count() by match_key;
 alerts
-| join kind=fullouter (incidents) on rule_name
-| project rule_name = coalesce(rule_name, rule_name1),
+| join kind=fullouter (incidents) on match_key
+| project match_key = coalesce(match_key, match_key1),
           alerts_count = coalesce(alerts_count, 0),
           incidents_count = coalesce(incidents_count, 0)
-| order by incidents_count desc, alerts_count desc, rule_name asc
+| order by incidents_count desc, alerts_count desc, match_key asc
 """.strip()
 
 
@@ -583,7 +726,7 @@ __all__ = [
     "WorkspaceKqlError", "QueryResult",
     "parse_response", "query",
     "resolve_workspace_id",
-    "silent_rules_query", "telemetry_query",
+    "silent_rules_query", "telemetry_query", "closed_fp_rate",
     "auto_disabled_query",
     "security_alerts_for_date_query",
     "security_alerts_joined_query",

@@ -15,7 +15,14 @@ from contentops.portfolio import (
     write_csv as portfolio_write_csv,
     write_json as portfolio_write_json,
 )
+from contentops.cli.commands._shared import coverage_scope_options
 from contentops.portfolio.report import render_csv_string as _portfolio_render_csv_string
+
+
+_TELEMETRY_COUNTS = (
+    "alerts_30d", "incidents_30d", "closed_tp_30d", "closed_fp_30d", "closed_bp_30d",
+)
+_TELEMETRY_COLUMNS = (*_TELEMETRY_COUNTS, "fp_rate")
 
 
 @click.command("portfolio")
@@ -47,7 +54,8 @@ from contentops.portfolio.report import render_csv_string as _portfolio_render_c
 @click.option(
     "--with-telemetry", "with_telemetry", is_flag=True, default=False,
     help="Augment with F20 telemetry columns (alerts_30d, "
-         "incidents_30d, closed_fp_30d, fp_rate). Requires "
+         "incidents_30d, closed_tp_30d, closed_fp_30d, closed_bp_30d, "
+         "fp_rate = closed FP / closed TP+FP+BP). Requires "
          "--workspace-id (or PIPELINE_WORKSPACE_ID env var).",
 )
 @click.option(
@@ -78,6 +86,7 @@ from contentops.portfolio.report import render_csv_string as _portfolio_render_c
         "Example: --score-weights tp=1,fp=3,silence=60."
     ),
 )
+@coverage_scope_options
 def portfolio_cmd(
     detections_path: Path,
     out_csv: Path | None,
@@ -88,17 +97,32 @@ def portfolio_cmd(
     telemetry_since_days: int,
     rank: bool,
     score_weights: str | None,
+    include_non_production: bool,
+    include_hunting: bool,
 ) -> None:
     """Emit a flat per-detection portfolio report (CSV / JSON).
 
     Without --with-telemetry: inputs only (the original behaviour).
     With --with-telemetry: augments rows with F20 telemetry columns
-    sourced from the LA workspace via the F4 silent-rules KQL.
-    Telemetry merge key is `display_name` -> `rule_name`.
+    sourced from the LA workspace via the F4 silent-rules KQL. A rule's
+    telemetry is the sum of its rule-id rows (`metadata.arm_name` /
+    envelope id vs. the incident's RelatedAnalyticRuleIds and the alert's
+    incident or AlertType) and its display-name rows.
     """
+    from contentops.coverage import CoverageScope, load_corpus
+
+    # One corpus walk feeds the rows and the coverage footer.
+    corpus = load_corpus(
+        detections_path,
+        scope=CoverageScope.from_flags(
+            include_non_production=include_non_production,
+            include_hunting=include_hunting,
+        ),
+    )
     rows = portfolio_build_rows(
         detections_path,
         cohort=cohort,
+        corpus=corpus,
     )
 
     extra_columns: tuple[str, ...] = ()
@@ -136,28 +160,26 @@ def portfolio_cmd(
             )
             result = None
         if result is not None:
-            by_name = {
-                str(r.get("rule_name") or ""): r
-                for r in result.rows
+            from contentops.rule_keys import TelemetryIndex, rule_keys_for
+            from contentops.workspace_kql import closed_fp_rate
+
+            index = TelemetryIndex(result.rows)
+            keys_by_rule = {
+                (entry.asset.value, entry.id): rule_keys_for(entry)
+                for entry in corpus.entries
             }
             for row in rows:
-                tel = by_name.get(str(row.get("display_name") or ""))
+                keys = keys_by_rule.get((row["asset"], row["id"]))
+                tel = index.lookup(keys) if keys is not None else None
                 if tel is None:
-                    row["alerts_30d"] = None
-                    row["incidents_30d"] = None
-                    row["closed_fp_30d"] = None
-                    row["fp_rate"] = None
+                    for column in _TELEMETRY_COLUMNS:
+                        row[column] = None
                     continue
-                a = int(tel.get("alerts_30d") or 0)
-                i = int(tel.get("incidents_30d") or 0)
-                f = int(tel.get("closed_fp_30d") or 0)
-                row["alerts_30d"] = a
-                row["incidents_30d"] = i
-                row["closed_fp_30d"] = f
-                row["fp_rate"] = round(f / i, 3) if i > 0 else None
-        extra_columns = (
-            "alerts_30d", "incidents_30d", "closed_fp_30d", "fp_rate",
-        )
+                for column in _TELEMETRY_COUNTS:
+                    row[column] = int(tel.get(column) or 0)
+                rate = closed_fp_rate(row)
+                row["fp_rate"] = round(rate, 3) if rate is not None else None
+        extra_columns = _TELEMETRY_COLUMNS
 
     if rank:
         from contentops.portfolio.score import parse_weights, rank_rows
@@ -194,16 +216,19 @@ def portfolio_cmd(
 
     # MITRE coverage footer (stderr, suppressed when the corpus is
     # empty so the no-detections short-circuit stays clean). The
-    # number matches the README badge — same coverage_summary helper.
-    # stdout is flushed above so the footer never interleaves into
-    # the CSV body in CliRunner's mixed-stream output.
+    # number matches the README badge — same engine and scope — and
+    # covers the same --cohort as the rows above. stdout is flushed
+    # above so the footer never interleaves into the CSV body in
+    # CliRunner's mixed-stream output.
     if rows:
         from contentops.coverage import coverage_summary
         try:
-            summary = coverage_summary(detections_path)
+            summary = coverage_summary(detections_path, corpus=corpus, cohort=cohort)
+            cohort_note = f", cohort {cohort}" if cohort else ""
             click.echo(
                 f"MITRE ATT&CK coverage: {summary.covered}/{summary.total} "
-                f"techniques ({summary.pct}%)  --  matrix: {summary.matrix_label}",
+                f"techniques ({summary.pct}%)  --  matrix: {summary.matrix_label}"
+                f"  --  counted: {summary.scope_label}{cohort_note}",
                 err=True,
             )
         except Exception as exc:  # noqa: BLE001

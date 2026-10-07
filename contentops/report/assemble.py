@@ -5,9 +5,9 @@
 
 Joins three sources into one row per detection:
 
-* Envelope (``id``, ``status``, ``severity``, ``tactics`` /
-  ``techniques`` from ``metadata``, ``displayName`` from payload,
-  ``lastValidatedAt``).
+* Envelope (``id``, ``status``, ``severity``, ``displayName`` from
+  payload, ``lastValidatedAt``) plus ATT&CK ``tactics`` / ``techniques``
+  from the shared coverage engine (metadata + payload, normalised).
 * Git log (first-commit timestamp of the YAML file — the *merge
   date*, the moment the detection landed in the repo).
 * Audit JSONL (latest record where ``id`` matches AND ``status ==
@@ -32,18 +32,12 @@ from typing import Any
 
 import yaml
 
-from contentops.core.asset import Asset
-from contentops.core.discovery import discover_assets, load_asset
-from contentops.coverage.extract import extract_mitre
+from contentops.core.asset import DETECTION_ASSETS
+from contentops.coverage.corpus import CoverageScope, load_corpus
+from contentops.coverage.report import summary_from_corpus
+from contentops.rule_keys import rule_keys_for
 
 logger = logging.getLogger(__name__)
-
-
-DETECTION_ASSETS: frozenset[Asset] = frozenset({
-    Asset.SENTINEL_ANALYTIC,
-    Asset.SENTINEL_HUNTING,
-    Asset.DEFENDER_CUSTOM_DETECTION,
-})
 
 
 @dataclass(frozen=True)
@@ -92,6 +86,18 @@ class ReportRow:
     last_pr_number: int | None = None  # GitHub PR# of last change (squash-merge subject)
     last_pr_url: str | None = None  # full URL to the PR for clickthrough
 
+    # Coverage scope (shared engine): whether the rule runs, and whether it
+    # counts toward the ATT&CK coverage numbers (default scope: enabled
+    # production detections, hunting queries excluded). assemble_report
+    # always sets it; rows built by hand count, as before scoping existed.
+    enabled: bool | None = None
+    in_coverage_scope: bool = True
+
+    # How the rule appears in workspace telemetry (``id:`` / ``name:`` keys,
+    # see contentops.rule_keys). Empty on rows built by hand: the
+    # telemetry enricher then matches on ``title``.
+    telemetry_keys: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class ReportSummary:
@@ -122,6 +128,11 @@ class ReportSummary:
     coverage_sub_techniques_pct: int = 0
     coverage_sub_techniques_covered: int = 0
     coverage_sub_techniques_total: int = 0
+    # Which detections the coverage numbers count, how many, and against
+    # which ATT&CK release. ``None`` / "" on summaries built by hand.
+    in_scope_detections: int | None = None
+    coverage_scope: str = ""
+    attack_version: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -289,12 +300,6 @@ def _audit_deploy_dates(audit_dir: Path) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _coerce_str_tuple(value: Any) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        return ()
-    return tuple(v for v in value if isinstance(v, str) and v)
-
-
 def _display_name(loaded: Any) -> str:
     """Pull a human-readable title from the payload; fall back to id.
 
@@ -317,6 +322,7 @@ def assemble_report(
     repo_root: Path | None = None,
     audit_dir: Path | None = None,
     today: date | None = None,
+    scope: CoverageScope | None = None,
 ) -> tuple[list[ReportRow], ReportSummary]:
     """Build the report row list + aggregate summary.
 
@@ -327,7 +333,9 @@ def assemble_report(
     invocation); pass explicitly when the layout is non-standard.
     ``audit_dir`` defaults to ``repo_root / "audit"``.
     ``today`` defaults to the current UTC date (used for the summary
-    ``generated_at`` field).
+    ``generated_at`` field). ``scope`` selects which detections the
+    coverage numbers count (default: enabled production detections,
+    hunting queries excluded); every detection still gets a row.
     """
     repo_root = repo_root or detections_root.parent
     audit_dir = audit_dir or (repo_root / "audit")
@@ -336,18 +344,16 @@ def assemble_report(
     rows: list[ReportRow] = []
     status_counts = {"production": 0, "experimental": 0, "deprecated": 0}
 
-    for path in sorted(discover_assets(detections_root)):
-        try:
-            loaded = load_asset(path)
-        except Exception as exc:
-            logger.debug("skipping unparseable envelope %s: %s", path, exc)
-            continue
-        if loaded.envelope.asset not in DETECTION_ASSETS:
-            continue
+    # One corpus walk: rows and coverage numbers come from the same
+    # extraction, so a row's techniques are exactly what coverage counts.
+    corpus = load_corpus(detections_root, scope=scope)
+    for path, error in corpus.load_errors:
+        logger.debug("skipping unparseable envelope %s: %s", path, error)
 
-        rel_path = str(path.relative_to(repo_root)).replace("\\", "/")
-        meta = loaded.envelope.metadata
-        status = str(loaded.envelope.status)
+    for entry in corpus.entries:
+        rel_path = _relative_path(entry.path, repo_root)
+        meta = entry.envelope.metadata
+        status = entry.status
         if status in status_counts:
             status_counts[status] += 1
 
@@ -355,25 +361,17 @@ def assemble_report(
             repo_root, rel_path, origin_repo=origin_repo,
         )
 
-        mitre = extract_mitre(loaded.envelope, loaded.payload)
-        meta_tactics = _coerce_str_tuple(meta.tactics) if meta else ()
-        meta_techniques = _coerce_str_tuple(meta.techniques) if meta else ()
-        if not meta_tactics and not meta_techniques:
-            meta_tactics = mitre.tactics
-            meta_techniques = mitre.techniques
-        meta_severity = (meta.severity if meta and meta.severity else None) or mitre.severity or "informational"
-
         rows.append(ReportRow(
-            rule_id=loaded.envelope.id,
-            asset_kind=loaded.envelope.asset.value,
+            rule_id=entry.id,
+            asset_kind=entry.asset.value,
             path=rel_path,
-            title=_display_name(loaded),
+            title=_display_name(entry),
             status=status,
-            severity=meta_severity,
-            tactics=meta_tactics,
-            techniques=meta_techniques,
+            severity=entry.mitre.severity,
+            tactics=entry.mitre.tactics,
+            techniques=entry.mitre.techniques,
             merge_date=_git_merge_date(repo_root, rel_path),
-            deployment_date=deploy_dates.get(loaded.envelope.id),
+            deployment_date=deploy_dates.get(entry.id),
             last_review_date=(
                 meta.lastValidatedAt if meta and meta.lastValidatedAt else None
             ),
@@ -381,14 +379,12 @@ def assemble_report(
             runbook_url=meta.runbookUrl if meta and meta.runbookUrl else None,
             last_pr_number=pr_num,
             last_pr_url=pr_url,
+            enabled=entry.enabled,
+            in_coverage_scope=entry.in_scope,
+            telemetry_keys=rule_keys_for(entry).candidates(),
         ))
 
-    # Coverage from the existing helper — wires the badge to the same
-    # number the README displays. Late import to avoid the cycle if
-    # coverage_summary ever pulls from report code.
-    from contentops.coverage import coverage_summary
-    cov = coverage_summary(detections_root)
-
+    cov = summary_from_corpus(corpus)
     now_utc = datetime.now(timezone.utc)
     summary = ReportSummary(
         total=len(rows),
@@ -405,5 +401,20 @@ def assemble_report(
         coverage_sub_techniques_pct=cov.sub_techniques.pct,
         coverage_sub_techniques_covered=cov.sub_techniques.covered,
         coverage_sub_techniques_total=cov.sub_techniques.total,
+        in_scope_detections=cov.detections_in_scope,
+        coverage_scope=cov.scope_label,
+        attack_version=cov.attack_version,
     )
     return rows, summary
+
+
+def _relative_path(path: Path, repo_root: Path) -> str:
+    try:
+        rel = path.relative_to(repo_root)
+    except ValueError:
+        try:
+            rel = path.resolve().relative_to(repo_root.resolve())
+        except ValueError:
+            rel = path
+    return str(rel).replace("\\", "/")
+

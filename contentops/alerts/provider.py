@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from contentops.providers.sentinel_arm import ARM_BASE_URL
 from contentops.utils.http_retry import paginate, request_with_retry
 from contentops.utils.token_auth import BearerTokenAuth
 
@@ -348,6 +349,7 @@ class GraphAlertsProvider:
             lambda u: self._request_with_retry("GET", u),
             url,
             next_link_key="@odata.nextLink",
+            base_url=GRAPH_ALERTS_BASE,
         )
 
     def _fetch_graph_alerts_single_page(
@@ -462,7 +464,7 @@ class GraphAlertsProvider:
         if self._sentinel is None:
             raise RuntimeError("Sentinel fallback requested but no provider configured")
 
-        base_url = self._sentinel.resource_url("incidents")
+        first_url = self._sentinel.resource_url("incidents")
         filters: list[str] = []
         if since:
             filters.append(
@@ -473,13 +475,14 @@ class GraphAlertsProvider:
                 f"properties/createdTimeUtc lt {until.strftime('%Y-%m-%dT%H:%M:%SZ')}"
             )
         if filters:
-            base_url += "&$filter=" + " and ".join(filters)
-        base_url += "&$top=500"
+            first_url += "&$filter=" + " and ".join(filters)
+        first_url += "&$top=500"
 
         all_incidents = paginate(
             lambda u: self._sentinel.request("GET", u),
-            base_url,
+            first_url,
             next_link_key="nextLink",
+            base_url=ARM_BASE_URL,
         )
 
         # Time filtering is server-side; status/classification still client-side
@@ -569,16 +572,17 @@ class GraphAlertsProvider:
         since = _dt.now(_tz.utc) - _td(days=modified_days)
         since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        base_url = self._sentinel.resource_url("incidents")
-        base_url += f"&$filter=properties/lastModifiedTimeUtc ge {since_str}"
-        base_url += "&$top=500"
+        first_url = self._sentinel.resource_url("incidents")
+        first_url += f"&$filter=properties/lastModifiedTimeUtc ge {since_str}"
+        first_url += "&$top=500"
 
         try:
             from contentops.utils.http_retry import paginate
             incidents = paginate(
                 lambda u: self._sentinel.request("GET", u),
-                base_url,
+                first_url,
                 next_link_key="nextLink",
+                base_url=ARM_BASE_URL,
             )
             logger.info("ARM overlay: fetched %d recently modified incidents (last %d days)", len(incidents), modified_days)
             return incidents

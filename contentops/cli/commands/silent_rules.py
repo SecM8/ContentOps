@@ -13,6 +13,12 @@ import click
 
 @click.command("silent-rules")
 @click.option(
+    "--path", "detections_path",
+    type=click.Path(path_type=Path),
+    default=Path("detections"), show_default=True,
+    help="Root detections directory: the repo rules to list.",
+)
+@click.option(
     "--workspace-id", "workspace_id",
     envvar="PIPELINE_WORKSPACE_ID",
     default=None,
@@ -25,11 +31,17 @@ import click
     type=click.Choice(["prod", "integration", "dev", "test"]),
     default="prod", show_default=True,
     help="Which tenant.yml `sentinelWorkspaces` entry to auto-derive "
-         "the workspace ID from. Ignored when --workspace-id is given.",
+         "the workspace ID from (ignored when --workspace-id is given), "
+         "and which rule statuses that workspace deploys.",
 )
 @click.option(
     "--since", "since_days", type=click.IntRange(min=1, max=365), default=30,
     help="Lookback window in days (default 30).",
+)
+@click.option(
+    "--include-unmatched", "include_unmatched", is_flag=True, default=False,
+    help="Also list telemetry rows no repo rule matched (source=workspace): "
+         "rules deployed outside the repo, built-in product alerts.",
 )
 @click.option(
     "--format", "output_format",
@@ -41,18 +53,25 @@ import click
     help="Write output to this file instead of stdout.",
 )
 def silent_rules_cmd(
-    workspace_id: str | None, role: str,
-    since_days: int, output_format: str, out: Path | None,
+    detections_path: Path, workspace_id: str | None, role: str,
+    since_days: int, include_unmatched: bool, output_format: str, out: Path | None,
 ) -> None:
-    """List rules that haven't fired in the lookback window (F4).
+    """List the repo's deployed rules with their telemetry, silent first (F4).
 
     \b
-    Closes G7. Surfaces SecurityAlert + SecurityIncident counts
-    per rule displayName. Rules with alerts_30d == 0 are silent
-    candidates - could be (a) tuned out by an upstream change,
-    (b) waiting for an attack pattern that hasn't recurred,
-    (c) broken (KQL evaluates to zero rows). The pipeline can't
-    distinguish, but it surfaces the candidates.
+    Closes G7. Lists every enabled sentinel_analytic /
+    defender_custom_detection rule whose status --role's workspace
+    deploys (prod: production; integration: test + production; test:
+    test; dev: experimental + test + production; Defender rules for
+    prod only, as apply does), with de-duplicated SecurityAlert +
+    SecurityIncident counts summed over its rule keys: `id:<rule>`
+    when the alert / incident names its Sentinel analytic rule
+    (AlertType / RelatedAnalyticRuleIds), else `name:<display name>`.
+    A rule with no alert and no incident in the window is silent -
+    (a) tuned out by an upstream change, (b) waiting for an attack
+    pattern that hasn't recurred, (c) broken (KQL evaluates to zero
+    rows). The pipeline can't distinguish, but it surfaces the
+    candidates.
 
     Workspace selection: auto-derives the LA workspace GUID from
     config/tenant.yml's --role entry. Pass --workspace-id to override
@@ -61,11 +80,32 @@ def silent_rules_cmd(
     import csv as _csv
     import io as _io
     import json as _json
+    from contentops.silent_rules import (
+        COLUMNS, build_report, deployed_statuses, select_rules,
+    )
     from contentops.utils.auth import get_credential
     from contentops.workspace_kql import (
         LA_SCOPE, WorkspaceKqlError, query, resolve_workspace_id,
         silent_rules_query,
     )
+
+    if not detections_path.is_dir():
+        click.echo(
+            f"error: detections path not found: {detections_path} (pass --path)",
+            err=True,
+        )
+        sys.exit(1)
+    load_errors: list[Path] = []
+    rules = select_rules(
+        detections_path, role=role,
+        on_error=lambda path, _exc: load_errors.append(path),
+    )
+    if load_errors:
+        click.echo(
+            f"warning: {len(load_errors)} file(s) under {detections_path} don't "
+            "load and are not listed; run `contentops lint` for details.",
+            err=True,
+        )
 
     try:
         cred = get_credential()
@@ -95,32 +135,39 @@ def silent_rules_cmd(
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
 
-    rows = result.rows
+    report = build_report(rules, result.rows, include_unmatched=include_unmatched)
+    rows = report.rows
+    statuses = ", ".join(deployed_statuses(role))
     if output_format == "json":
         rendered = _json.dumps(rows, indent=2, default=str) + "\n"
     elif output_format == "csv":
         buf = _io.StringIO()
         writer = _csv.writer(buf, lineterminator="\n")
-        cols = result.column_names or (list(rows[0].keys()) if rows else [])
-        writer.writerow(cols)
+        writer.writerow(COLUMNS)
         for r in rows:
-            writer.writerow([r.get(c) for c in cols])
+            writer.writerow([_csv_cell(r[c]) for c in COLUMNS])
         rendered = buf.getvalue()
     else:  # table
+        cols = [c for c in COLUMNS if c != "rule_keys" and (include_unmatched or c != "source")]
         if not rows:
-            rendered = f"(no rules with telemetry in the last {since_days}d)\n"
+            rendered = (
+                f"(no enabled rule with status {statuses} under {detections_path})\n"
+            )
         else:
-            cols = result.column_names or list(rows[0].keys())
-            widths = {c: max(len(c), max(
-                (len(str(r.get(c, "") or "")) for r in rows), default=0,
-            )) for c in cols}
+            cells = [{c: _table_cell(r[c]) for c in cols} for r in rows]
+            widths = {c: max(len(c), *(len(cell[c]) for cell in cells)) for c in cols}
             lines = [" ".join(c.ljust(widths[c]) for c in cols)]
             lines.append(" ".join("-" * widths[c] for c in cols))
-            for r in rows:
-                lines.append(" ".join(
-                    str(r.get(c, "") or "").ljust(widths[c]) for c in cols
-                ))
+            for cell in cells:
+                lines.append(" ".join(cell[c].ljust(widths[c]) for c in cols).rstrip())
+            lines.append("")
+            lines.append(
+                f"{report.silent_count} of {report.rule_count} rule(s) silent over "
+                f"the last {since_days}d (no alert and no incident; status {statuses})."
+            )
             rendered = "\n".join(lines) + "\n"
+    for note in report.notes:
+        click.echo(f"note: {note}", err=True)
 
     if out is not None:
         out.write_text(rendered, encoding="utf-8")
@@ -128,3 +175,18 @@ def silent_rules_cmd(
     else:
         sys.stdout.write(rendered)
         sys.stdout.flush()
+
+
+def _csv_cell(value: object) -> object:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return " ".join(str(v) for v in value)
+    return "" if value is None else value
+
+
+def _table_cell(value: object) -> str:
+    """0 prints as 0 (a blank cell read as "unknown")."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return "" if value is None else str(value)

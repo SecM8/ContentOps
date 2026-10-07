@@ -54,6 +54,17 @@ functional reach, and GitHub repo settings. Run via
 weekly via `conformance.yml`. See
 [`docs/operations/deployment-conformance.md`](operations/deployment-conformance.md).
 
+### Coverage scope
+Which detections the ATT&CK coverage numbers count. Default: **enabled
+detections with `status: production`, Sentinel hunting queries
+excluded** (hunting queries never raise alerts). `--include-non-production`
+adds enabled experimental / test rules and `--include-hunting` adds
+hunting queries (on `coverage`, `navigator`, `report`, `portfolio`);
+disabled and deprecated rules never count. Every surface — heatmap,
+gaps, badge, Navigator repo axis, report, portfolio footer — uses the
+same scope and states it. Implemented in
+[`contentops/coverage/corpus.py`](../contentops/coverage/corpus.py).
+
 ## D
 
 ### D3FEND
@@ -126,6 +137,20 @@ no per-workspace routing).
 ### ETag
 An HTTP concurrency token that Sentinel ARM resources expose. Write-capable Sentinel handlers read the remote first, capture its ETag, and PUT with `If-Match`; a `412 Precondition Failed` surfaces as a "rerun `contentops plan` and resolve drift" message rather than a stack trace. The Defender Graph beta API has no ETag, so Defender writes rely on post-apply hash verification only.
 
+## F
+
+### FP rate
+FalsePositive verdicts ÷ TruePositive + FalsePositive + BenignPositive
+verdicts. For workspace telemetry: incidents closed with that
+classification over the window
+([`closed_fp_rate`](../contentops/workspace_kql.py)). One definition
+behind the `lifecycle promote` `fp_rate_threshold` gate, the report's
+FP-rate column and `portfolio --with-telemetry`'s `fp_rate`. Open
+incidents and Undetermined ones carry no verdict and are left out; with
+no verdict at all the rate is undefined (an empty cell; the gate
+passes). `contentops alerts health` keeps its own FP share of all alerts
+for its TUNE recommendation.
+
 ## G
 
 ### Graph (Microsoft Graph)
@@ -182,9 +207,12 @@ tells `contentops apply` to skip the asset unless
 The framework of adversary tactics and techniques (https://attack.mitre.org/). Each technique has an ID like `T1098` (with sub-techniques like `T1098.003`). Detections map to tactics/techniques via `metadata`/`payload` fields; `contentops coverage` renders an ATT&CK heatmap and `contentops navigator` a Navigator layer. See also *D3FEND* (the defensive companion taxonomy).
 
 ### MITRE mapping
-The `tactics` + `techniques` lists on the payload (Sentinel
-kinds) or `mitreTechniques` on the alert template (Defender).
-PAYLOAD003 lint warns when either is empty.
+The `tactics` + `techniques` (+ `subTechniques`) lists on the payload
+(Sentinel kinds) or `mitreTechniques` + `category` on the alert
+template (Defender), merged with `metadata.tactics` / `techniques`.
+PAYLOAD003 lint warns when either is empty. Coverage normalises the
+ids, counts a technique only under the tactics ATT&CK assigns it, and
+maps *revoked* ids to their replacement.
 
 ### MITRE Navigator layer
 The JSON file format consumed by the hosted MITRE ATT&CK Navigator
@@ -192,7 +220,8 @@ UI at https://mitre-attack.github.io/attack-navigator/. ContentOps
 generates one via `contentops navigator`, aggregating three coverage
 axes (repo envelopes / deployed rules / live `SecurityAlert`
 firings) into a single layer where each technique tile carries a
-score = unique-rule-name count across selected axes. The hosted UI
+score = unique-rule-name count across selected axes (`versions.attack`
+from the bundled matrix). The hosted UI
 renders the JSON for free; the project intentionally does NOT ship
 an SVG export to keep the runtime dependency surface lean.
 
@@ -214,8 +243,31 @@ deployment repositories.
 
 ## R
 
+### Revoked / deprecated ATT&CK id
+MITRE retires technique ids between releases: a *revoked* id is
+replaced by another (ATT&CK v19.2 revoked T1562 → T1685), a
+*deprecated* one has no replacement. The bundled matrix
+(`contentops/coverage/data/mitre_attack_full.json`) records both for
+its `attack_version`; coverage counts a revoked id as its replacement
+and lists both kinds under *Data-quality notes*.
+
 ### Role (workspace role)
 The `role:` tag on each Sentinel workspace in `config/tenant.yml` — `prod` | `integration` | `test` | `dev` (plus documented synonyms). It selects which workspace(s) a command targets (`--role` / `--workspace`) and which envelope `status` values may deploy there (see *Env-status gate*). Defender XDR is tenant-wide and only deploys to `role: prod`.
+
+### Rule key
+How a detection is found in workspace telemetry
+([`contentops/rule_keys.py`](../contentops/rule_keys.py)):
+`id:<rule>` — the name the rule deploys under (`metadata.arm_name`,
+else the envelope id), which Sentinel writes into
+`SecurityIncident.RelatedAnalyticRuleIds` and `SecurityAlert.AlertType`
+(`<workspace-guid>_<rule>`) — or `name:<display name>` (`AlertName` /
+`Title`, lower-cased). A Sentinel alert takes the rule of its incident
+when that incident has exactly one related rule, else the id in
+`AlertType`. Each alert and incident lands in one row, and a rule's
+telemetry is the sum of its `id:` and `name:` rows, so a rule using
+`alertDisplayNameFormat` is not mistaken for a silent one. When none of
+a rule's own keys appear, rows whose alert name matches its display name
+are used instead (the display-name join that preceded rule keys).
 
 ## S
 
@@ -229,10 +281,13 @@ incomplete metadata on collected detections. Set `scaffoldStrict: true`
 to make the rules CI-blocking. See `contentops/config.py:is_scaffold_strict()`.
 
 ### Silent rule
-A deployed analytic rule that has fired zero alerts over a recent
-window. Reported by `contentops silent-rules` and the
-`silent-rules.yml` workflow. Not automatically retired —
-operator decides.
+A deployed rule (an enabled `sentinel_analytic` or
+`defender_custom_detection` whose status the workspace role deploys)
+with no alert and no incident over a recent window. Listed by
+`contentops silent-rules` and the `silent-rules.yml` workflow, which
+start from the repo's rules and match telemetry by *rule key*, so a
+rule that never fired is listed rather than missing. Not
+automatically retired — operator decides.
 
 ### Snippet
 A reusable KQL fragment under `overrides/`. Applied by

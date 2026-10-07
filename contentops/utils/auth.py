@@ -1,17 +1,20 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""Token acquisition with .env → OIDC → az-login fallback.
+"""Token acquisition: .env client secret, else OIDC / az login.
 
 Priority:
   1. .env client-secret (AZURE_CLIENT_ID + TENANT_ID + CLIENT_SECRET)
   2. OIDC / federated credentials (GitHub Actions, managed identity)
   3. AzureCliCredential (local ``az login``)
 
-If step 1 fails with an auth error (expired secret, wrong value),
-falls through to step 2/3 with a warning instead of crashing. The
-``_FallbackCredential`` wrapper handles this transparently so all
-downstream code (providers, token_auth) sees a single credential.
+When a client secret is configured, step 1 is the identity. If it fails
+(expired secret, wrong value) the default is to raise
+:class:`CredentialFallbackRefused`: silently switching to OIDC or the
+operator's ``az login`` would run as a different -- often more
+privileged -- identity, possibly in another tenant, and audit records
+would name the wrong actor. Set ``CONTENTOPS_AUTH_FALLBACK=1`` to allow
+the fallback for local work; it is never allowed inside GitHub Actions.
 
 Two token families:
 
@@ -41,12 +44,46 @@ ARM_SCOPE = "https://management.azure.com/.default"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 
-class _FallbackCredential:
-    """Try .env credentials first, fall back to OIDC/az-login on auth failure."""
+# Opt-in switch for falling back from a failed .env client secret to
+# OIDC / az login. Truthy values: 1, true, yes (case-insensitive).
+FALLBACK_ENV_VAR = "CONTENTOPS_AUTH_FALLBACK"
+_TRUTHY = frozenset({"1", "true", "yes"})
 
-    def __init__(self, primary: TokenCredential, fallback: TokenCredential) -> None:
+
+def fallback_allowed() -> bool:
+    """Whether a failed client-secret sign-in may fall back to another identity.
+
+    Never inside GitHub Actions: a CI run must authenticate as the identity
+    it was configured with. Locally, only when ``CONTENTOPS_AUTH_FALLBACK``
+    is truthy.
+    """
+    if os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true":
+        return False
+    return os.environ.get(FALLBACK_ENV_VAR, "").strip().lower() in _TRUTHY
+
+
+class CredentialFallbackRefused(ClientAuthenticationError):
+    """The .env client secret failed and falling back to OIDC / az login
+    (a different identity) is not enabled."""
+
+
+class _FallbackCredential:
+    """Use the .env client secret; fall back to OIDC/az-login only when allowed.
+
+    ``allow_fallback=None`` (the default) decides at failure time via
+    :func:`fallback_allowed`; tests pass an explicit bool.
+    """
+
+    def __init__(
+        self,
+        primary: TokenCredential,
+        fallback: TokenCredential,
+        *,
+        allow_fallback: bool | None = None,
+    ) -> None:
         self._primary = primary
         self._fallback = fallback
+        self._allow_fallback = allow_fallback
         self._primary_failed = False
 
     def get_token(
@@ -62,9 +99,28 @@ class _FallbackCredential:
                 msg = getattr(exc, "message", str(exc))
                 code_match = _re.search(r"AADSTS\d+", msg)
                 safe_msg = code_match.group(0) if code_match else type(exc).__name__
+                allowed = (
+                    self._allow_fallback
+                    if self._allow_fallback is not None
+                    else fallback_allowed()
+                )
+                if not allowed:
+                    raise CredentialFallbackRefused(
+                        message=(
+                            f"Client-secret sign-in from .env failed ({safe_msg}). "
+                            "ContentOps does not switch to another identity "
+                            "(OIDC / az login) on its own: actions and audit "
+                            "records would be attributed to the wrong actor. "
+                            "Fix AZURE_CLIENT_SECRET, or remove it to sign in "
+                            "with OIDC / az login, or set "
+                            f"{FALLBACK_ENV_VAR}=1 to allow the fallback for "
+                            "local work (never honoured in GitHub Actions)."
+                        ),
+                    ) from exc
                 log.warning(
-                    "Auth: .env credentials failed (%s), falling back to OIDC/az-login",
-                    safe_msg,
+                    "Auth: .env credentials failed (%s); fallback enabled via "
+                    "%s, switching to OIDC/az-login — the active identity changes",
+                    safe_msg, FALLBACK_ENV_VAR,
                 )
                 self._primary_failed = True
         return self._fallback.get_token(*scopes, **kwargs)
@@ -74,12 +130,13 @@ _credential_cache: TokenCredential | None = None
 
 
 def get_credential() -> TokenCredential:
-    """Return a credential with .env → OIDC → az-login fallback.
+    """Return the credential: .env client secret, else OIDC / az login.
 
-    When AZURE_CLIENT_SECRET is set (typically via ``.env``), tries
-    client-secret auth first. On failure (expired secret, wrong
-    value), falls back to DefaultAzureCredential which covers OIDC
-    (CI federated tokens) and AzureCliCredential (local ``az login``).
+    When AZURE_CLIENT_SECRET is set (typically via ``.env``), that
+    service principal is the identity. If it fails, the call raises
+    :class:`CredentialFallbackRefused` unless ``CONTENTOPS_AUTH_FALLBACK``
+    allows falling back to DefaultAzureCredential (see
+    :func:`fallback_allowed`).
 
     Without AZURE_CLIENT_SECRET, goes straight to OIDC/az-login.
 
@@ -101,7 +158,7 @@ def get_credential() -> TokenCredential:
     )
 
     if client_secret and client_id and tenant_id:
-        log.debug("Auth: .env detected, trying client-secret with OIDC/az-login fallback")
+        log.debug("Auth: .env client secret detected; fallback to OIDC/az-login is opt-in")
         primary = ClientSecretCredential(
             tenant_id=tenant_id,
             client_id=client_id,

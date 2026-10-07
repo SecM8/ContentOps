@@ -103,7 +103,12 @@ def test_compute_source_coverage_buckets_and_status(tmp_path: Path, monkeypatch)
     _write_rule(det, "r-dev", "production", "DeviceProcessEvents | where c")
     _write_rule(det, "r-custom", "production", "Custom_CL | where d")  # unknown source
 
-    rep = S.compute_source_coverage(det)
+    # Experimental rules only count with --include-non-production.
+    from contentops.coverage.corpus import CoverageScope
+
+    rep = S.compute_source_coverage(
+        det, scope=CoverageScope.from_flags(include_non_production=True),
+    )
     by = {s.table: s for s in rep.sources}
     assert by["SigninLogs"].detection_count == 2
     assert by["SigninLogs"].production_detection_count == 1  # 1 prod, 1 experimental

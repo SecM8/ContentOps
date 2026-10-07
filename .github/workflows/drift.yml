@@ -45,7 +45,13 @@ jobs:
   # comment; never pushes a branch.
   # =================================================================
   drift-pr:
-    if: github.event_name == 'pull_request'
+    # Same-repo PRs only. This job runs the PR's own code with the
+    # `automation` identity and the tenant config, so fork PRs (which get
+    # neither an OIDC token nor secrets) are skipped instead of failing at
+    # the tenant-config step. See SECURITY.md "CI trust model".
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Drift is a read-only operation against the prod tenant on both

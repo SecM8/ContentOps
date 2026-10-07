@@ -139,12 +139,47 @@ def request_with_retry(
         return response
 
 
+def url_origin(url: str | None) -> str | None:
+    """Return ``scheme://host[:port]`` (lower-cased, default port dropped)
+    for an absolute URL, or ``None`` for a relative one."""
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if not (parsed.scheme and parsed.hostname):
+        return None
+    scheme = parsed.scheme.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    default_port = {"https": 443, "http": 80}.get(scheme)
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{scheme}://{parsed.hostname.lower()}{suffix}"
+
+
+def is_same_origin(url: str, allowed_origin: str | None) -> bool:
+    """True when ``url`` stays on ``allowed_origin``.
+
+    A relative URL (``/path?x``) resolves against the client's own base
+    URL, so it is always same-origin. A scheme-relative URL
+    (``//other-host/path``) is never accepted. An absolute URL must match
+    ``allowed_origin`` exactly (scheme included, so https -> http fails);
+    with no known origin, every absolute URL is refused.
+    """
+    parsed = urlparse(url)
+    if not parsed.scheme and not parsed.netloc:
+        return True
+    origin = url_origin(url)
+    return origin is not None and allowed_origin is not None and origin == allowed_origin
+
+
 def paginate(
     fetch_page: Callable[[str], httpx.Response],
     first_url: str,
     next_link_key: str = "nextLink",
     *,
     max_pages: int = MAX_PAGES,
+    base_url: str | None = None,
 ) -> list[dict]:
     """Walk pages until ``next_link_key`` is missing, with cycle detection.
 
@@ -153,27 +188,25 @@ def paginate(
     ``next_link_key``. A nextLink that points back to a previously
     visited URL, or a run that exceeds ``max_pages``, raises
     ``RuntimeError`` instead of looping forever.
+
+    ``fetch_page`` sends the client's bearer token, so a nextLink must stay
+    on the client's origin. The allowed origin is ``first_url``'s when it is
+    absolute, otherwise ``base_url``'s (pass the httpx client's base URL
+    when ``first_url`` is relative). A nextLink on any other origin -- or
+    an absolute nextLink when neither gives an origin -- raises
+    ``RuntimeError`` rather than following it.
     """
     items: list[dict] = []
     url: str | None = first_url
     visited: set[str] = set()
-    parsed_origin = urlparse(first_url)
-    allowed_origin = (
-        f"{parsed_origin.scheme}://{parsed_origin.netloc}".lower()
-        if parsed_origin.scheme
-        else None
-    )
+    allowed_origin = url_origin(first_url) or url_origin(base_url)
     while url:
-        parsed_url = urlparse(url)
-        if parsed_url.scheme and allowed_origin:
-            url_origin = f"{parsed_url.scheme}://{parsed_url.netloc}".lower()
-            if url_origin != allowed_origin:
-                raise RuntimeError(
-                    f"nextLink host mismatch: expected {allowed_origin!r}, "
-                    f"got {url_origin!r} — refusing to follow cross-host redirect"
-                )
-        elif parsed_url.scheme and not allowed_origin:
-            allowed_origin = f"{parsed_url.scheme}://{parsed_url.netloc}".lower()
+        if not is_same_origin(url, allowed_origin):
+            raise RuntimeError(
+                f"nextLink host mismatch: expected {allowed_origin or 'a relative link'!r}, "
+                f"got {url_origin(url) or url!r} — refusing to follow a "
+                "cross-origin link with the client's credentials"
+            )
         if url in visited:
             raise RuntimeError(f"pagination cycle detected at {url}")
         visited.add(url)
@@ -193,7 +226,9 @@ __all__ = [
     "MAX_PAGES",
     "RETRYABLE_EXCEPTIONS",
     "RETRYABLE_STATUS",
+    "is_same_origin",
     "paginate",
     "parse_retry_after",
     "request_with_retry",
+    "url_origin",
 ]

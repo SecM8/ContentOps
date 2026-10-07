@@ -122,7 +122,14 @@ runs:
       # subscription GUIDs). CI writes it at job start from the
       # `tenant-config-yaml` input, which the calling workflow wires to
       # the TENANT_CONFIG_YAML secret. When `PIPELINE_ENV` is set,
-      # `tenant-config-env-yaml` overrides the env-specific file.
+      # `tenant-config-env-yaml` supplies the env-specific file.
+      #
+      # A file already in the checkout (Mode A: committed in a private
+      # fork) is used as-is when no secret is passed. When BOTH a file
+      # and the secret are present they must match: a committed or
+      # force-added tenant.yml must never silently override the secret
+      # (it would retarget the run, prod deploys included). See
+      # scripts/materialise_tenant_config.py.
       shell: bash
       env:
         TENANT_CONFIG_YAML: ${{ inputs.tenant-config-yaml }}
@@ -134,23 +141,13 @@ runs:
           echo "ERROR: PIPELINE_ENV value '$env_slug' contains invalid characters."
           exit 1
         fi
-        env_cfg="config/tenant.${env_slug}.yml"
-        default_cfg="config/tenant.yml"
-        if [ -n "$env_slug" ] && [ -n "${TENANT_CONFIG_ENV_YAML:-}" ]; then
-          printf '%s' "$TENANT_CONFIG_ENV_YAML" > "$env_cfg"
-          echo "::notice::Wrote $env_cfg from tenant-config-env-yaml input."
+        if [ -n "$env_slug" ]; then
+          python scripts/materialise_tenant_config.py \
+            --target "config/tenant.${env_slug}.yml" \
+            --env-var TENANT_CONFIG_ENV_YAML --allow-missing
         fi
-        if [ ! -f "$default_cfg" ]; then
-          if [ -n "${TENANT_CONFIG_YAML:-}" ]; then
-            printf '%s' "$TENANT_CONFIG_YAML" > "$default_cfg"
-            echo "::notice::Wrote $default_cfg from tenant-config-yaml input."
-          else
-            echo "::error::tenant-config-yaml input is empty and config/tenant.yml is missing."
-            echo "Pass the TENANT_CONFIG_YAML secret into the pipeline-setup composite action's tenant-config-yaml input."
-            echo "Template: config/tenant.yml.example"
-            exit 1
-          fi
-        fi
+        python scripts/materialise_tenant_config.py \
+          --target config/tenant.yml --env-var TENANT_CONFIG_YAML
 
     - name: Resolve subscription from tenant.yml
       id: cfg

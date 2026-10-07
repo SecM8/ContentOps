@@ -226,3 +226,40 @@ def test_cli_detection_docs_regenerate_to_tmp(tmp_path: Path) -> None:
         / "example-suspicious-process-tree.md"
     ).exists()
     assert (fake / INDEX_FILE).exists()
+
+
+# ---------------------------------------------------------------------------
+# ATT&CK section: metadata and payload via the coverage extractor
+# ---------------------------------------------------------------------------
+
+
+def _loaded(tmp_path: Path, body: str):
+    path = tmp_path / "rule.yml"
+    path.write_text(body, encoding="utf-8")
+    return load_asset(path)
+
+
+def test_attack_section_reads_payload_tags_of_a_collected_rule(tmp_path: Path) -> None:
+    """Collected rules carry ATT&CK only in the payload; the section used
+    to be rendered from metadata alone, so they had none."""
+    body = render_detection(_loaded(tmp_path, (
+        "id: collected-rule\nversion: 1.0.0\nasset: defender_custom_detection\n"
+        "status: production\nmetadata:\n  arm_name: '18210'\npayload:\n"
+        "  displayName: LSASS dump\n  detectionAction:\n    alertTemplate:\n"
+        "      title: Credential dumping via LSASS\n      category: CredentialAccess\n"
+        "      mitreTechniques: [T1003.001, T1086, 'x|`y']\n"
+        "  queryCondition:\n    queryText: DeviceEvents | take 1\n"
+    )))
+    section = body.split("## MITRE ATT&CK", 1)[1].split("\n## ", 1)[0]
+    assert "**Tactics:** `CredentialAccess`" in section
+    assert "**Techniques:** `T1003.001`, `T1059.001`" in section
+    assert "- `T1086` was revoked by MITRE; counted as `T1059.001`. Update the tag." in section
+    assert "- `x/'y` is not a technique id" in section
+
+
+def test_attack_section_absent_without_tags(tmp_path: Path) -> None:
+    body = render_detection(_loaded(tmp_path, (
+        "id: no-tags\nversion: 1.0.0\nasset: sentinel_analytic\nstatus: test\n"
+        "payload:\n  displayName: No tags\n  query: SecurityEvent | take 1\n"
+    )))
+    assert "## MITRE ATT&CK" not in body

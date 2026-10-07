@@ -14,9 +14,12 @@ curated`` selects the smaller hand-curated high-value list
 (``mitre_attack_techniques.json``); ``--techniques-file`` substitutes an
 org-specific list entirely.
 
-A "gap" is a (tactic, technique_id) pair from the reference list
-that is NOT referenced by any detection envelope's
-``metadata.techniques``.
+A technique is covered when an in-scope detection references it (or,
+for a parent, one of its sub-techniques) -- the same covered set the badge
+counts (``CoverageReport.covered_techniques``), so a technique on a rule
+without tactics is covered here too. The headline counts distinct
+techniques and sub-techniques against the same denominators as the badge;
+the per-tactic table lists a technique under every tactic it belongs to.
 """
 
 from __future__ import annotations
@@ -26,7 +29,13 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
-from contentops.coverage.report import ALL_TACTICS, CoverageReport
+from contentops.coverage.corpus import CorpusDiagnostics
+from contentops.coverage.matrix import AttackMatrix, load_matrix
+from contentops.coverage.report import (
+    ALL_TACTICS,
+    CoverageReport,
+    render_diagnostics_markdown,
+)
 
 
 @dataclass(frozen=True)
@@ -50,13 +59,20 @@ class TacticGaps:
 class GapsReport:
     tactics: list[TacticGaps]
     techniques_source: str
+    # (tactic, technique) cells in the per-tactic table -- a technique that
+    # belongs to three tactics is three cells. Not a technique count; the
+    # headline uses the distinct counts below.
     total_techniques: int
     total_uncovered: int
-    # Number of distinct techniques in the reference list (before the
-    # per-tactic fan-out in ``total_techniques``). Used to be honest in
-    # the rendered output / CLI banner about how big the reference is —
-    # the bundled list is a curated subset, not the full ATT&CK matrix.
+    # Number of distinct techniques in the reference list (parents + subs).
     reference_count: int = 0
+    # Distinct counts, split like the badge (parents vs sub-techniques).
+    techniques_total: int = 0
+    techniques_covered: int = 0
+    sub_techniques_total: int = 0
+    sub_techniques_covered: int = 0
+    scope_label: str = ""
+    diagnostics: CorpusDiagnostics = field(default_factory=CorpusDiagnostics)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +111,48 @@ def _techniques_from_raw(raw: dict) -> list[TechniqueRef]:
     return out
 
 
+def _dedupe(refs: list[TechniqueRef]) -> list[TechniqueRef]:
+    seen: set[str] = set()
+    out: list[TechniqueRef] = []
+    for ref in refs:
+        if ref.id not in seen:
+            seen.add(ref.id)
+            out.append(ref)
+    return out
+
+
+def _resolve_reference(
+    refs: list[TechniqueRef], matrix: AttackMatrix, *, matrix_tactics: bool,
+) -> list[TechniqueRef]:
+    """Point reference ids at the current matrix.
+
+    Revoked ids become their replacement, so a detection tagged with the
+    old id (remapped the same way by the extractor) still closes the gap.
+    With ``matrix_tactics`` (the bundled curated list) names and tactics
+    also come from the matrix so the list cannot drift from it; custom
+    lists keep the operator's own tactics.
+    """
+    out: list[TechniqueRef] = []
+    for ref in refs:
+        current, status = matrix.resolve(ref.id)
+        if current is None:
+            out.append(ref)
+            continue
+        if matrix_tactics:
+            out.append(TechniqueRef(
+                id=current, name=matrix.names.get(current, ref.name),
+                tactics=matrix.tactics_for(current),
+            ))
+        elif status == "revoked":
+            out.append(TechniqueRef(
+                id=current, name=ref.name or matrix.names.get(current, ""),
+                tactics=ref.tactics or matrix.tactics_for(current),
+            ))
+        else:
+            out.append(ref)
+    return _dedupe(out)
+
+
 def load_techniques(
     path: Path | None = None, *, mode: str = "full",
 ) -> tuple[list[TechniqueRef], str]:
@@ -105,17 +163,21 @@ def load_techniques(
     parents + sub-techniques) or the ``curated`` high-value subset.
     Returns ``(techniques, source_label)``.
     """
+    matrix = load_matrix()
     if path is not None:
-        target = path
-        label = f"custom: {target.name}"
-    elif mode == "curated":
-        target = _data_path("mitre_attack_techniques.json")
-        label = CURATED_LABEL
-    else:  # "full" (default)
-        target = _data_path("mitre_attack_full.json")
-        label = FULL_LABEL
-    raw = json.loads(Path(target).read_text(encoding="utf-8"))
-    return _techniques_from_raw(raw), label
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        refs = _resolve_reference(_techniques_from_raw(raw), matrix, matrix_tactics=False)
+        return refs, f"custom: {Path(path).name}"
+    if mode == "curated":
+        raw = json.loads(_data_path("mitre_attack_techniques.json").read_text(encoding="utf-8"))
+        refs = _resolve_reference(_techniques_from_raw(raw), matrix, matrix_tactics=True)
+        return refs, CURATED_LABEL
+    # "full" (default): the shared matrix, parents then sub-techniques.
+    refs = [
+        TechniqueRef(id=tid, name=matrix.names.get(tid, ""), tactics=matrix.tactics_for(tid))
+        for tid in sorted(matrix.techniques) + sorted(matrix.sub_techniques)
+    ]
+    return refs, FULL_LABEL
 
 
 # ---------------------------------------------------------------------------
@@ -124,18 +186,20 @@ def load_techniques(
 
 
 def _covered_technique_ids(report: CoverageReport) -> set[str]:
-    """Collect every technique id referenced anywhere in the coverage report.
+    """Every technique id the report's detections cover.
 
-    A technique id can be a parent (T1059) or sub-technique (T1059.001).
-    For gap analysis, treat T1059.001 as "covers T1059" — the parent is
-    considered covered if any sub-technique is referenced.
+    Uses ``report.covered_techniques`` (the badge's covered set, built
+    independently of tactic buckets) when present; a hand-built report
+    without it falls back to the ids in the tactic buckets. A
+    sub-technique (T1059.001) also covers its parent (T1059).
     """
-    covered: set[str] = set()
-    for tc in report.tactics:
-        for tech in tc.techniques:
-            covered.add(tech)
-            if "." in tech:
-                covered.add(tech.split(".", 1)[0])
+    covered: set[str] = set(report.covered_techniques or ())
+    if report.covered_techniques is None:
+        for tc in report.tactics:
+            covered.update(tc.techniques)
+    for tech in list(covered):
+        if "." in tech:
+            covered.add(tech.split(".", 1)[0])
     return covered
 
 
@@ -179,12 +243,21 @@ def compute_gaps(
     for bucket in by_tactic.values():
         bucket.uncovered.sort(key=lambda t: t.id)
 
+    distinct = {t.id for t in techniques}
+    parents = {t for t in distinct if "." not in t}
+    subs = distinct - parents
     return GapsReport(
         tactics=[by_tactic[t] for t in ALL_TACTICS],
         techniques_source=source,
         total_techniques=total_techniques,
         total_uncovered=total_uncovered,
-        reference_count=len(techniques),
+        reference_count=len(distinct),
+        techniques_total=len(parents),
+        techniques_covered=len(parents & covered),
+        sub_techniques_total=len(subs),
+        sub_techniques_covered=len(subs & covered),
+        scope_label=report.scope_label,
+        diagnostics=report.diagnostics,
     )
 
 
@@ -256,10 +329,19 @@ def render_markdown(report: GapsReport) -> str:
             "subset. Use `--matrix-mode curated` for the high-value shortlist."
         )
         lines.append("")
-    lines.append(
-        f"**{report.total_uncovered}** uncovered of "
-        f"**{report.total_techniques}** technique(s) in scope."
+    if report.scope_label:
+        lines.append(f"_Detections counted: {report.scope_label}._")
+        lines.append("")
+    headline = (
+        f"**{report.techniques_covered}** of **{report.techniques_total}** "
+        f"technique(s) covered"
     )
+    if report.sub_techniques_total:
+        headline += (
+            f", **{report.sub_techniques_covered}** of "
+            f"**{report.sub_techniques_total}** sub-technique(s)"
+        )
+    lines.append(headline + ".")
     lines.append("")
     lines.append("| Tactic | Covered | Total | Uncovered techniques |")
     lines.append("|---|---:|---:|---|")
@@ -271,6 +353,17 @@ def render_markdown(report: GapsReport) -> str:
             f"{tg.total_in_tactic} | {_format_uncovered(tg.uncovered)} |"
         )
     lines.append("")
+    lines.append(
+        "_Per-tactic counts list a technique under every tactic it belongs to, "
+        "so they add up to more than the distinct totals above._"
+    )
+    diag_lines = render_diagnostics_markdown(report.diagnostics)
+    if diag_lines:
+        lines.append("")
+        lines.append("**ATT&CK data quality:**")
+        lines.append("")
+        lines.extend(diag_lines)
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -278,6 +371,12 @@ def render_json(report: GapsReport) -> str:
     payload = {
         "techniques_source": report.techniques_source,
         "reference_count": report.reference_count,
+        "techniques_total": report.techniques_total,
+        "techniques_covered": report.techniques_covered,
+        "sub_techniques_total": report.sub_techniques_total,
+        "sub_techniques_covered": report.sub_techniques_covered,
+        "scope": report.scope_label,
+        # (tactic, technique) cell counts of the per-tactic table.
         "total_techniques": report.total_techniques,
         "total_uncovered": report.total_uncovered,
         "tactics": [

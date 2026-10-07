@@ -18,12 +18,13 @@ from contentops.report.assemble import ReportSummary
 def render_badge(summary: ReportSummary) -> str:
     """Render a shields.io-endpoint JSON for the README badge.
 
-    Message format: ``"<N> detections · <tactic_pct>% / <tech_pct>% /
-    <sub_pct>% ATT&CK"``. The three percentages cover tactic /
-    technique / sub-technique coverage levels — so the badge reads
-    out at a glance the ATT&CK depth of the portfolio. Colour bands
-    track the technique-level number (the most-cited industry
-    metric); palette matches coverage/badge.json.
+    Message format: ``"<N> · <tactic_pct>% T · <tech_pct>% Tech ·
+    <sub_pct>% Sub"`` (label ``detections``), where ``N`` is the number
+    of detections the percentages are computed from -- the coverage
+    scope (enabled production detections, hunting excluded, by
+    default) -- so the count and the coverage describe the same rules.
+    Colour bands track the technique-level number (the most-cited
+    industry metric); palette matches coverage/badge.json.
     """
     tech_pct = summary.coverage_pct
     if tech_pct < 20:
@@ -48,10 +49,14 @@ def render_badge(summary: ReportSummary) -> str:
         )
     else:
         coverage_str = f"{tech_pct}% MITRE"
+    count = (
+        summary.in_scope_detections
+        if summary.in_scope_detections is not None else summary.total
+    )
     payload = {
         "schemaVersion": 1,
         "label": "detections",
-        "message": f"{summary.total} · {coverage_str}",
+        "message": f"{count} · {coverage_str}",
         "color": color,
     }
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"

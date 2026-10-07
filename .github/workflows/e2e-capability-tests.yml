@@ -106,9 +106,10 @@ jobs:
           # fail. Matches integration-deploy.yml + the "no integration env must
           # never fail the pipeline" rule. `|| echo false` keeps a yaml/parse
           # hiccup from failing the job (it just skips).
-          if [ ! -f config/tenant.yml ] && [ -n "${TENANT_CONFIG_YAML:-}" ]; then
-            printf '%s' "$TENANT_CONFIG_YAML" > config/tenant.yml
-          fi
+          # A committed tenant.yml that differs from the secret fails here
+          # (scripts/materialise_tenant_config.py) instead of winning silently.
+          python3 scripts/materialise_tenant_config.py \
+            --target config/tenant.yml --env-var TENANT_CONFIG_YAML --allow-missing
           present=false
           if [ -f config/tenant.yml ]; then
             present=$(python -c "import yaml; t=yaml.safe_load(open('config/tenant.yml')).get('tenant',{}); print('true' if [w for w in (t.get('sentinelWorkspaces') or []) if w.get('role')=='integration'] else 'false')" || echo false)

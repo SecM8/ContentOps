@@ -159,9 +159,9 @@ def test_check_gates_fp_rate_evaluates_when_workspace_id_provided() -> None:
     def fake_query(*args, **kwargs):
         return QueryResult(
             rows=[
-                {"rule_name": "X", "alerts_30d": 5, "incidents_30d": 4, "closed_fp_30d": 1},
+                {"rule_name": "X", "alerts_30d": 5, "incidents_30d": 4,
+                 "closed_tp_30d": 2, "closed_fp_30d": 1, "closed_bp_30d": 1},
             ],
-            column_names=["rule_name", "alerts_30d", "incidents_30d", "closed_fp_30d"],
         )
 
     envelope = {"status": "experimental", "payload": {"displayName": "X"}}
@@ -267,8 +267,8 @@ def _fp_envelope(display_name: str = "X") -> dict:
 def test_gate_fp_rate_under_threshold_passes() -> None:
     def fake_query(*a, **kw):
         return QueryResult(
-            rows=[{"rule_name": "X", "alerts_30d": 100, "incidents_30d": 10, "closed_fp_30d": 2}],
-            column_names=["rule_name", "alerts_30d", "incidents_30d", "closed_fp_30d"],
+            rows=[{"rule_name": "X", "alerts_30d": 100, "incidents_30d": 10,
+                   "closed_tp_30d": 3, "closed_fp_30d": 1, "closed_bp_30d": 1}],
         )
 
     g = gate_fp_rate_threshold(
@@ -277,13 +277,14 @@ def test_gate_fp_rate_under_threshold_passes() -> None:
     )
     assert g.passed is True
     assert "fp_rate=0.200" in g.detail
+    assert "closed_fp=1 of 5 closed TP/FP/BP, 5 open or undetermined" in g.detail
 
 
 def test_gate_fp_rate_over_threshold_fails() -> None:
     def fake_query(*a, **kw):
         return QueryResult(
-            rows=[{"rule_name": "X", "alerts_30d": 100, "incidents_30d": 10, "closed_fp_30d": 8}],
-            column_names=["rule_name", "alerts_30d", "incidents_30d", "closed_fp_30d"],
+            rows=[{"rule_name": "X", "alerts_30d": 100, "incidents_30d": 10,
+                   "closed_tp_30d": 2, "closed_fp_30d": 8}],
         )
 
     g = gate_fp_rate_threshold(
@@ -292,22 +293,53 @@ def test_gate_fp_rate_over_threshold_fails() -> None:
     )
     assert g.passed is False
     assert "fp_rate=0.800" in g.detail
+    assert "closed_fp=8 of 10 closed TP/FP/BP, 0 open or undetermined" in g.detail
 
 
-def test_gate_fp_rate_no_incidents_passes() -> None:
-    """incidents_30d == 0 -> FP-rate undefined; pass with skip detail."""
+def test_gate_fp_rate_leaves_open_incidents_out() -> None:
+    """3 FP closed, 7 incidents still open: the old FP / all-incidents rate
+    read 0.3 and passed; open incidents carry no verdict, so it is 3 of 3."""
     def fake_query(*a, **kw):
-        return QueryResult(
-            rows=[{"rule_name": "X", "alerts_30d": 100, "incidents_30d": 0, "closed_fp_30d": 0}],
-            column_names=["rule_name", "alerts_30d", "incidents_30d", "closed_fp_30d"],
-        )
+        return QueryResult(rows=[{"rule_name": "X", "alerts_30d": 40,
+                                  "incidents_30d": 10, "closed_fp_30d": 3}])
+
+    g = gate_fp_rate_threshold(
+        _fp_envelope(), workspace_id="w", token="t",
+        threshold=0.5, query_fn=fake_query,
+    )
+    assert g.passed is False
+    assert "fp_rate=1.000" in g.detail
+    assert "7 open or undetermined" in g.detail
+
+
+def test_gate_fp_rate_benign_positives_count_as_closed() -> None:
+    def fake_query(*a, **kw):
+        return QueryResult(rows=[{"rule_name": "X", "incidents_30d": 4,
+                                  "closed_fp_30d": 1, "closed_bp_30d": 3}])
 
     g = gate_fp_rate_threshold(
         _fp_envelope(), workspace_id="w", token="t",
         threshold=0.5, query_fn=fake_query,
     )
     assert g.passed is True
-    assert "no incidents" in g.detail
+    assert "fp_rate=0.250" in g.detail
+
+
+def test_gate_fp_rate_no_incidents_passes() -> None:
+    """No incident closed TP / FP / BP -> FP-rate undefined; pass with
+    skip detail, whether there are no incidents or only open ones."""
+    for incidents in (0, 5):
+        def fake_query(*a, n=incidents, **kw):
+            return QueryResult(rows=[{"rule_name": "X", "alerts_30d": 100,
+                                      "incidents_30d": n, "closed_fp_30d": 0}])
+
+        g = gate_fp_rate_threshold(
+            _fp_envelope(), workspace_id="w", token="t",
+            threshold=0.5, query_fn=fake_query,
+        )
+        assert g.passed is True
+        assert "no incident closed TP/FP/BP" in g.detail
+        assert f"({incidents} open or undetermined)" in g.detail
 
 
 def test_gate_fp_rate_rule_not_in_telemetry_passes() -> None:
@@ -322,6 +354,31 @@ def test_gate_fp_rate_rule_not_in_telemetry_passes() -> None:
     )
     assert g.passed is True
     assert "not in workspace telemetry window" in g.detail
+
+
+def test_gate_fp_rate_matches_the_rule_id_row() -> None:
+    """The rule fires as "X on host-1" (alertDisplayNameFormat); its
+    telemetry is keyed by rule id (the envelope's arm_name). The name row
+    (an incident without RelatedAnalyticRuleIds, titled "X") is the same
+    rule's and is summed in: 8 FP of 11 closed. Matched by name alone it
+    would read 0 of 1 and pass."""
+    def fake_query(*a, **kw):
+        return QueryResult(rows=[
+            {"rule_key": "id:guid-1", "rule_name": "X on host-1",
+             "alerts_30d": 100, "incidents_30d": 10, "closed_tp_30d": 2, "closed_fp_30d": 8},
+            {"rule_key": "name:x", "rule_name": "X",
+             "alerts_30d": 1, "incidents_30d": 1, "closed_tp_30d": 1, "closed_fp_30d": 0},
+        ])
+
+    envelope = {
+        "id": "x", "status": "experimental",
+        "metadata": {"arm_name": "GUID-1"}, "payload": {"displayName": "X"},
+    }
+    g = gate_fp_rate_threshold(
+        envelope, workspace_id="w", token="t", threshold=0.5, query_fn=fake_query,
+    )
+    assert g.passed is False
+    assert "fp_rate=0.727" in g.detail
 
 
 def test_gate_fp_rate_workspace_failure_is_fail_closed() -> None:
@@ -598,8 +655,8 @@ def test_cli_lifecycle_promote_with_workspace_runs_fp_gate(
 
     def fake_query(*a, **kw):
         return QueryResult(
-            rows=[{"rule_name": "X", "alerts_30d": 50, "incidents_30d": 10, "closed_fp_30d": 2}],
-            column_names=["rule_name", "alerts_30d", "incidents_30d", "closed_fp_30d"],
+            rows=[{"rule_name": "X", "alerts_30d": 50, "incidents_30d": 10,
+                   "closed_tp_30d": 8, "closed_fp_30d": 2}],
         )
 
     monkeypatch.setattr(ws, "query", fake_query)

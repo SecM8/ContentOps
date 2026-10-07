@@ -111,9 +111,11 @@ jobs:
           contentops disable "$RULE_ID" --reason "$REASON"
 
       - name: Verify exactly one detection YAML changed
+        env:
+          RULE_ID: ${{ inputs.rule_id }}
         run: |
           if git diff --quiet -- detections; then
-            echo "::error::No diff produced under detections/ — rule '${{ inputs.rule_id }}' not found or already deprecated."
+            echo "::error::No diff produced under detections/ — rule '${RULE_ID}' not found or already deprecated."
             exit 1
           fi
           # Disallow accidental changes outside detections/ — except the

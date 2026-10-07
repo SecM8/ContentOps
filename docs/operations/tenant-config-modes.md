@@ -28,17 +28,22 @@ Two distinct concerns:
    "Materialise tenant configuration" step in
    [`pipeline-setup/action.yml`](../../.github/actions/pipeline-setup/action.yml).
 
-The configuration resolution is `file-on-disk → secret-materialise → fail`:
+CI resolves the configuration with
+[`scripts/materialise_tenant_config.py`](../../scripts/materialise_tenant_config.py):
 
-| Step | What happens | When it fires |
+| File in checkout | `TENANT_CONFIG_YAML` secret | Result |
 |---|---|---|
-| 1 | `[ -f config/tenant.yml ]` → use it as-is | Mode A (file is committed) **or** local dev (file copied from example) |
-| 2 | Materialise from `inputs.tenant-config-yaml` (wired to `secrets.TENANT_CONFIG_YAML` by callers) | Mode B (CI in the public-OSS repo) |
-| 3 | Emit `::error::` + exit 1 | Neither path provides a config |
+| no | set | Write the secret to `config/tenant.yml` — **Mode B** |
+| yes | not passed | Use the committed file as-is — **Mode A** (or local dev) |
+| yes | set, same config | Use it (compared as parsed YAML, so formatting doesn't matter) |
+| yes | set, **different** | `::error::` + exit 1 — a committed or force-added file must never silently override the secret, or a PR could retarget the run (prod deploys included) at another subscription / workspace |
+| no | not passed | `::error::` + exit 1 |
 
-Code reference: [`.github/actions/pipeline-setup/action.yml`](../../.github/actions/pipeline-setup/action.yml)
-lines 115-138; [`contentops/config.py`](../../contentops/config.py) lines
-180-205 (the loader's `FileNotFoundError` carries the same recipe).
+The same rule applies to `config/tenant.<PIPELINE_ENV>.yml` and its
+`tenant-config-env-yaml` input. Code reference:
+[`.github/actions/pipeline-setup/action.yml`](../../.github/actions/pipeline-setup/action.yml)
+("Materialise tenant configuration"); [`contentops/config.py`](../../contentops/config.py)
+(the loader's `FileNotFoundError` carries the same recipe).
 
 ---
 
@@ -100,19 +105,17 @@ internal SOC adopters land here.
    git commit -m "config: track tenant.yml in this private fork"
    ```
 
-3. (Optional) Drop the `TENANT_CONFIG_YAML` secret since it is no
-   longer used:
+3. Drop the `TENANT_CONFIG_YAML` secret (or keep it identical to the
+   committed file). If both exist and differ, CI refuses to guess which
+   one is right and fails the job:
 
    ```bash
    gh secret delete TENANT_CONFIG_YAML
    ```
 
 The composite action already supports this path: when
-`config/tenant.yml` exists in the workspace, step 1 of the
-precedence above wins and no secret is read. **No code change is
-required.** The composite at
-[`pipeline-setup/action.yml:128`](../../.github/actions/pipeline-setup/action.yml)
-short-circuits on `[ -f "$default_cfg" ]`.
+`config/tenant.yml` exists in the workspace and no secret is passed,
+the committed file is used as-is. **No code change is required.**
 
 **Safety reminder**: a private repo's "private" is only as good as
 the org's collaborator list and SSO posture. Treat the committed

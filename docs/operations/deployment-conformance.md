@@ -2,8 +2,9 @@
 
 One command — `contentops conformance` — answers the question "is my
 ContentOps install, my Azure deployment, and my GitHub repo wired
-correctly?" with a per-layer PASS / FAIL / SKIP table and an
-actionable remediation hint on every failure.
+correctly?" with a per-layer PASS / FAIL / WARN / SKIP table and an
+actionable remediation hint on every failure or warning. WARN marks a
+supported configuration that deserves a look; it never fails the run.
 
 **Read-only by construction.** Every probe is a `GET`,
 `OPTIONS`, or `POST` to a read-only query endpoint. No `PUT`, `PATCH`,
@@ -120,6 +121,7 @@ available:
 | `github_repo` | The repo is reachable with the current token |
 | `github_secrets` | Every required secret **name** (default: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `TENANT_CONFIG_YAML`) exists — values are never readable, by design |
 | `branch_protection` | The `main` branch protection rule requires the expected checks (default: `dco`, `spdx-headers`, `pytest`, `cli-smoke`, `bandit`, `semgrep`, `gitleaks`, `actionlint`) |
+| `environment_protection[integration]` / `[automation]` | Whether the GitHub environments that same-repo pull requests run in (`integration-deploy` → `integration`; `drift-pr`, `tuning-impact-preview` → `automation`) require a reviewer. PASS with a required reviewer; **WARN** without one for `integration`, and for `automation` under `identity_mode: single` (PR code then runs with the shared write identity); INFO for `automation` in split mode (read-only identity). Never FAIL: a single shared identity stays supported. SKIP when the environment doesn't exist or the token can't list environments. See [SECURITY.md — CI trust model](../../SECURITY.md#ci-trust-model-for-pull-requests). |
 
 ## Output
 
@@ -212,8 +214,8 @@ contentops conformance --format json --out report.json
 contentops conformance --format json --exit-zero
 ```
 
-The command exits **0** when every check is PASS, INFO, or SKIP; **1**
-when any check is FAIL.
+The command exits **0** when every check is PASS, WARN, INFO, or SKIP;
+**1** when any check is FAIL.
 
 ## Read vs write identity (`--identity`)
 

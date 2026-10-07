@@ -441,8 +441,50 @@ def test_render_html_emits_exec_summary_block() -> None:
     html = render_html(rows, _sample_summary(production=1, total=1))
     assert 'class="exec-summary"' in html
     assert "Executive summary" in html
-    assert "1</strong> active detections" in html
+    # A summary without scope information no longer claims its coverage %
+    # comes from "active detections" (review finding: the % included
+    # non-production, disabled and hunting rules).
+    assert "1</strong> production detections" in html
+    assert "active detections" not in html
     assert "MITRE ATT&amp;CK" in html
+
+
+def test_exec_summary_count_and_percentage_describe_the_same_detections() -> None:
+    rows = [_sample_row(owner="blue@example.com", last_review_date="2026-05-20")]
+    summary = _sample_summary(
+        production=3, total=5, coverage_pct=12, in_scope_detections=2,
+        coverage_scope="enabled production detections (hunting queries excluded)",
+        attack_version="19.2",
+    )
+    html = render_html(rows, summary)
+    assert (
+        "<strong>2</strong> enabled production detections (hunting queries excluded) "
+        "cover <strong>12%</strong> of the MITRE ATT&amp;CK Enterprise technique "
+        "matrix (v19.2)."
+    ) in html
+
+
+def test_review_freshness_counts_undated_rules_in_the_denominator() -> None:
+    """Review finding: 1 dated rule out of 100 used to read as 100%."""
+    from datetime import datetime, timedelta, timezone
+
+    recent = (datetime.now(timezone.utc).date() - timedelta(days=5)).isoformat()
+    future = (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat()
+    rows = [_sample_row(rule_id="dated", last_review_date=recent)]
+    rows += [_sample_row(rule_id=f"undated-{i}", last_review_date=None) for i in range(3)]
+    rows += [_sample_row(rule_id="future", last_review_date=future)]
+    html = render_html(rows, _sample_summary(total=5))
+    assert "<strong>20%</strong> were reviewed in the last 90 days" in html
+
+
+def test_technique_links_only_for_valid_ids_and_escaped() -> None:
+    """Review finding: technique strings went into href unvalidated."""
+    hostile = 'T1059" onmouseover="alert(1)'
+    rows = [_sample_row(techniques=("T1059.001", hostile))]
+    html = render_html(rows, _sample_summary())
+    assert 'href="https://attack.mitre.org/techniques/T1059/001/"' in html
+    assert 'onmouseover="alert(1)' not in html
+    assert "onmouseover=&quot;alert(1)" in html  # rendered as inert text
 
 
 def test_render_html_emits_pr_link_when_url_set() -> None:

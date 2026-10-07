@@ -2,9 +2,11 @@ name: Validate detections
 
 # Two jobs, one workflow:
 #
-# * validate — the load-bearing PR gate. Runs lint --strict (with
-#   live pre-PR schema refresh), plan, deps check, version-bump
+# * validate — the load-bearing PR gate. Runs lint --strict (against
+#   the committed schema baseline), plan, deps check, version-bump
 #   check, and references URL check on every PR touching detections.
+#   It runs the PR's own code, so it holds no Azure credentials: the
+#   schema baseline is refreshed by kql-schemas-refresh.yml instead.
 #
 # * lint-regression — catches lint regressions outside of PR flow:
 #   push to main (force-push / admin merge bypass), nightly cron
@@ -50,18 +52,13 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: automation
+    # No `environment:` and no `id-token: write`: this job installs and
+    # runs the PR's own code, so it must not be able to mint an Azure
+    # token. (The old pre-PR schema refresh never exchanged one anyway —
+    # there is no azure/login here — and always fell back to the
+    # committed baseline.)
     permissions:
       contents: read
-      # OIDC token exchange for the optional pre-PR schema refresh step;
-      # the federated credential is gated on the `automation` environment
-      # so fork PRs fail-soft (continue-on-error + the CLI itself falls
-      # back to baseline on auth failure).
-      id-token: write
-    env:
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      PIPELINE_WORKSPACE_ID: ${{ vars.PIPELINE_WORKSPACE_ID }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -78,13 +75,16 @@ jobs:
 
       # --- Kusto.Language strict-lint wrapper (G1) ----------------------
       # Composite action: .NET 8 SDK, NuGet cache, kql_strict.dll build,
-      # optional pre-PR schema refresh, then contentops lint --strict.
+      # then contentops lint --strict.
       # See .github/actions/lint-strict/action.yml.
-      - name: Lint strict (build + schema refresh + lint)
+      - name: Lint strict (build + lint)
         uses: ./.github/actions/lint-strict
         with:
           path: detections
-          pre-pr-refresh: 'true'
+          # Credential-free PR job: lint against the committed schema
+          # baseline (tools/kql_strict/schemas*.json), which
+          # kql-schemas-refresh.yml refreshes on its own schedule.
+          pre-pr-refresh: 'false'
 
       - name: contentops plan (dependency check enforced)
         # The plan step blocks merge on dependency-graph violations.

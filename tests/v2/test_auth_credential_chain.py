@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the get_credential() .env → OIDC → az-login fallback.
+"""Tests for get_credential() and the opt-in .env → OIDC/az-login fallback.
 
 The credential factory returns a _FallbackCredential when .env
 credentials are present (AZURE_CLIENT_SECRET set), and a plain
 DefaultAzureCredential otherwise. On auth failure (expired secret,
-wrong value), _FallbackCredential logs a warning and falls through
-to OIDC/az-login instead of crashing.
+wrong value) _FallbackCredential raises CredentialFallbackRefused by
+default: switching to OIDC or the operator's ``az login`` would change
+the acting identity (and the actor in audit records). Falling back
+requires CONTENTOPS_AUTH_FALLBACK=1 and is never allowed in GitHub
+Actions.
 """
 
 from __future__ import annotations
@@ -86,7 +89,7 @@ def test_fallback_credential_falls_back_on_auth_error() -> None:
     fallback = MagicMock()
     fallback.get_token.return_value = fallback_token
 
-    cred = _FallbackCredential(primary, fallback)
+    cred = _FallbackCredential(primary, fallback, allow_fallback=True)
     token = cred.get_token("https://management.azure.com/.default")
 
     assert token.token == "fallback-token"
@@ -103,7 +106,7 @@ def test_fallback_credential_falls_back_on_unavailable() -> None:
     fallback = MagicMock()
     fallback.get_token.return_value = fallback_token
 
-    cred = _FallbackCredential(primary, fallback)
+    cred = _FallbackCredential(primary, fallback, allow_fallback=True)
     token = cred.get_token("https://management.azure.com/.default")
 
     assert token.token == "fallback-token"
@@ -119,7 +122,7 @@ def test_fallback_credential_does_not_retry_primary_after_failure() -> None:
     fallback = MagicMock()
     fallback.get_token.return_value = fallback_token
 
-    cred = _FallbackCredential(primary, fallback)
+    cred = _FallbackCredential(primary, fallback, allow_fallback=True)
     cred.get_token("scope1")
     cred.get_token("scope2")
     cred.get_token("scope3")
@@ -136,3 +139,75 @@ def test_get_credential_returns_object_with_get_token(monkeypatch) -> None:
     cred = get_credential()
     assert cred is not None
     assert hasattr(cred, "get_token")
+
+
+# ---------------------------------------------------------------------------
+# Fallback is opt-in and never allowed in CI (review finding: silent
+# identity switch).
+# ---------------------------------------------------------------------------
+
+
+def _failing_primary(message: str = "AADSTS7000222: secret expired for fake-secret") -> MagicMock:
+    primary = MagicMock()
+    primary.get_token.side_effect = ClientAuthenticationError(message=message)
+    return primary
+
+
+def test_fallback_refused_by_default(monkeypatch) -> None:
+    from contentops.utils.auth import CredentialFallbackRefused, _FallbackCredential
+
+    monkeypatch.delenv("CONTENTOPS_AUTH_FALLBACK", raising=False)
+    fallback = MagicMock()
+    cred = _FallbackCredential(_failing_primary(), fallback)
+    with pytest.raises(CredentialFallbackRefused) as excinfo:
+        cred.get_token("https://management.azure.com/.default")
+    fallback.get_token.assert_not_called()
+    message = str(excinfo.value)
+    assert "AADSTS7000222" in message
+    assert "CONTENTOPS_AUTH_FALLBACK" in message
+    # The upstream message (which can echo identifiers) is not repeated.
+    assert "fake-secret" not in message
+
+
+def test_refusal_is_a_client_authentication_error(monkeypatch) -> None:
+    """Callers that already catch ClientAuthenticationError keep working."""
+    from contentops.utils.auth import _FallbackCredential
+
+    monkeypatch.delenv("CONTENTOPS_AUTH_FALLBACK", raising=False)
+    cred = _FallbackCredential(_failing_primary(), MagicMock())
+    with pytest.raises(ClientAuthenticationError):
+        cred.get_token("scope")
+
+
+def test_fallback_opt_in_locally(monkeypatch) -> None:
+    from contentops.utils.auth import _FallbackCredential
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("CONTENTOPS_AUTH_FALLBACK", "1")
+    fallback = MagicMock()
+    fallback.get_token.return_value = AccessToken("fallback-token", 9999999999)
+    cred = _FallbackCredential(_failing_primary(), fallback)
+    assert cred.get_token("scope").token == "fallback-token"
+
+
+def test_fallback_opt_in_ignored_in_github_actions(monkeypatch) -> None:
+    from contentops.utils.auth import CredentialFallbackRefused, _FallbackCredential
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CONTENTOPS_AUTH_FALLBACK", "1")
+    fallback = MagicMock()
+    cred = _FallbackCredential(_failing_primary(), fallback)
+    with pytest.raises(CredentialFallbackRefused):
+        cred.get_token("scope")
+    fallback.get_token.assert_not_called()
+
+
+def test_unavailable_primary_follows_the_same_policy(monkeypatch) -> None:
+    from contentops.utils.auth import CredentialFallbackRefused, _FallbackCredential
+
+    monkeypatch.delenv("CONTENTOPS_AUTH_FALLBACK", raising=False)
+    primary = MagicMock()
+    primary.get_token.side_effect = CredentialUnavailableError(message="not configured")
+    cred = _FallbackCredential(primary, MagicMock())
+    with pytest.raises(CredentialFallbackRefused):
+        cred.get_token("scope")

@@ -73,14 +73,18 @@ copy that contains the original GUIDs, please delete it.
 
 The `audit/<date>.jsonl` files form a forward hash chain (SHA-256
 over canonical JSON; each record carries `prev_hash` plus its own
-`record_hash`). The chain provides **integrity** — any tampering
-with a committed record is detected by `contentops audit verify`
-and the weekly `audit-verify.yml` workflow.
+`record_hash`). The chain provides **integrity** — editing or
+reordering a recorded entry is detected by `contentops audit verify`
+and the weekly `audit-verify.yml` workflow (which verifies the latest
+deploy run's artifact; `audit/` itself is gitignored, never committed).
 
-The chain does **not** provide **authenticity**. An actor with
-write access to `audit/` (e.g. a malicious commit on `main`, or a
-runner with `contents: write`) can re-compute the entire chain
-from a tampered state, and verification will still pass. HMAC-
+The chain does **not** provide **authenticity**. An actor who can
+rewrite the audit files (e.g. a runner with `contents: write`, or
+control of `deploy.yml`) can drop the newest records or re-compute
+the entire chain from a tampered state, and `audit verify` on its own
+will still pass. Detecting that needs an anchor outside the chain:
+compare the chain's head hash (`contentops audit head`) with the
+head attested for that run (below). HMAC-
 signing the chain with a tenant key was considered and explicitly
 declined: the threat model assumes write access to `main` is the
 high-trust boundary, enforced by branch protection + CODEOWNERS,
@@ -113,6 +117,56 @@ If your threat model needs stronger authenticity (survival of a
 compromised runner or retention expiry), sign the head into an external
 append-only ledger — the file format supports that without changing the
 writer.
+
+## CI trust model for pull requests
+
+Workflows triggered by `pull_request` run **the PR's own code**:
+`contentops/`, `requirements.txt` and the workflow file itself as they
+are on the PR branch. Branch protection and CODEOWNERS only gate the
+*merge*; they do not stop a PR job from running. Consequences:
+
+- **Fork PRs** get no OIDC token and no secrets. Every job that can
+  mint an Azure token (`id-token: write`) is also skipped for fork PRs
+  by a job-level `head.repo.full_name == github.repository` guard, so
+  fork code never runs inside an Azure-credentialed environment.
+- **Same-repo PRs** (anyone with write access, or an automated branch
+  such as a dependency bump) run inside the job's GitHub Environment:
+  - `integration-deploy.yml` → `integration`: applies the PR's content
+    to the integration workspace.
+  - `drift.yml` (`drift-pr`) and `tuning-impact-preview.yml` →
+    `automation`: read the production tenant.
+  - `integration.yml` → `integration`, only after the `run-integration`
+    label is applied.
+  - `validate.yml` (the required PR gate) holds **no** Azure
+    credentials.
+- `tests/v2/test_workflow_hardening.py` fails CI if a PR-reachable job
+  gains `id-token: write` without such a guard, or if a workflow expands
+  `inputs.*` / `github.event.*` inside a `run:` script.
+
+The identity behind each environment is therefore exposed to anyone who
+can push a branch. Close that gap with GitHub and Azure settings (they
+live outside the repository):
+
+1. **Least privilege.** Give `integration` its own App Registration
+   whose RBAC is scoped to the integration workspace's resource group
+   only — not the production write identity. Keep `automation` on the
+   read identity (Sentinel Reader + Log Analytics Reader,
+   `CustomDetection.Read.All`); see
+   [`docs/operations/authentication-setup.md`](docs/operations/authentication-setup.md).
+2. **Approval.** If not every writer is trusted with that identity, add
+   required reviewers (with *Prevent self-review*) to the `integration`
+   environment so each PR deploy waits for a second person.
+3. **Config source.** `config/tenant.yml` is materialised by
+   `scripts/materialise_tenant_config.py`: a committed or force-added
+   file that differs from the `TENANT_CONFIG_YAML` secret fails the job
+   instead of silently retargeting it.
+
+`contentops conformance` (L7, `environment_protection[...]`) checks the
+approval half: it WARNs when `integration` has no required reviewer, and
+when `automation` has none under `identity_mode: single` (PR code then
+runs with the shared write identity). A deliberate single-identity setup
+remains supported, so this is a warning, never a failure. The least-
+privilege half is L5 (Azure RBAC per identity).
 
 ## Dependency scanning
 

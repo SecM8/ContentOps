@@ -75,6 +75,53 @@ jobs:
         # parallel vs ~60s single-threaded.
         run: pytest -n auto -q --ignore=tests/integration
 
+  kql-strict:
+    # The KQL validation tests skip in the pytest job, which has no .NET:
+    # build the Kusto.Language wrapper (as the lint-strict action does) and
+    # bind every KQL query the tool builds against the cached workspace schema
+    # (tests/v2/test_workspace_kql_strict.py, which includes a broken
+    # control query). Only the wrapper tests run here --
+    # tests/v2/test_lint_strict.py's stub-mode tests assume no wrapper.
+    # CONTENTOPS_REQUIRE_KQL_STRICT turns a missing wrapper into a failure
+    # instead of a skip; the wrapper path is absolute because the v2
+    # conftest runs each test in a tmp directory. Not a required check: it
+    # can turn a PR red but doesn't block the merge.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-mock && pip install -e . --no-deps
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # v5.2.0
+        with:
+          dotnet-version: 8.0.x
+          global-json-file: tools/kql_strict/global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-kql-strict-${{ hashFiles('tools/kql_strict/**/*.csproj', 'tools/kql_strict/global.json') }}
+          restore-keys: |
+            nuget-kql-strict-
+
+      - name: Build kql_strict wrapper
+        run: bash scripts/build_kql_strict.sh
+
+      - name: KQL validation tests
+        env:
+          CONTENTOPS_REQUIRE_KQL_STRICT: '1'
+          PIPELINE_KQL_STRICT_WRAPPER: ${{ github.workspace }}/tools/kql_strict.dll
+        run: pytest -q -rs -p no:cacheprovider tests/v2/test_workspace_kql_strict.py tests/v2/test_lint_strict_dotnet.py
+
   cli-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10

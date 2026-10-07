@@ -44,9 +44,9 @@ jobs:
         run: python -m contentops coverage --format json --out-json coverage.json
 
       - name: Render Navigator layer JSON + shields.io badge
-        # --no-firings keeps the layer derived from repo + deployed axes
-        # only (no LA Query token needed in this job). The badge is
-        # always repo-axis only (deterministic, doesn't need creds).
+        # Repo axis only (--no-deployed --no-firings): no Azure token in
+        # this job. The layer and the badge come from the same coverage
+        # engine and scope, so they always cover the same techniques.
         run: |
           mkdir -p coverage
           python -m contentops navigator \

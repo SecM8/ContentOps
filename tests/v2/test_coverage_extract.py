@@ -92,9 +92,11 @@ def test_defender_falls_back_to_category_when_techniques_unmapped() -> None:
     cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), payload)
     assert "T9999" in cov.techniques
     assert cov.tactics == ("Persistence",)
-    # Category-fallback "covered" the unmapped technique, so it is not
-    # reported as orphan.
-    assert cov.techniques_without_tactic == ()
+    # The category supplies the tactic, but T9999 is not an ATT&CK id: it
+    # is reported (review finding C7) and never counted.
+    assert cov.techniques_without_tactic == ("T9999",)
+    assert cov.unknown_ids == ("T9999",)
+    assert cov.counted_techniques == ()
 
 
 def test_defender_orphan_technique_is_surfaced() -> None:
@@ -307,3 +309,117 @@ def test_real_t1018_detection_produces_discovery_tactic() -> None:
     assert "T1018" in cov.techniques
     assert "Discovery" in cov.tactics
     assert cov.severity in ("medium", "high", "low", "informational")
+
+
+# ---------------------------------------------------------------------------
+# Review regressions (C1, C2, C6, C7, C8, revoked ids)
+# ---------------------------------------------------------------------------
+
+
+def test_sentinel_sub_techniques_are_read() -> None:
+    """C1: Sentinel stores sub-techniques in ``subTechniques``."""
+    cov = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC), {
+        "tactics": ["CredentialAccess"], "techniques": ["T1110"],
+        "subTechniques": ["T1110.001", "T1110.003"],
+    })
+    assert cov.techniques == ("T1110", "T1110.001", "T1110.003")
+    assert cov.techniques_for("CredentialAccess") == ("T1110", "T1110.001", "T1110.003")
+
+
+def test_technique_ids_are_normalised_validated_and_deduped() -> None:
+    """C7: messy ids are normalised; malformed ones are reported, never kept."""
+    cov = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC), {
+        "tactics": ["Discovery"],
+        "techniques": [" T1082", "t1087", "T1087", "T10", "bogus", "T9999"],
+    })
+    assert cov.techniques == ("T1082", "T1087", "T9999")
+    assert cov.counted_techniques == ("T1082", "T1087")
+    assert cov.invalid_ids == ("T10", "bogus")
+    assert cov.unknown_ids == ("T9999",)
+    # Sentinel rules now report unmapped techniques too.
+    assert cov.techniques_without_tactic == ("T9999",)
+
+
+def test_techniques_are_listed_only_under_their_own_tactics() -> None:
+    """C2: a technique is attributed to a tactic only if ATT&CK files it there."""
+    cov = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC), {
+        "tactics": ["Execution", "CredentialAccess"], "techniques": ["T1059", "T1110"],
+    })
+    assert cov.techniques_for("Execution") == ("T1059",)
+    assert cov.techniques_for("CredentialAccess") == ("T1110",)
+    assert cov.techniques_without_tactic == ()
+
+
+def test_defender_category_is_the_tactic_not_every_technique_tactic() -> None:
+    """C8: T1078 spans four tactics; the alert category claims one."""
+    cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {
+        "detectionAction": {"alertTemplate": {
+            "mitreTechniques": ["T1078"], "category": "InitialAccess", "severity": "low",
+        }},
+    })
+    assert cov.tactics == ("InitialAccess",)
+    assert cov.techniques_for("InitialAccess") == ("T1078",)
+    assert cov.tactics_inferred is False
+
+
+def test_rule_without_tactics_infers_them_from_techniques() -> None:
+    """A Defender non-tactic category (or a Sentinel rule with no tactics)
+    gets its tactics from the matrix, flagged as inferred."""
+    cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {
+        "detectionAction": {"alertTemplate": {
+            "mitreTechniques": ["T1018"], "category": "SuspiciousActivity",
+        }},
+    })
+    assert cov.tactics == ("Discovery",)
+    assert cov.tactics_inferred is True
+    sentinel = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC), {"techniques": ["T1046"]})
+    assert sentinel.tactics == ("Discovery",) and sentinel.tactics_inferred
+
+
+def test_raw_metadata_is_salvaged_when_strict_metadata_failed() -> None:
+    """C6: tags in a metadata block that failed strict validation still count."""
+    cov = extract_mitre(
+        _envelope(Asset.SENTINEL_ANALYTIC),  # strict parse produced no metadata
+        {"query": "T | take 1"},
+        raw_metadata={"owner": "x@y.z", "tactics": ["Impact"],
+                      "techniques": ["T1486"], "severity": "High",
+                      "references": ["ftp://bad"]},
+    )
+    assert cov.tactics == ("Impact",)
+    assert cov.techniques == ("T1486",)
+    assert cov.severity == "high"
+
+
+def test_strict_metadata_wins_over_raw_metadata() -> None:
+    cov = extract_mitre(
+        _envelope(Asset.SENTINEL_ANALYTIC, metadata=_meta(tactics=["Execution"],
+                                                           techniques=["T1059"])),
+        {}, raw_metadata={"tactics": ["Impact"], "techniques": ["T1486"]},
+    )
+    assert cov.techniques == ("T1059",)
+
+
+def test_revoked_ids_are_remapped_to_their_successor() -> None:
+    cov = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC), {
+        "tactics": ["DefenseEvasion"], "techniques": ["T1562"],
+        "subTechniques": ["T1562.001"],
+    })
+    assert ("T1562.001", "T1685") in cov.remapped_ids
+    assert cov.counted_techniques == ("T1685",)
+    assert cov.techniques_for("DefenseEvasion") == ("T1685",)
+
+
+def test_extractor_uses_an_injected_matrix() -> None:
+    from contentops.coverage.matrix import AttackMatrix
+
+    matrix = AttackMatrix.from_dict({
+        "attack_version": "1.0",
+        "tactics": [{"id": "Execution"}],
+        "techniques": [{"id": "T0001", "name": "x", "tactics": ["Execution"]}],
+        "sub_techniques": [],
+        "revoked": {"T0002": "T0001"},
+    })
+    cov = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC),
+                        {"techniques": ["T0002", "T1059"]}, matrix=matrix)
+    assert cov.counted_techniques == ("T0001",)
+    assert cov.unknown_ids == ("T1059",)

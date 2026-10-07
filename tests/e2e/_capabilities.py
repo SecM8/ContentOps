@@ -790,6 +790,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         id="silent_rules",
         cli=(
             "silent-rules",
+            "--path", "{detections}",
             "--workspace-id", "00000000-0000-0000-0000-000000000001",
             "--since", "1", "--format", "json",
         ),

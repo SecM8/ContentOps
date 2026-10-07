@@ -4,10 +4,12 @@
 """Portfolio CSV/JSON renderer.
 
 Builds one row per detection-class asset (sentinel_analytic,
-sentinel_hunting, defender_custom_detection) using only fields available
-on the validated EnvelopeV2 + payload. Files that fail to validate are
-skipped with a stderr warning — `contentops lint` is the channel for parse
-failures.
+sentinel_hunting, defender_custom_detection) from the shared coverage
+corpus (:func:`contentops.coverage.corpus.load_corpus`): ATT&CK tactics
+and techniques come from the same extractor as every coverage number
+(metadata + payload, normalised), so a collected rule's row is not empty.
+Files that cannot be parsed at all are skipped with a warning --
+`contentops lint` is the channel for parse failures.
 """
 
 from __future__ import annotations
@@ -20,8 +22,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from contentops.core.asset import Asset
-from contentops.core.discovery import iter_loaded_assets
+from contentops.core.asset import DETECTION_ASSETS, Asset
+from contentops.coverage.corpus import Corpus, CorpusEntry, load_corpus
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +44,7 @@ COLUMNS: tuple[str, ...] = (
     "query_lines",
 )
 
-_DETECTION_ASSETS = frozenset({
-    Asset.SENTINEL_ANALYTIC,
-    Asset.SENTINEL_HUNTING,
-    Asset.DEFENDER_CUSTOM_DETECTION,
-})
+_DETECTION_ASSETS = DETECTION_ASSETS  # historical alias
 
 # PT5M / PT1H / PT1D / P1D — anything else returns None.
 _ISO_DURATION_RE = re.compile(
@@ -123,22 +121,22 @@ def _query_period(asset: Asset, payload: dict[str, Any]) -> str | None:
     return qp if isinstance(qp, str) else None
 
 
-def _row_for(loaded, repo_root: Path) -> dict[str, Any]:
-    env = loaded.envelope
+def _row_for(entry: CorpusEntry, repo_root: Path) -> dict[str, Any]:
+    env = entry.envelope
     md = env.metadata
-    payload = loaded.payload or {}
+    payload = dict(entry.payload or {})
 
     try:
-        rel_path = loaded.path.resolve().relative_to(repo_root.resolve()).as_posix()
+        rel_path = entry.path.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
-        rel_path = loaded.path.as_posix()
+        rel_path = entry.path.as_posix()
 
     severity = md.severity if md is not None else None
-    tactics = list(md.tactics) if md is not None else []
-    techniques = list(md.techniques) if md is not None else []
+    tactics = list(entry.mitre.tactics)
+    techniques = list(entry.mitre.techniques)
     expected = md.expectedAlertsPerDay if md is not None else None
     last_validated = md.lastValidatedAt if md is not None else None
-    cohort = md.cohort if md is not None else None
+    cohort = entry.cohort
 
     query_text = _query_text(env.asset, payload)
     query_period_minutes = iso8601_duration_to_minutes(_query_period(env.asset, payload))
@@ -164,23 +162,23 @@ def build_rows(
     base: Path,
     *,
     cohort: str | None = None,
+    corpus: Corpus | None = None,
 ) -> list[dict[str, Any]]:
-    """Walk `base/`, return one row per valid detection envelope.
+    """Walk `base/`, return one row per detection envelope.
 
-    Files that do not validate as EnvelopeV2 are skipped with a stderr
-    warning — `contentops lint` is the channel for surfacing parse errors.
+    Every detection gets a row (the coverage scope only affects coverage
+    numbers). Files that cannot be parsed are skipped with a warning —
+    `contentops lint` is the channel for surfacing parse errors.
     Non-detection assets (watchlist/workbook/etc.) are filtered out.
+    Pass ``corpus`` to reuse an existing walk.
     """
     repo_root = Path.cwd()
+    corpus = corpus or load_corpus(base)
+    for path, error in corpus.load_errors:
+        logger.warning("portfolio: skipping %s: %s", path, error)
     rows: list[dict[str, Any]] = []
-    for loaded in iter_loaded_assets(
-        base,
-        on_error=lambda p, exc: logger.warning("portfolio: skipping %s: %s", p, exc),
-    ):
-        if loaded.envelope.asset not in _DETECTION_ASSETS:
-            continue
-
-        row = _row_for(loaded, repo_root)
+    for entry in corpus.entries:
+        row = _row_for(entry, repo_root)
         if cohort is not None and row["cohort"] != cohort:
             continue
         rows.append(row)

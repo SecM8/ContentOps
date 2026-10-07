@@ -26,6 +26,7 @@ from __future__ import annotations
 from html import escape
 from typing import Iterable
 
+from contentops.core.metadata import TECHNIQUE_ID_RE
 from contentops.report.assemble import ReportRow, ReportSummary
 
 
@@ -66,7 +67,11 @@ def _friendly_kind(kind: str) -> str:
 # attack.mitre.org link template for technique IDs in the report.
 # T1059 -> https://attack.mitre.org/techniques/T1059/
 # T1059.001 -> https://attack.mitre.org/techniques/T1059/001/
-def _attack_url(technique_id: str) -> str:
+def _attack_url(technique_id: str) -> str | None:
+    """Link for a canonical technique id, or ``None`` for anything else --
+    a value from YAML never reaches an ``href`` unvalidated."""
+    if not isinstance(technique_id, str) or not TECHNIQUE_ID_RE.fullmatch(technique_id):
+        return None
     if "." in technique_id:
         parent, sub = technique_id.split(".", 1)
         return f"https://attack.mitre.org/techniques/{parent}/{sub}/"
@@ -224,12 +229,18 @@ def _techniques_cell(items: Iterable[str]) -> str:
     items = list(items)
     if not items:
         return '<span class="muted">—</span>'
-    return ", ".join(
-        f'<a href="{_attack_url(i)}" target="_blank" '
-        f'class="mono" style="color: #1a73e8; text-decoration: none;">'
-        f"{escape(i)}</a>"
-        for i in items
-    )
+    cells: list[str] = []
+    for i in items:
+        url = _attack_url(i)
+        if url is None:
+            cells.append(f'<span class="mono">{escape(str(i))}</span>')
+            continue
+        cells.append(
+            f'<a href="{escape(url, quote=True)}" target="_blank" rel="noopener" '
+            f'class="mono" style="color: #1a73e8; text-decoration: none;">'
+            f"{escape(i)}</a>"
+        )
+    return ", ".join(cells)
 
 
 def _summary_card(label: str, value: str, klass: str = "") -> str:
@@ -402,16 +413,19 @@ def _delta_phrase(delta) -> str:
     total_phrase = _signed(delta.total_delta, "rules")
     if total_phrase:
         parts.append(total_phrase)
-    cov_phrase = _signed(
-        delta.coverage_techniques_delta, "techniques covered",
-    )
-    if cov_phrase:
-        parts.append(cov_phrase)
-    sub_phrase = _signed(
-        delta.coverage_sub_techniques_delta, "sub-techniques covered",
-    )
-    if sub_phrase:
-        parts.append(sub_phrase)
+    if getattr(delta, "coverage_comparable", True):
+        cov_phrase = _signed(
+            delta.coverage_techniques_delta, "techniques covered",
+        )
+        if cov_phrase:
+            parts.append(cov_phrase)
+        sub_phrase = _signed(
+            delta.coverage_sub_techniques_delta, "sub-techniques covered",
+        )
+        if sub_phrase:
+            parts.append(sub_phrase)
+    else:
+        parts.append(getattr(delta, "coverage_note", "") or "coverage not comparable")
     if not parts:
         parts.append("no portfolio change")
     return (
@@ -432,23 +446,25 @@ def _exec_summary_block(
 
     Surfaces:
 
-    * Total active detections (\"production\" status)
-    * MITRE technique coverage % against the full Enterprise matrix
+    * Detections the coverage counts (the coverage scope: enabled
+      production detections, hunting queries excluded, by default)
+    * MITRE technique coverage % of those detections against the full
+      Enterprise matrix
     * Owner accountability (% of rules with metadata.owner)
-    * Review freshness (% reviewed in the last 90 days, when a date is set)
+    * Review freshness (% of ALL rules reviewed in the last 90 days)
     * Retirement candidates (rules with effectiveness_score < 0 when
       telemetry is loaded)
     """
-    from datetime import date as _date, datetime as _datetime
-    active = summary.production
+    from datetime import date as _date, datetime as _datetime, timezone as _tz
     coverage_pct = summary.coverage_pct
     owned = sum(1 for r in rows if r.owner)
     owned_pct = round(100 * owned / len(rows)) if rows else 0
 
-    # Recently reviewed: last_review_date within 90 days of today.
-    today = _date.today()
+    # Recently reviewed: last_review_date within the last 90 days, as a
+    # share of ALL rules -- a rule with no review date has not been
+    # reviewed, so it stays in the denominator. Future dates don't count.
+    today = _datetime.now(_tz.utc).date()
     fresh = 0
-    has_dates = 0
     for r in rows:
         if not r.last_review_date:
             continue
@@ -456,10 +472,9 @@ def _exec_summary_block(
             d = _date.fromisoformat(r.last_review_date[:10])
         except ValueError:
             continue
-        has_dates += 1
-        if (today - d).days <= 90:
+        if 0 <= (today - d).days <= 90:
             fresh += 1
-    fresh_pct = round(100 * fresh / has_dates) if has_dates else 0
+    fresh_pct = round(100 * fresh / len(rows)) if rows else 0
 
     # Retirement candidates -- only meaningful when telemetry was loaded.
     retire = sum(
@@ -467,11 +482,26 @@ def _exec_summary_block(
         if r.effectiveness_score is not None and r.effectiveness_score < 0
     )
 
+    if summary.in_scope_detections is not None:
+        # The count and the % describe the same detections.
+        who = escape(summary.coverage_scope or "detections in the coverage scope")
+        version = (
+            f" (v{escape(summary.attack_version)})" if summary.attack_version else ""
+        )
+        coverage_phrase = (
+            f"<strong>{summary.in_scope_detections}</strong> {who} cover "
+            f"<strong>{coverage_pct}%</strong> of the MITRE ATT&amp;CK "
+            f"Enterprise technique matrix{version}. "
+        )
+    else:  # summary built without scope information
+        coverage_phrase = (
+            f"<strong>{summary.production}</strong> production detections; "
+            f"MITRE ATT&amp;CK Enterprise technique coverage "
+            f"<strong>{coverage_pct}%</strong>. "
+        )
     tldr = (
-        f"<strong>{active}</strong> active detections covering "
-        f"<strong>{coverage_pct}%</strong> of the MITRE ATT&amp;CK "
-        f"Enterprise technique matrix. "
-        f"<strong>{owned_pct}%</strong> have a named owner; "
+        coverage_phrase
+        + f"<strong>{owned_pct}%</strong> of rules have a named owner; "
         f"<strong>{fresh_pct}%</strong> were reviewed in the last 90 days."
     )
     if retire > 0:

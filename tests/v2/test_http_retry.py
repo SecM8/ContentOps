@@ -204,3 +204,92 @@ def test_paginate_uses_odata_nextlink_key() -> None:
     }
     items = paginate(lambda url: pages[url], "/p1", next_link_key="@odata.nextLink")
     assert items == [{"a": 1}, {"a": 2}]
+
+
+# ----- paginate: nextLink origin pinning -----------------------------------
+#
+# fetch_page sends the client's bearer token, so a nextLink must stay on
+# the client's origin. Before the fix, a relative first URL left the
+# allowed origin unset and the FIRST absolute nextLink defined it, so a
+# hostile nextLink would have been followed with credentials attached.
+
+
+def test_paginate_rejects_cross_origin_nextlink_with_base_url() -> None:
+    fetched: list[str] = []
+
+    def fetch(url: str) -> httpx.Response:
+        fetched.append(url)
+        return _resp(200, body={"value": [{"id": 1}],
+                                "nextLink": "https://evil.example/steal"})
+
+    with pytest.raises(RuntimeError, match="host mismatch"):
+        paginate(fetch, "/p1", next_link_key="nextLink",
+                 base_url="https://management.azure.com")
+    assert fetched == ["/p1"]
+
+
+def test_paginate_follows_same_origin_absolute_nextlink() -> None:
+    pages = {
+        "/p1": _resp(200, body={"value": [{"id": 1}],
+                                "nextLink": "https://management.azure.com/p2?x=1"}),
+        "https://management.azure.com/p2?x=1": _resp(200, body={"value": [{"id": 2}]}),
+    }
+    items = paginate(lambda url: pages[url], "/p1", next_link_key="nextLink",
+                     base_url="https://MANAGEMENT.azure.com:443")
+    assert items == [{"id": 1}, {"id": 2}]
+
+
+def test_paginate_rejects_absolute_nextlink_without_known_origin() -> None:
+    page = _resp(200, body={"value": [], "nextLink": "https://management.azure.com/p2"})
+    with pytest.raises(RuntimeError, match="host mismatch"):
+        paginate(lambda url: page, "/p1", next_link_key="nextLink")
+
+
+def test_paginate_rejects_scheme_downgrade_and_scheme_relative_links() -> None:
+    downgrade = _resp(200, body={"value": [], "nextLink": "http://graph.microsoft.com/p2"})
+    with pytest.raises(RuntimeError, match="host mismatch"):
+        paginate(lambda url: downgrade, "https://graph.microsoft.com/p1",
+                 next_link_key="nextLink")
+    scheme_relative = _resp(200, body={"value": [], "nextLink": "//evil.example/p2"})
+    with pytest.raises(RuntimeError, match="host mismatch"):
+        paginate(lambda url: scheme_relative, "/p1", next_link_key="nextLink",
+                 base_url="https://graph.microsoft.com")
+
+
+def test_sentinel_and_defender_listings_pin_their_origin() -> None:
+    """Both real callers pass their client's base URL to paginate."""
+    from contentops.defender.client import DefenderClient
+    from contentops.providers.sentinel_arm import SentinelArmProvider
+    from contentops.config import SentinelConfig
+
+    def _evil(request: httpx.Request) -> httpx.Response:
+        if request.url.host != "evil.example":
+            return httpx.Response(200, json={
+                "value": [{"id": "1"}],
+                "nextLink": "https://evil.example/page2",
+                "@odata.nextLink": "https://evil.example/page2",
+            })
+        raise AssertionError("followed a cross-origin nextLink")  # pragma: no cover
+
+    provider = SentinelArmProvider(
+        SentinelConfig(subscriptionId="s", resourceGroup="r", workspaceName="w"),
+        token="t",
+    )
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://management.azure.com", transport=httpx.MockTransport(_evil),
+    )
+    client = DefenderClient(token="t")
+    client._client.close()
+    client._client = httpx.Client(
+        base_url="https://graph.microsoft.com/beta/security/rules",
+        transport=httpx.MockTransport(_evil),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="host mismatch"):
+            provider.list_resource("alertRules")
+        with pytest.raises(RuntimeError, match="host mismatch"):
+            client.list_rules()
+    finally:
+        provider.close()
+        client.close()

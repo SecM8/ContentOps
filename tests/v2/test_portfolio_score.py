@@ -89,9 +89,9 @@ def test_compute_score_silent_rule_hits_silence_penalty() -> None:
 
 
 def test_compute_score_pure_true_positives() -> None:
-    """Five incidents, zero FPs -> 5 TP. Default tp=1 -> score=5.
-    Rule fired so silence penalty does NOT apply."""
-    row = {"alerts_30d": 50, "incidents_30d": 5, "closed_fp_30d": 0}
+    """Five incidents closed as TruePositive -> 5 TP. Default tp=1 ->
+    score=5. Rule fired so silence penalty does NOT apply."""
+    row = {"alerts_30d": 50, "incidents_30d": 5, "closed_tp_30d": 5, "closed_fp_30d": 0}
     assert compute_score(row, ScoreWeights()) == 5
 
 
@@ -103,28 +103,44 @@ def test_compute_score_pure_false_positives() -> None:
 
 
 def test_compute_score_mixed_telemetry() -> None:
-    """10 incidents, 3 closed as FP -> 7 TP. With defaults: 7*1 - 3*2
+    """10 incidents: 7 closed TP, 3 closed FP. With defaults: 7*1 - 3*2
     = 1. Rule fired (alerts > 0) so no silence penalty."""
-    row = {"alerts_30d": 200, "incidents_30d": 10, "closed_fp_30d": 3}
+    row = {"alerts_30d": 200, "incidents_30d": 10, "closed_tp_30d": 7, "closed_fp_30d": 3}
     assert compute_score(row, ScoreWeights()) == 1
 
 
 def test_compute_score_custom_weights() -> None:
     """Same row as above but fp=5 (heavy FP cost) and silence=0
     (silence forgiven). 7*1 - 3*5 = -8."""
-    row = {"alerts_30d": 200, "incidents_30d": 10, "closed_fp_30d": 3}
+    row = {"alerts_30d": 200, "incidents_30d": 10, "closed_tp_30d": 7, "closed_fp_30d": 3}
     w = ScoreWeights(tp=1, fp=5, silence=0)
     assert compute_score(row, w) == -8
 
 
-def test_compute_score_clamps_negative_tp_estimate_to_zero() -> None:
-    """incidents - closed_fp can't go negative (a rule can't have more
-    closed FPs than total incidents). If the data is malformed (closed_fp
-    > incidents — e.g. legacy backfill), clamp the TP estimate to 0
-    so a single bad row doesn't pollute the score table."""
-    row = {"alerts_30d": 5, "incidents_30d": 3, "closed_fp_30d": 5}
-    # tp=max(0, 3-5)=0, fp=5*2=10 -> -10
-    assert compute_score(row, ScoreWeights()) == -10
+def test_compute_score_open_and_benign_incidents_are_not_true_positives() -> None:
+    """Only incidents closed as TruePositive count as TPs. 10 incidents,
+    1 closed TP, 2 closed FP, the rest open / BenignPositive /
+    Undetermined -> 1*1 - 2*2 = -3. (TP used to be incidents - FP = 8.)"""
+    row = {
+        "alerts_30d": 40, "incidents_30d": 10,
+        "closed_tp_30d": 1, "closed_fp_30d": 2, "closed_bp_30d": 4,
+    }
+    assert compute_score(row, ScoreWeights()) == -3
+
+
+def test_compute_score_incidents_without_alerts_are_not_silence() -> None:
+    """A rule with incidents but no alerts of its own in the window (an
+    incident-creation rule; an incident updated in the window whose alert
+    predates it) fired -- no silence penalty."""
+    row = {"alerts_30d": 0, "incidents_30d": 2, "closed_tp_30d": 1, "closed_fp_30d": 0}
+    assert compute_score(row, ScoreWeights()) == 1
+
+
+def test_compute_score_without_classification_counts_no_true_positives() -> None:
+    """A row with incidents but no ``closed_tp_30d`` (e.g. built by hand)
+    gets no TP credit rather than an estimate."""
+    row = {"alerts_30d": 5, "incidents_30d": 3, "closed_fp_30d": 0}
+    assert compute_score(row, ScoreWeights()) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +151,8 @@ def test_compute_score_clamps_negative_tp_estimate_to_zero() -> None:
 def test_rank_rows_ascending_by_score() -> None:
     """Lowest score first = retirement candidates surface at top."""
     rows = [
-        {"id": "great",  "alerts_30d": 50, "incidents_30d": 10, "closed_fp_30d": 0},
+        {"id": "great",  "alerts_30d": 50, "incidents_30d": 10, "closed_tp_30d": 10,
+         "closed_fp_30d": 0},
         {"id": "silent", "alerts_30d": 0,  "incidents_30d": 0,  "closed_fp_30d": 0},
         {"id": "noisy",  "alerts_30d": 1000, "incidents_30d": 50, "closed_fp_30d": 50},
     ]

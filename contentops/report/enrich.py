@@ -27,7 +27,6 @@ list. Tests pin field-level behaviour without mocking network code.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import replace
@@ -35,6 +34,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from contentops.report.assemble import ReportRow
+from contentops.rule_keys import RuleKeys, TelemetryIndex, normalise_rule_name
+from contentops.utils.kql_schema import load_schema_tables
 
 logger = logging.getLogger(__name__)
 
@@ -100,25 +101,9 @@ def extract_primary_table(query: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _load_schema_tables(schemas_path: Path) -> set[str]:
-    """Return the set of table names recorded in the cached schema.
-
-    Missing / unparseable file -> empty set. Reading the cache is
-    best-effort so a stale schemas.json doesn't crash report
-    generation; the enricher just reports every table as drift in
-    that pathological case and operators see the empty cache as the
-    root cause.
-    """
-    try:
-        raw = json.loads(schemas_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return set()
-    out: set[str] = set()
-    for entry in raw.get("tables", []):
-        name = entry.get("name") if isinstance(entry, dict) else None
-        if isinstance(name, str) and name:
-            out.add(name)
-    return out
+# Historical private name; the helper lives in utils so coverage can share it
+# without importing the report package.
+_load_schema_tables = load_schema_tables
 
 
 # ---------------------------------------------------------------------------
@@ -126,42 +111,58 @@ def _load_schema_tables(schemas_path: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def _rounded(rate: float | None) -> float | None:
+    return round(rate, 3) if rate is not None else None
+
+
 def enrich_with_telemetry(
     rows: list[ReportRow],
-    telemetry_by_name: dict[str, dict[str, Any]],
+    telemetry: TelemetryIndex,
     *,
     score_weights: Any | None = None,
 ) -> list[ReportRow]:
     """Populate alerts / TP / FP / fp_rate / effectiveness_score.
 
-    ``telemetry_by_name`` is ``{display_name: {alerts_30d, incidents_30d,
-    closed_fp_30d, ...}}``; produce it from
-    :func:`contentops.workspace_kql.query` + :func:`silent_rules_query`,
-    or stub it in tests. The match key is the rule's display_name —
-    same key the silent-rules KQL emits as ``rule_name``.
+    ``telemetry`` indexes the rows of
+    :func:`contentops.workspace_kql.telemetry_query` (build it with
+    ``TelemetryIndex(result.rows)``, or from hand-built rows in tests).
+    Each report row is looked up by its ``telemetry_keys`` (rule id and
+    display names; the rule's rows are summed) or by ``title`` when it has
+    none.
 
-    Uses :func:`contentops.portfolio.score.compute_score` so the
-    report's score column is byte-identical to ``portfolio --rank``.
+    TP is the number of incidents closed as TruePositive and FP those
+    closed as FalsePositive; ``fp_rate`` is
+    :func:`contentops.workspace_kql.closed_fp_rate` -- FP / incidents
+    closed TP + FP + BP, the definition the ``lifecycle promote`` gate
+    and ``portfolio`` use. Uses
+    :func:`contentops.portfolio.score.compute_score` so the report's
+    score column is byte-identical to ``portfolio --rank``.
     """
     from contentops.portfolio.score import ScoreWeights, compute_score
+    from contentops.workspace_kql import closed_fp_rate
 
     weights = score_weights or ScoreWeights()
     out: list[ReportRow] = []
     for row in rows:
-        tel = telemetry_by_name.get(row.title)
+        keys = (
+            RuleKeys.from_candidates(row.telemetry_keys) if row.telemetry_keys
+            else RuleKeys(names=tuple(n for n in (normalise_rule_name(row.title),) if n))
+        )
+        tel = telemetry.lookup(keys)
         if tel is None:
             # No telemetry merged -> leave fields as None ("unknown").
             out.append(row)
             continue
         alerts = int(tel.get("alerts_30d") or 0)
         incidents = int(tel.get("incidents_30d") or 0)
+        closed_tp = int(tel.get("closed_tp_30d") or 0)
         closed_fp = int(tel.get("closed_fp_30d") or 0)
-        tp = max(0, incidents - closed_fp)
-        fp_rate = round(closed_fp / incidents, 3) if incidents > 0 else None
+        fp_rate = _rounded(closed_fp_rate(tel))
         score = compute_score(
             {
                 "alerts_30d": alerts,
                 "incidents_30d": incidents,
+                "closed_tp_30d": closed_tp,
                 "closed_fp_30d": closed_fp,
             },
             weights,
@@ -169,7 +170,7 @@ def enrich_with_telemetry(
         out.append(replace(
             row,
             alerts_30d=alerts,
-            true_positives_30d=tp,
+            true_positives_30d=closed_tp,
             false_positives_30d=closed_fp,
             fp_rate=fp_rate,
             effectiveness_score=score,
@@ -314,9 +315,13 @@ def enrich_with_alerts(
     ``health_by_id`` maps ``detection_id`` (envelope slug) to a
     ``DetectionHealthRow`` (or any object with the expected attributes).
     Fills existing telemetry fields (alerts_30d, TP, FP, fp_rate) plus
-    the new alert_silent_days and alert_recommendation fields.
+    the new alert_silent_days and alert_recommendation fields. ``fp_rate``
+    is FP / alerts classified TP + FP + BP, the same definition as the
+    telemetry path (:func:`contentops.workspace_kql.closed_fp_rate`), not
+    the health row's FP share of all alerts.
     """
     from contentops.portfolio.score import ScoreWeights, compute_score
+    from contentops.workspace_kql import closed_fp_rate
 
     weights = ScoreWeights()
     out: list[ReportRow] = []
@@ -329,6 +334,7 @@ def enrich_with_alerts(
             {
                 "alerts_30d": health.alert_count,
                 "incidents_30d": health.tp_count + health.fp_count,
+                "closed_tp_30d": health.tp_count,
                 "closed_fp_30d": health.fp_count,
             },
             weights,
@@ -338,7 +344,11 @@ def enrich_with_alerts(
             alerts_30d=health.alert_count,
             true_positives_30d=health.tp_count,
             false_positives_30d=health.fp_count,
-            fp_rate=health.fp_rate / 100 if health.fp_rate is not None else None,
+            fp_rate=_rounded(closed_fp_rate({
+                "closed_tp_30d": health.tp_count,
+                "closed_fp_30d": health.fp_count,
+                "closed_bp_30d": getattr(health, "benign_count", 0),
+            })),
             effectiveness_score=score,
             alert_silent_days=health.silent_days,
             alert_recommendation=health.recommendation,

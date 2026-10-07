@@ -68,6 +68,14 @@ concurrency:
 
 jobs:
   integration-deploy:
+    # Same-repo PRs (and manual dispatch) only: the job applies the PR's
+    # content with the `integration` identity. Fork PRs get no OIDC token
+    # or secrets and are skipped. Who may run it is governed by the
+    # `integration` environment's protection rules — see SECURITY.md
+    # "CI trust model" for the recommended reviewers / identity scope.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Matches the GitHub Environment named `integration` AND the federated
@@ -88,21 +96,14 @@ jobs:
       - run: pip install -r requirements.txt && pip install -e .
       - name: Materialise tenant configuration
         # `config/tenant.yml` is gitignored — write it from the
-        # TENANT_CONFIG_YAML repository secret. Skipped if the file
-        # already exists in the workspace (local-dev path).
+        # TENANT_CONFIG_YAML repository secret. A committed file is used
+        # when no secret is set (Mode A); file + secret must match, so a
+        # file in the PR can't silently override the secret.
         env:
           TENANT_CONFIG_YAML: ${{ secrets.TENANT_CONFIG_YAML }}
         run: |
-          set -euo pipefail
-          if [ ! -f config/tenant.yml ]; then
-            if [ -n "${TENANT_CONFIG_YAML:-}" ]; then
-              printf '%s' "$TENANT_CONFIG_YAML" > config/tenant.yml
-              echo "::notice::Wrote config/tenant.yml from TENANT_CONFIG_YAML secret."
-            else
-              echo "::error::TENANT_CONFIG_YAML secret is not set and config/tenant.yml is missing."
-              exit 1
-            fi
-          fi
+          python scripts/materialise_tenant_config.py \
+            --target config/tenant.yml --env-var TENANT_CONFIG_YAML
 
       - name: Detect integration workspace
         id: detect

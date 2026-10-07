@@ -529,3 +529,30 @@ def _collect_drift_handlers(
         if isinstance(h, DriftCapable):
             handlers.append(h)
     return handlers
+
+
+def coverage_scope_options(fn):
+    """Add ``--include-non-production`` / ``--include-hunting`` to a command.
+
+    Every command that publishes an ATT&CK coverage number takes the same
+    two flags, so the badge, gaps report, Navigator layer, inventory report
+    and portfolio footer can only disagree when their flags differ. Build
+    the scope with ``CoverageScope.from_flags(...)``.
+    """
+    fn = click.option(
+        "--include-hunting", "include_hunting", is_flag=True, default=False,
+        help=(
+            "Count Sentinel hunting queries toward ATT&CK coverage. Excluded "
+            "by default: hunting queries never raise alerts."
+        ),
+    )(fn)
+    fn = click.option(
+        "--include-non-production", "include_non_production",
+        is_flag=True, default=False,
+        help=(
+            "Count enabled experimental/test detections toward ATT&CK "
+            "coverage. Default: enabled status: production rules only; "
+            "disabled and deprecated rules never count."
+        ),
+    )(fn)
+    return fn

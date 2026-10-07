@@ -30,6 +30,7 @@ from contentops.status.redact import redact
 _STATUS_GLYPH = {
     "PASS": "✅",
     "FAIL": "❌",
+    "WARN": "⚠️",
     "SKIP": "⚪",
     "INFO": "ℹ️",
 }
@@ -41,7 +42,7 @@ def _escape_cell(value: str) -> str:
 
 
 def _summary_counts(checks: list[ConformanceCheck]) -> dict[str, int]:
-    counts = {"PASS": 0, "FAIL": 0, "SKIP": 0, "INFO": 0}
+    counts = {"PASS": 0, "FAIL": 0, "WARN": 0, "SKIP": 0, "INFO": 0}
     for check in checks:
         counts[check.status] = counts.get(check.status, 0) + 1
     return counts
@@ -76,6 +77,8 @@ def render_configuration(
         f"{_STATUS_GLYPH['FAIL']} {counts.get('FAIL', 0)} failed",
         f"{_STATUS_GLYPH['SKIP']} {counts.get('SKIP', 0)} skipped",
     ]
+    if counts.get("WARN"):
+        summary_bits.insert(2, f"{_STATUS_GLYPH['WARN']} {counts['WARN']} warning(s)")
     if counts.get("INFO"):
         summary_bits.append(f"{_STATUS_GLYPH['INFO']} {counts['INFO']} info")
     lines.append(f"**Scope:** {', '.join(report.scope) if report.scope else 'all'}  ")
@@ -97,6 +100,7 @@ def render_configuration(
         layer_counts = _summary_counts(layer_checks)
         verdict = (
             _STATUS_GLYPH["FAIL"] if layer_counts.get("FAIL", 0) > 0
+            else _STATUS_GLYPH["WARN"] if layer_counts.get("WARN", 0) > 0
             else _STATUS_GLYPH["PASS"]
         )
         lines.append(f"## {layer} {verdict}")

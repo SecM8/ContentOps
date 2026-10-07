@@ -20,6 +20,8 @@ from pathlib import Path
 
 import click
 
+from contentops.cli.commands._shared import coverage_scope_options
+
 
 @click.command("navigator")
 @click.option(
@@ -30,7 +32,8 @@ import click
 )
 @click.option(
     "--repo/--no-repo", default=True, show_default=True,
-    help="Include repo envelopes (metadata.techniques) as the claimed-coverage axis.",
+    help="Include the repo's detections as the claimed-coverage axis "
+         "(same engine and scope as `contentops coverage`).",
 )
 @click.option(
     "--deployed/--no-deployed", default=True, show_default=True,
@@ -85,6 +88,7 @@ import click
          "non-zero. Default fail-soft so fork PRs without OIDC can still "
          "render the repo axis alone.",
 )
+@coverage_scope_options
 def navigator_cmd(
     detections_path: Path,
     repo: bool,
@@ -97,6 +101,8 @@ def navigator_cmd(
     layer_name: str,
     layer_description: str,
     fail_soft: bool,
+    include_non_production: bool,
+    include_hunting: bool,
 ) -> None:
     """Generate a MITRE Navigator layer JSON across three coverage axes.
 
@@ -106,14 +112,16 @@ def navigator_cmd(
     "Open Existing Layer -> Upload from local". Skip the SVG step;
     the hosted UI renders the JSON without any local dependency.
     """
+    from contentops.coverage import CoverageScope
     from contentops.navigator import (
-        TechniqueHit,
-        extract_defender_rule_techniques,
-        extract_firing_techniques,
         extract_repo_techniques,
-        extract_sentinel_rule_techniques,
         render_layer,
         score_techniques,
+    )
+
+    scope = CoverageScope.from_flags(
+        include_non_production=include_non_production,
+        include_hunting=include_hunting,
     )
 
     hits: list = []
@@ -121,7 +129,7 @@ def navigator_cmd(
 
     if repo:
         try:
-            repo_hits = extract_repo_techniques(detections_path)
+            repo_hits = extract_repo_techniques(detections_path, scope=scope)
             hits.extend(repo_hits)
             click.echo(f"repo:     {len(repo_hits)} hit(s) from {detections_path}", err=True)
         except Exception as exc:
@@ -159,9 +167,15 @@ def navigator_cmd(
         err=True,
     )
 
+    axes = [a for a, on in (("repo", repo), ("deployed", deployed), ("firings", firings)) if on]
     layer = render_layer(
         scored, name=layer_name, description=layer_description,
+        metadata=[
+            ("axes", ", ".join(axes) or "none"),
+            ("repo scope", scope.label),
+        ],
     )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(layer, indent=2) + "\n", encoding="utf-8")
     click.echo(
         f"wrote {len(scored)} technique(s) to {out_path} "

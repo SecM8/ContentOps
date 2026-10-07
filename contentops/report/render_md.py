@@ -73,6 +73,13 @@ def render_markdown(rows: list[ReportRow], summary: ReportSummary) -> str:
     lines.append(f"| Production | {summary.production} |")
     lines.append(f"| Experimental | {summary.experimental} |")
     lines.append(f"| Deprecated | {summary.deprecated} |")
+    if summary.in_scope_detections is not None:
+        scope = _md_escape(summary.coverage_scope or "coverage scope")
+        version = f", ATT&CK v{_md_escape(summary.attack_version)}" if summary.attack_version else ""
+        lines.append(
+            f"| Coverage counts | {summary.in_scope_detections} "
+            f"{scope}{version} |"
+        )
     if summary.coverage_tactics_total > 0:
         lines.append(
             f"| Tactic coverage | **{summary.coverage_tactics_pct}%** "

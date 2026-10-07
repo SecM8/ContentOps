@@ -123,7 +123,7 @@ def test_telemetry_populates_all_four_columns(
 ) -> None:
     """Happy path: telemetry response covers two rules; third gets Nones.
 
-    Rule A: alerts=10, incidents=5, fp=1 -> fp_rate=0.2
+    Rule A: alerts=10, incidents=5, closed tp=3 / fp=1 / bp=1 -> fp_rate=0.2
     Rule B: alerts=0, incidents=0 -> fp_rate empty (None branch)
     Orphan Rule: absent from KQL response -> all four cells empty
     """
@@ -132,7 +132,8 @@ def test_telemetry_populates_all_four_columns(
 
     def fake_query(*args, **kwargs):
         return _telemetry_rows([
-            {"rule_name": "Rule A", "alerts_30d": 10, "incidents_30d": 5, "closed_fp_30d": 1},
+            {"rule_name": "Rule A", "alerts_30d": 10, "incidents_30d": 5,
+             "closed_tp_30d": 3, "closed_fp_30d": 1, "closed_bp_30d": 1},
             {"rule_name": "Rule B", "alerts_30d": 0, "incidents_30d": 0, "closed_fp_30d": 0},
         ])
 
@@ -175,17 +176,64 @@ def test_telemetry_populates_all_four_columns(
     assert o["fp_rate"] == ""
 
 
+def test_telemetry_matches_by_rule_id_and_reports_closed_classifications(
+    tree: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    """Rule A fires as "Rule A from 10.0.0.1" (alertDisplayNameFormat):
+    joined by display name it looked silent and took the silence penalty.
+    The id-keyed row (AlertType -> rule id = envelope id) matches it."""
+    _patch_auth_ok(monkeypatch)
+    import contentops.workspace_kql as ws
+
+    def fake_query(*args, **kwargs):
+        return QueryResult(rows=[
+            {"rule_key": "id:rule-a", "rule_name": "Rule A from 10.0.0.1",
+             "alerts_30d": 10, "incidents_30d": 5,
+             "closed_tp_30d": 2, "closed_fp_30d": 1, "closed_bp_30d": 1},
+            {"rule_key": "name:rule b", "rule_name": "Rule B",
+             "alerts_30d": 4, "incidents_30d": 0,
+             "closed_tp_30d": 0, "closed_fp_30d": 0, "closed_bp_30d": 0},
+        ])
+
+    monkeypatch.setattr(ws, "query", fake_query)
+    out_csv = tmp_path / "p.csv"
+    result = CliRunner().invoke(cli, [
+        "portfolio", "--path", str(tree),
+        "--with-telemetry", "--workspace-id", "ws-test", "--rank",
+        "--out-csv", str(out_csv),
+    ])
+    assert result.exit_code == 0, result.output
+
+    headers, rows = _read_csv(out_csv)
+    assert headers[-7:] == [
+        "alerts_30d", "incidents_30d", "closed_tp_30d", "closed_fp_30d",
+        "closed_bp_30d", "fp_rate", "score",
+    ]
+    by_name = _by_display(rows)
+    a = by_name["Rule A"]
+    assert (a["alerts_30d"], a["closed_tp_30d"], a["closed_fp_30d"], a["closed_bp_30d"]) == (
+        "10", "2", "1", "1",
+    )
+    assert a["score"] == "0.0"   # 2 TP * 1 - 1 FP * 2; it fired, so no silence penalty
+    assert by_name["Rule B"]["alerts_30d"] == "4"   # name row, as before
+    assert by_name["Orphan Rule"]["alerts_30d"] == ""
+
+
 def test_fp_rate_rounded_to_three_dp(
     tree: Path, tmp_path: Path, monkeypatch,
 ) -> None:
-    """1/3 -> 0.333; 2/7 -> 0.286 (rounded). The CLI uses round(_, 3)."""
+    """1/3 -> 0.333; 2/7 -> 0.286 (rounded). The CLI uses round(_, 3).
+    The denominator is the incidents closed TP + FP + BP; Rule B's two
+    open incidents are left out."""
     _patch_auth_ok(monkeypatch)
     import contentops.workspace_kql as ws
 
     def fake_query(*args, **kwargs):
         return _telemetry_rows([
-            {"rule_name": "Rule A", "alerts_30d": 100, "incidents_30d": 3, "closed_fp_30d": 1},
-            {"rule_name": "Rule B", "alerts_30d": 200, "incidents_30d": 7, "closed_fp_30d": 2},
+            {"rule_name": "Rule A", "alerts_30d": 100, "incidents_30d": 3,
+             "closed_tp_30d": 2, "closed_fp_30d": 1},
+            {"rule_name": "Rule B", "alerts_30d": 200, "incidents_30d": 9,
+             "closed_tp_30d": 4, "closed_fp_30d": 2, "closed_bp_30d": 1},
         ])
 
     monkeypatch.setattr(ws, "query", fake_query)

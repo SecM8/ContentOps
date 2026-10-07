@@ -311,7 +311,7 @@ class SentinelWatchlistHandler:
                 items_response = provider.request(
                     "GET",
                     provider.resource_url(
-                        f"{WATCHLIST_RESOURCE}/{watchlist_name}/watchlistItems"
+                        WATCHLIST_RESOURCE, watchlist_name, child="watchlistItems",
                     ),
                 )
             except Exception as exc:  # pragma: no cover - defensive

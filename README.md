@@ -127,8 +127,8 @@ contentops conformance --scope L1,L2    # local install + tenant config only
 contentops conformance --format json    # machine-readable sidecar
 ```
 
-Layers — each printed with PASS / FAIL / SKIP and an actionable
-remediation hint on failure:
+Layers — each printed with PASS / FAIL / WARN / SKIP and an actionable
+remediation hint on failure or warning (WARN never fails the run):
 
 | Layer | Verifies |
 |---|---|

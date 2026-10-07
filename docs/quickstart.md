@@ -275,7 +275,7 @@ mutate state.
 | `python -m contentops navigator --since 365 --out tmp.json` | A MITRE ATT&CK Navigator layer JSON aggregating three axes (repo envelopes + deployed rules + live alert firings). Upload to https://mitre-attack.github.io/attack-navigator/ to visualise. |
 | `python -m contentops coverage --gaps` | Inverse heatmap — which ATT&CK techniques you DON'T cover. |
 | `python -m contentops coverage --d3fend` | MITRE D3FEND defensive-axis coverage report (companion to ATT&CK). Reads `metadata.defensiveTechniques: [D3-XXX]`. |
-| `python -m contentops silent-rules --since 30` | Rules that fired zero alerts in the lookback window. |
+| `python -m contentops silent-rules --since 30` | Every deployed rule with its alerts and incidents in the lookback window; rules with neither listed first as silent. |
 | `python -m contentops auto-disabled-rules --since 7` | Rules **Sentinel itself disabled** (consecutive failures, schema break). Distinct from silent rules. Requires the `SentinelHealth` diagnostic to be enabled on the workspace. |
 | `python -m contentops portfolio --with-telemetry --out-csv portfolio.csv` | Flat per-detection report with `alerts_30d`, `incidents_30d`, `closed_fp_30d`, `fp_rate`. |
 | `python -m contentops detection-docs regenerate` | Renders every envelope to `docs/detections/<asset>/<id>.md` — browsable per-rule documentation. |

@@ -9,11 +9,13 @@ can open in the hosted Navigator UI to visualise MITRE coverage.
 
 Three data axes, each independently selectable on the command line:
 
-* **Repo** -- ``metadata.techniques`` on every envelope under
-  ``detections/``. The "claimed coverage" view.
-* **Deployed** -- techniques on every Sentinel analytic rule (ARM)
-  + Defender custom detection (Graph beta). The "deployed surface"
-  view.
+* **Repo** -- the in-scope detections under ``detections/`` via the
+  shared coverage engine (metadata + payload ATT&CK fields; default
+  scope: enabled production rules, hunting excluded). The "claimed
+  coverage" view; it covers exactly what the coverage badge counts.
+* **Deployed** -- techniques and sub-techniques on every enabled
+  Sentinel analytic rule (ARM, all pages) + Defender custom detection
+  (Graph beta). The "deployed surface" view.
 * **Firings** -- ``SecurityAlert.Techniques`` over the last N days.
   The "what actually fires" view, sourced from the same workspace
   KQL helper that powers ``silent-rules`` (no extra permissions
@@ -21,7 +23,8 @@ Three data axes, each independently selectable on the command line:
   Sentinel workspace).
 
 Scoring per technique is the count of *unique rule display names*
-contributing across the selected axes. Parent techniques without a
+contributing across the selected axes (the repo axis uses the payload
+``displayName`` too, so a rule seen in the repo and deployed counts once). Parent techniques without a
 direct match still appear at score 0 when any sub-technique is
 covered, so the Navigator UI renders the parent tile.
 

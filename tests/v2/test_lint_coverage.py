@@ -195,6 +195,9 @@ _EXPECTED_SEVERITIES: dict[str, str] = {
     # Strict-wrapper carrier id (contentops/lint/strict.py) for
     # Kusto.Language diagnostics + allowlist-parse warnings.
     "KQL000": "warning",
+    # A detections/ file that doesn't load as an envelope
+    # (contentops/lint/runner.py); filesystem-driven, pinned below.
+    "ENVELOPE001": "error",
     # KQL heuristics in contentops/lint/kql.py
     "KQL001": "error",      # unbalanced brackets
     "KQL002": "error",      # unterminated string
@@ -424,3 +427,16 @@ def test_every_asset_has_registered_handler(
         )
     finally:
         default_registry.reset_all()
+
+
+def test_envelope001_emits_error(tmp_path) -> None:
+    """ENVELOPE001 is filesystem-driven like KQLOVERRIDE004: a file under
+    the detections path that doesn't load as an envelope."""
+    from contentops.lint.runner import lint_assets
+    detections = tmp_path / "detections"
+    detections.mkdir()
+    (detections / "broken.yml").write_text("id: [unclosed\n", encoding="utf-8")
+    [linted] = lint_assets(detections)
+    [finding] = linted.findings
+    assert finding.rule_id == "ENVELOPE001"
+    assert finding.severity == _EXPECTED_SEVERITIES["ENVELOPE001"]

@@ -1,81 +1,65 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""Per-asset MITRE coverage extractor.
+"""Per-detection MITRE ATT&CK extractor -- the only one coverage uses.
 
-Reads ``(envelope, payload)`` and returns a normalised
-:class:`ExtractedCoverage` of ``(tactics, techniques, severity)``,
-merging two sources:
+:func:`extract_mitre` reads one detection and returns an
+:class:`ExtractedCoverage`. Every coverage surface (heatmap, gaps, badge,
+Navigator layer, report, portfolio) goes through it, so they agree on what
+a rule covers.
 
-1. ``envelope.metadata`` (rich authoring metadata, when present).
-2. The asset-native payload location (where the platform itself
-   stores MITRE attribution -- the source of truth).
+Sources, unioned:
 
-The extractor exists because the corpus today is dominated by
-collected detections that carry only ``metadata: { arm_name: ... }``
--- the rich authoring fields were never authored. Reading from the
-payload makes ``contentops coverage`` reflect what the platform
-actually has, without requiring a hand-backfill of every YAML.
+1. ``envelope.metadata`` (authored metadata). When strict metadata
+   validation failed (a missing ``runbookUrl``, one bad reference URL),
+   the envelope carries no metadata; pass the raw ``metadata`` mapping as
+   ``raw_metadata`` and its ``tactics`` / ``techniques`` / ``severity``
+   are still read -- hand-authored ATT&CK tags never silently vanish.
+2. The platform-native payload fields:
 
-Per-asset payload locations:
+   * ``sentinel_analytic`` / ``sentinel_hunting``: ``tactics``,
+     ``techniques`` and ``subTechniques`` (Sentinel stores sub-techniques
+     in their own field); ``severity`` (analytics only).
+   * ``defender_custom_detection``: ``detectionAction.alertTemplate``
+     ``mitreTechniques``, ``severity``, and ``category`` -- used as the
+     rule's tactic when it names one.
 
-* ``defender_custom_detection``:
-    techniques = ``payload.detectionAction.alertTemplate.mitreTechniques``
-    severity   = ``payload.detectionAction.alertTemplate.severity``
-    tactics    = derived from techniques via the curated MITRE map;
-                 fallback to ``alertTemplate.category`` if it matches
-                 a canonical tactic name.
-* ``sentinel_analytic``:
-    tactics    = ``payload.tactics`` (PascalCase, matches the canonical Literal)
-    techniques = ``payload.techniques``
-    severity   = ``payload.severity`` (TitleCase -> lowercased)
-* ``sentinel_hunting``:
-    tactics    = ``payload.tactics``
-    techniques = ``payload.techniques``
-    severity   = ``"informational"`` (hunting queries don't carry severity)
+Normalisation:
 
-When metadata AND payload both have data, the extractor unions them
-(authored content is not silently dropped). When neither has data,
-the triple is empty and the detection contributes only to the
-``total_detections`` count, not to any per-tactic bucket.
+* Technique ids are stripped and upper-cased (``" t1087"`` -> ``T1087``)
+  and must match ``T####`` / ``T####.###``; anything else lands in
+  ``invalid_ids`` and is never rendered as an ATT&CK id.
+* Ids MITRE revoked are replaced by their successor (``remapped_ids``);
+  deprecated and unknown ids are reported but never counted.
+* Tactics are the rule's claimed tactics (metadata + payload; Defender's
+  category). Only a rule that claims none gets tactics inferred from its
+  techniques (``tactics_inferred``).
+* A technique is attributed to a tactic only when the ATT&CK matrix says
+  it belongs there (``tactic_techniques``). Techniques outside every
+  claimed tactic still count for technique-level coverage and are listed
+  in ``techniques_without_tactic``.
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
-from functools import lru_cache
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from contentops.core.asset import Asset
 from contentops.core.envelope import EnvelopeV2
+from contentops.coverage.matrix import (
+    ALL_TACTICS,
+    AttackMatrix,
+    load_matrix,
+    normalise_tactic,
+    normalise_technique_id,
+)
 
+if TYPE_CHECKING:
+    from contentops.core.handler import LoadedAsset
 
-_CANONICAL_TACTICS: frozenset[str] = frozenset({
-    "Reconnaissance",
-    "ResourceDevelopment",
-    "InitialAccess",
-    "Execution",
-    "Persistence",
-    "PrivilegeEscalation",
-    "DefenseEvasion",
-    "CredentialAccess",
-    "Discovery",
-    "LateralMovement",
-    "Collection",
-    "CommandAndControl",
-    "Exfiltration",
-    "Impact",
-    # ARM Microsoft.SecurityInsights/alertRules tactic enum members
-    # outside the canonical 14-tactic ATT&CK Enterprise list. Without
-    # these, Sentinel rules carrying ``PreAttack`` (common on legacy
-    # built-in templates) or the two ICS/OT tactics would be silently
-    # dropped by the per-asset readers.
-    "PreAttack",
-    "ImpairProcessControl",
-    "InhibitResponseFunction",
-})
+# Historical names, kept for importers.
+_CANONICAL_TACTICS: frozenset[str] = frozenset(ALL_TACTICS)
 
 _CANONICAL_SEVERITIES: frozenset[str] = frozenset(
     {"informational", "low", "medium", "high"}
@@ -86,83 +70,55 @@ _DEFAULT_SEVERITY = "informational"
 
 @dataclass(frozen=True)
 class ExtractedCoverage:
-    """Normalised MITRE coverage triple for one envelope.
+    """Normalised ATT&CK attribution for one detection.
 
-    ``tactics`` and ``techniques`` always contain only canonical /
-    well-formed values; case is normalised; duplicates removed.
-    ``severity`` is always one of the four canonical lowercase
-    values (defaults to ``"informational"``).
-
-    ``techniques_without_tactic`` lists technique IDs that the
-    extractor saw on the envelope but could not map to any tactic --
-    typically because the technique is outside the bundled curated
-    list at ``contentops/coverage/data/mitre_attack_techniques.json``.
-    Surfaced so the operator can see the gap and supply a
-    ``--techniques-file`` if needed.
+    ``techniques`` lists every well-formed id on the rule (sorted, after
+    revoked ids are remapped); ``counted_techniques`` is the subset present
+    in the current matrix -- the only ids any coverage number counts.
+    ``tactic_techniques`` maps each tactic to the counted techniques that
+    belong to it in the matrix. ``severity`` is one of the four canonical
+    lowercase values (default ``"informational"``).
     """
 
-    tactics: tuple[str, ...] = field(default_factory=tuple)
-    techniques: tuple[str, ...] = field(default_factory=tuple)
+    tactics: tuple[str, ...] = ()
+    techniques: tuple[str, ...] = ()
     severity: str = _DEFAULT_SEVERITY
-    techniques_without_tactic: tuple[str, ...] = field(default_factory=tuple)
+    techniques_without_tactic: tuple[str, ...] = ()
+    counted_techniques: tuple[str, ...] = ()
+    tactic_techniques: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    invalid_ids: tuple[str, ...] = ()
+    unknown_ids: tuple[str, ...] = ()
+    deprecated_ids: tuple[str, ...] = ()
+    remapped_ids: tuple[tuple[str, str], ...] = ()
+    tactics_inferred: bool = False
+
+    def techniques_for(self, tactic: str) -> tuple[str, ...]:
+        """Counted techniques the matrix files under ``tactic``."""
+        for name, techniques in self.tactic_techniques:
+            if name == tactic:
+                return techniques
+        return ()
 
 
-# ---------------------------------------------------------------------------
-# Curated technique -> tactic lookup
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
 def _technique_to_tactics() -> dict[str, tuple[str, ...]]:
-    """Return ``{technique_id: (tactic, ...)}`` from the bundled ATT&CK matrix.
-
-    Prefers the full matrix (``mitre_attack_full.json``, generated by
-    ``scripts/refresh_attack_matrix.py``) which covers all parent +
-    sub-techniques. Falls back to the curated subset if the full file
-    is missing.
-    """
-    data_dir = Path(__file__).parent / "data"
-    full_path = data_dir / "mitre_attack_full.json"
-    curated_path = data_dir / "mitre_attack_techniques.json"
-
-    out: dict[str, tuple[str, ...]] = {}
-
-    if full_path.is_file():
-        raw = json.loads(full_path.read_text(encoding="utf-8"))
-        for key in ("techniques", "sub_techniques"):
-            for entry in raw.get(key, []):
-                tid = entry.get("id")
-                tactics = entry.get("tactics", [])
-                if isinstance(tid, str) and isinstance(tactics, list):
-                    out[tid] = tuple(t for t in tactics if t in _CANONICAL_TACTICS)
-        return out
-
-    raw = json.loads(curated_path.read_text(encoding="utf-8"))
-    for entry in raw.get("techniques", []):
-        tid = entry.get("id")
-        tactics = entry.get("tactics", [])
-        if isinstance(tid, str) and isinstance(tactics, list):
-            out[tid] = tuple(t for t in tactics if t in _CANONICAL_TACTICS)
-    return out
+    """Return ``{technique_id: (tactic, ...)}`` for every current parent and
+    sub-technique in the bundled ATT&CK matrix (see
+    :func:`contentops.coverage.matrix.load_matrix`)."""
+    return dict(load_matrix().technique_tactics)
 
 
 # ---------------------------------------------------------------------------
-# Per-asset payload readers
+# Small coercion helpers
 # ---------------------------------------------------------------------------
-
-# Per-asset readers all return the same 4-tuple shape:
-#   (tactics, techniques, severity, techniques_without_tactic)
-# tactics/techniques/orphans are lists; severity is the lowercase
-# canonical value or ``None`` (caller falls through to default).
-
-_ReaderResult = tuple[list[str], list[str], "str | None", list[str]]
 
 
 def _str_list(value: Any) -> list[str]:
-    """Coerce a payload field to a clean ``list[str]``; tolerant of None / non-list."""
-    if not isinstance(value, list):
+    """Coerce a payload field to a ``list[str]``; tolerant of None / non-list."""
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, (list, tuple)):
         return []
-    return [v for v in value if isinstance(v, str) and v]
+    return [v for v in value if isinstance(v, str) and v.strip()]
 
 
 def _normalise_severity(value: Any) -> "str | None":
@@ -175,59 +131,58 @@ def _normalise_severity(value: Any) -> "str | None":
     return None
 
 
-def _defender_payload(payload: dict[str, Any]) -> _ReaderResult:
-    """Read MITRE data from a defender_custom_detection payload."""
+def _tactics(values: Iterable[Any]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        tactic = normalise_tactic(value)
+        if tactic is not None and tactic not in out:
+            out.append(tactic)
+    return out
+
+
+def _dedupe(values: Iterable[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+# ---------------------------------------------------------------------------
+# Per-asset payload readers: (claimed tactics, raw technique ids, severity)
+# ---------------------------------------------------------------------------
+
+_ReaderResult = tuple[list[str], list[str], "str | None"]
+
+
+def _defender_payload(payload: Mapping[str, Any]) -> _ReaderResult:
     detection_action = payload.get("detectionAction")
-    alert: dict[str, Any] = {}
-    if isinstance(detection_action, dict):
+    alert: Mapping[str, Any] = {}
+    if isinstance(detection_action, Mapping):
         candidate = detection_action.get("alertTemplate")
-        if isinstance(candidate, dict):
+        if isinstance(candidate, Mapping):
             alert = candidate
-
-    techniques = _str_list(alert.get("mitreTechniques"))
-    severity = _normalise_severity(alert.get("severity"))
-
-    # Defender doesn't store tactics directly. Derive from techniques
-    # via the curated map; fall back to ``category`` only when it
-    # matches a canonical tactic name (common case: "Discovery").
-    lookup = _technique_to_tactics()
-    tactics: list[str] = []
-    orphans: list[str] = []
-    for tid in techniques:
-        mapped = lookup.get(tid)
-        if mapped:
-            tactics.extend(mapped)
-        else:
-            orphans.append(tid)
-
-    if not tactics:
-        category = alert.get("category")
-        if isinstance(category, str) and category in _CANONICAL_TACTICS:
-            tactics = [category]
-            # The category-fallback "covers" the orphans for tactic
-            # purposes -- they did contribute to a bucket via category
-            # -- so don't report them as orphans in this case.
-            orphans = []
-
-    return tactics, techniques, severity, orphans
+    # Defender has no tactics field; its alert ``category`` names the
+    # tactic the author chose when it is one (e.g. "Execution"). Other
+    # categories ("Malware", "SuspiciousActivity") claim no tactic.
+    return (
+        _tactics([alert.get("category")]),
+        _str_list(alert.get("mitreTechniques")),
+        _normalise_severity(alert.get("severity")),
+    )
 
 
-def _sentinel_analytic_payload(payload: dict[str, Any]) -> _ReaderResult:
-    tactics_raw = _str_list(payload.get("tactics"))
-    tactics = [t for t in tactics_raw if t in _CANONICAL_TACTICS]
-    techniques = _str_list(payload.get("techniques"))
-    severity = _normalise_severity(payload.get("severity"))
-    return tactics, techniques, severity, []
+def _sentinel_analytic_payload(payload: Mapping[str, Any]) -> _ReaderResult:
+    return (
+        _tactics(_str_list(payload.get("tactics"))),
+        _str_list(payload.get("techniques")) + _str_list(payload.get("subTechniques")),
+        _normalise_severity(payload.get("severity")),
+    )
 
 
-def _sentinel_hunting_payload(payload: dict[str, Any]) -> _ReaderResult:
-    """Hunting queries don't carry a severity; return ``None`` so the
-    caller falls through to the default.
-    """
-    tactics_raw = _str_list(payload.get("tactics"))
-    tactics = [t for t in tactics_raw if t in _CANONICAL_TACTICS]
-    techniques = _str_list(payload.get("techniques"))
-    return tactics, techniques, None, []
+def _sentinel_hunting_payload(payload: Mapping[str, Any]) -> _ReaderResult:
+    """Hunting queries carry no severity; the caller falls back to the default."""
+    return (
+        _tactics(_str_list(payload.get("tactics"))),
+        _str_list(payload.get("techniques")) + _str_list(payload.get("subTechniques")),
+        None,
+    )
 
 
 _PAYLOAD_READERS = {
@@ -237,54 +192,126 @@ _PAYLOAD_READERS = {
 }
 
 
+def _metadata_fields(
+    envelope: EnvelopeV2, raw_metadata: Mapping[str, Any] | None,
+) -> _ReaderResult:
+    """Tactics / techniques / severity from authored metadata.
+
+    Strict metadata (``envelope.metadata``) wins; otherwise the raw
+    mapping is read leniently -- each value is validated on its own, so
+    one bad field elsewhere in the block no longer discards the tags.
+    """
+    meta = envelope.metadata
+    if meta is not None:
+        return list(meta.tactics), list(meta.techniques), meta.severity
+    if not isinstance(raw_metadata, Mapping):
+        return [], [], None
+    return (
+        _tactics(_str_list(raw_metadata.get("tactics"))),
+        _str_list(raw_metadata.get("techniques")),
+        _normalise_severity(raw_metadata.get("severity")),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Top-level extractor
 # ---------------------------------------------------------------------------
 
 
-def extract_mitre(envelope: EnvelopeV2, payload: dict[str, Any]) -> ExtractedCoverage:
-    """Return the normalised coverage triple for one envelope.
+def extract_mitre(
+    envelope: EnvelopeV2,
+    payload: Mapping[str, Any] | None,
+    *,
+    raw_metadata: Mapping[str, Any] | None = None,
+    matrix: AttackMatrix | None = None,
+) -> ExtractedCoverage:
+    """Return the normalised ATT&CK attribution for one detection.
 
-    Combines two sources:
-
-    1. ``envelope.metadata`` (priority for severity; union for tactics
-       + techniques).
-    2. Asset-native payload reader (for the typical case where rich
-       metadata was never authored).
-
-    When both sources have data, tactics + techniques are unioned and
-    sorted; severity prefers the metadata value.
-
-    Returns an empty (but valid) :class:`ExtractedCoverage` if the
-    asset is not a detection kind or has no MITRE data anywhere.
+    Returns an empty :class:`ExtractedCoverage` for non-detection assets.
+    ``raw_metadata`` is the envelope's raw ``metadata`` mapping (only read
+    when strict metadata parsing failed); ``matrix`` defaults to the
+    bundled ATT&CK release.
     """
     reader = _PAYLOAD_READERS.get(envelope.asset)
     if reader is None:
         return ExtractedCoverage()
+    matrix = matrix or load_matrix()
 
-    payload_tactics, payload_techniques, payload_sev, orphans = reader(payload)
+    payload_tactics, payload_ids, payload_sev = reader(payload or {})
+    meta_tactics, meta_ids, meta_sev = _metadata_fields(envelope, raw_metadata)
 
-    meta_tactics: list[str] = []
-    meta_techniques: list[str] = []
-    meta_sev: "str | None" = None
-    if envelope.metadata is not None:
-        meta_tactics = list(envelope.metadata.tactics)
-        meta_techniques = list(envelope.metadata.techniques)
-        meta_sev = envelope.metadata.severity
+    display: list[str] = []
+    counted: list[str] = []
+    invalid: list[str] = []
+    unknown: list[str] = []
+    deprecated: list[str] = []
+    remapped: list[tuple[str, str]] = []
+    for raw_id in meta_ids + payload_ids:
+        tid = normalise_technique_id(raw_id)
+        if tid is None:
+            invalid.append(raw_id.strip())
+            continue
+        current, status = matrix.resolve(tid)
+        if status == "current":
+            counted.append(tid)
+            display.append(tid)
+        elif status == "revoked" and current is not None:
+            remapped.append((tid, current))
+            counted.append(current)
+            display.append(current)
+        elif status == "deprecated":
+            deprecated.append(tid)
+            display.append(tid)
+        else:
+            unknown.append(tid)
+            display.append(tid)
+    counted = sorted(set(counted))
 
-    merged_tactics = tuple(sorted(set(meta_tactics + payload_tactics)))
-    merged_techniques = tuple(sorted(set(meta_techniques + payload_techniques)))
-    severity = meta_sev or payload_sev or _DEFAULT_SEVERITY
+    tactics = _dedupe(meta_tactics + payload_tactics)
+    inferred = False
+    if not tactics and counted:
+        tactics = _dedupe(t for tid in counted for t in matrix.tactics_for(tid))
+        inferred = True
+    tactics = sorted(tactics)
+
+    tactic_techniques = tuple(
+        (tactic, tuple(t for t in counted if tactic in matrix.tactics_for(t)))
+        for tactic in tactics
+    )
+    attributed = {t for _, techniques in tactic_techniques for t in techniques}
 
     return ExtractedCoverage(
-        tactics=merged_tactics,
-        techniques=merged_techniques,
-        severity=severity,
-        techniques_without_tactic=tuple(orphans),
+        tactics=tuple(tactics),
+        techniques=tuple(sorted(set(display))),
+        severity=meta_sev or payload_sev or _DEFAULT_SEVERITY,
+        techniques_without_tactic=tuple(sorted(set(display) - attributed)),
+        counted_techniques=tuple(counted),
+        tactic_techniques=tactic_techniques,
+        invalid_ids=tuple(_dedupe(invalid)),
+        unknown_ids=tuple(sorted(set(unknown))),
+        deprecated_ids=tuple(sorted(set(deprecated))),
+        remapped_ids=tuple(sorted(set(remapped))),
+        tactics_inferred=inferred,
+    )
+
+
+def extract_mitre_for(
+    loaded: "LoadedAsset", *, matrix: AttackMatrix | None = None,
+) -> ExtractedCoverage:
+    """:func:`extract_mitre` for a loaded asset, passing its raw
+    ``metadata`` block so tags survive a failed strict parse."""
+    raw = getattr(loaded, "raw", None)
+    raw = raw if isinstance(raw, Mapping) else {}
+    raw_metadata = raw.get("metadata")
+    return extract_mitre(
+        loaded.envelope, loaded.payload,
+        raw_metadata=raw_metadata if isinstance(raw_metadata, Mapping) else None,
+        matrix=matrix,
     )
 
 
 __all__ = [
     "ExtractedCoverage",
     "extract_mitre",
+    "extract_mitre_for",
 ]

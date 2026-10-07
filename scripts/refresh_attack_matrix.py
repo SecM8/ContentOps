@@ -18,10 +18,21 @@ The bundled output carries three flat tables:
 * ``techniques`` — parent techniques (~200): id, name, tactics
 * ``sub_techniques`` — sub-techniques (~470): id, name, parent_id, tactics
 
+plus the metadata coverage needs to stay honest across ATT&CK releases:
+
+* ``attack_version`` — the Enterprise collection's ``x_mitre_version``
+  (e.g. ``"19.2"``), used for the Navigator layer and snapshot deltas.
+* ``revoked`` — ``{old_id: current_id}``, built from MITRE's
+  ``revoked-by`` relationships with chains resolved transitively, so a
+  detection still tagged with a retired ID (e.g. T1562.001) is credited
+  to its replacement instead of silently scoring zero.
+* ``deprecated`` — retired IDs with no replacement (reported, never
+  counted).
+
 Tactic identifiers are canonical PascalCase (``DefenseEvasion``,
 ``CommandAndControl``, ...) so they match ``coverage.report.ALL_TACTICS``
 and ``coverage.extract._CANONICAL_TACTICS``; a CI test
-(``tests/v2/test_coverage_gaps.py``) asserts the committed file never
+(``tests/v2/test_attack_matrix_data.py``) asserts the committed file never
 drifts off the canonical set.
 
 Cadence: ``.github/workflows/attack-matrix-refresh.yml`` runs this weekly
@@ -168,13 +179,82 @@ def extract(bundle: dict) -> dict:
     parents.sort(key=lambda t: t["id"])
     subs.sort(key=lambda t: t["id"])
 
+    current_ids = {t["id"] for t in parents} | {t["id"] for t in subs}
+    revoked, deprecated = _retired_ids(bundle, current_ids)
+
     return {
         "source": "https://github.com/mitre-attack/attack-stix-data enterprise-attack",
-        "schema_version": 2,
+        "schema_version": 3,
+        "attack_version": _collection_version(bundle),
         "tactics": tactics,
         "techniques": parents,
         "sub_techniques": subs,
+        "revoked": revoked,
+        "deprecated": deprecated,
     }
+
+
+def _collection_version(bundle: dict) -> str:
+    """The Enterprise collection's ``x_mitre_version`` (e.g. ``"19.2"``)."""
+    for obj in bundle.get("objects", []) or []:
+        if obj.get("type") == "x-mitre-collection":
+            version = obj.get("x_mitre_version")
+            if isinstance(version, str) and version:
+                return version
+    return ""
+
+
+def _retired_ids(bundle: dict, current_ids: set[str]) -> tuple[dict[str, str], list[str]]:
+    """Return ``({revoked_id: current_id}, deprecated_ids)``.
+
+    MITRE marks a replaced technique ``revoked: true`` and links it to its
+    replacement with a ``revoked-by`` relationship. A replacement can itself
+    be revoked later (T1150 -> T1547.011 -> ...), so chains are followed
+    until they reach a current technique. A chain that ends in a deprecated
+    technique, an unknown object, or a cycle has no usable replacement and
+    is listed under ``deprecated`` instead, together with techniques
+    deprecated outright (``x_mitre_deprecated: true``).
+    """
+    objects = bundle.get("objects", []) or []
+    by_stix_id = {obj["id"]: obj for obj in objects if isinstance(obj.get("id"), str)}
+
+    retired: set[str] = set()
+    for obj in objects:
+        if obj.get("type") != "attack-pattern":
+            continue
+        tid = _technique_id(obj)
+        if tid and tid not in current_ids and (
+            obj.get("revoked") is True or obj.get("x_mitre_deprecated") is True
+        ):
+            retired.add(tid)
+
+    edges: dict[str, str] = {}
+    for obj in objects:
+        if obj.get("type") != "relationship" or obj.get("relationship_type") != "revoked-by":
+            continue
+        if obj.get("revoked") is True or obj.get("x_mitre_deprecated") is True:
+            continue
+        source = by_stix_id.get(obj.get("source_ref", ""))
+        target = by_stix_id.get(obj.get("target_ref", ""))
+        if not source or not target:
+            continue
+        if source.get("type") != "attack-pattern" or target.get("type") != "attack-pattern":
+            continue
+        old_id, new_id = _technique_id(source), _technique_id(target)
+        if old_id and new_id and old_id != new_id and old_id not in current_ids:
+            edges[old_id] = new_id
+
+    revoked: dict[str, str] = {}
+    for old_id in sorted(edges):
+        seen = {old_id}
+        target_id = edges[old_id]
+        while target_id not in current_ids and target_id in edges and target_id not in seen:
+            seen.add(target_id)
+            target_id = edges[target_id]
+        if target_id in current_ids:
+            revoked[old_id] = target_id
+    deprecated = sorted(retired - set(revoked))
+    return dict(sorted(revoked.items())), deprecated
 
 
 def main() -> int:
@@ -186,9 +266,12 @@ def main() -> int:
         encoding="utf-8",
     )
     counts = (
+        f"ATT&CK v{extracted['attack_version'] or '?'}: "
         f"{len(extracted['tactics'])} tactics, "
         f"{len(extracted['techniques'])} techniques, "
-        f"{len(extracted['sub_techniques'])} sub-techniques"
+        f"{len(extracted['sub_techniques'])} sub-techniques, "
+        f"{len(extracted['revoked'])} revoked (remapped), "
+        f"{len(extracted['deprecated'])} deprecated"
     )
     print(f"wrote {OUT_PATH}: {counts}", file=sys.stderr)
     return 0

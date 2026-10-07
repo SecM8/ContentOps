@@ -18,6 +18,7 @@ import httpx
 from contentops.config import SentinelConfig
 from contentops.utils.http_retry import paginate, request_with_retry
 from contentops.utils.token_auth import BearerTokenAuth
+from contentops.utils.url_path import safe_path_segment
 
 logger = logging.getLogger(__name__)
 
@@ -112,24 +113,33 @@ class SentinelArmProvider:
 
         Used for `savedSearches` (hunting queries). The default
         api-version is the latest stable savedSearches version.
+        ``name`` comes from YAML, so it is validated and encoded as a
+        single path segment (see :func:`safe_path_segment`).
         """
         path = f"{self._la_workspace_path}/{resource_type}"
         if name:
-            path = f"{path}/{name}"
+            path = f"{path}/{safe_path_segment(name, kind=f'{resource_type} name')}"
         return f"{path}?api-version={api_version}"
 
     def resource_url(self, resource_type: str, name: str | None = None,
-                     *, api_version: str = API_VERSION) -> str:
+                     *, api_version: str = API_VERSION,
+                     child: str | None = None) -> str:
         """Build a fully-qualified URL for a Sentinel sub-resource.
+
+        ``resource_type`` and ``child`` are code constants; ``name`` comes
+        from YAML or a remote listing, so it is validated and encoded as a
+        single path segment (see :func:`safe_path_segment`).
 
         Example:
             resource_url("alertRules", "abc-123")
             resource_url("watchlists", "high-value-assets")
-            resource_url("watchlists/high-value-assets/watchlistItems")
+            resource_url("watchlists", "high-value-assets", child="watchlistItems")
         """
         path = f"{self._workspace_path}/{resource_type}"
         if name:
-            path = f"{path}/{name}"
+            path = f"{path}/{safe_path_segment(name, kind=f'{resource_type} name')}"
+        if child:
+            path = f"{path}/{child}"
         return f"{path}?api-version={api_version}"
 
     def subscription_resource_url(
@@ -155,7 +165,7 @@ class SentinelArmProvider:
             f"/providers/{rp_namespace}/{resource_type}"
         )
         if name:
-            path = f"{path}/{name}"
+            path = f"{path}/{safe_path_segment(name, kind=f'{resource_type} name')}"
         return f"{path}?api-version={api_version}"
 
     def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
@@ -189,6 +199,7 @@ class SentinelArmProvider:
             lambda u: self.request("GET", u),
             self.resource_url(resource_type),
             next_link_key="nextLink",
+            base_url=ARM_BASE_URL,
         )
 
     def get_resource(self, resource_type: str, name: str) -> dict | None:

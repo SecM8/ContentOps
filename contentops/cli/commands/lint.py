@@ -61,10 +61,11 @@ def lint_cmd(
 ) -> None:
     """Run pure-Python KQL lint checks across all detections.
 
-    The full set of rules (KQL00x, META00x, PAYLOAD00x) is documented
-    in docs/reference/generated-catalog.md, which is auto-regenerated
-    from the live rule registry. Use that as the canonical source of
-    truth -- this command's help shows option flags, not rule details.
+    The full set of rules (ENVELOPE001, KQL00x, META00x, PAYLOAD00x)
+    is documented in docs/reference/generated-catalog.md, which is
+    auto-regenerated from the live rule registry. Use that as the
+    canonical source of truth -- this command's help shows option
+    flags, not rule details.
     """
     asset_filter = Asset(asset) if asset else None
 

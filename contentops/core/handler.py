@@ -16,11 +16,19 @@ from contentops.core.result import ActionResult
 
 @dataclass
 class LoadedAsset:
-    """A parsed asset file ready for plan/apply."""
+    """A parsed asset file ready for plan/apply.
+
+    ``raw`` is the whole YAML document as loaded (``payload`` is the same
+    object as ``raw["payload"]``). It lets readers recover authored fields
+    the strict envelope model dropped -- e.g. ATT&CK tags in a metadata
+    block that failed strict validation. ``None`` when the asset was built
+    in memory.
+    """
 
     path: Path
     envelope: EnvelopeV2
     payload: dict[str, Any]
+    raw: dict[str, Any] | None = None
 
 
 @runtime_checkable

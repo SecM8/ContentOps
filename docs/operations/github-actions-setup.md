@@ -90,9 +90,9 @@ optional and orthogonal to the wiring.
 
 | Environment | Required by | What runs there |
 |---|---|---|
-| `production` | `deploy.yml`, `integration.yml` (the live-tenant integration test) | Apply detection content to production Sentinel workspaces; live-tenant integration test suite. The most-protected environment. |
-| `integration` | `integration-deploy.yml`, `promote-to-integration.yml` | Apply content to your integration workspace as a PR-time smoke test; copy prod state into integration for parity testing. Skip if you don't have a separate integration workspace. |
-| `automation` | `drift.yml`, `defender-graph-probe.yml`, `silent-rules.yml`, `kql-schemas-refresh.yml` | Read-only cron workflows (drift detection, Defender Graph endpoint probing, silent-rule reporting). Separated from `production` so deploy protections don't slow down nightly automation. |
+| `production` | `deploy.yml` | Apply detection content to production Sentinel workspaces. The most-protected environment. |
+| `integration` | `integration-deploy.yml` (PR-time), `integration.yml` (live test suite, PR label `run-integration` or manual), `promote-to-integration.yml`, `e2e-capability-tests.yml` (live mode) | Apply content to your integration workspace as a PR-time smoke test; run the live-tenant integration tests; copy prod state into integration for parity testing. Skip if you don't have a separate integration workspace. |
+| `automation` | `drift.yml` (incl. the PR-time `drift-pr` job), `tuning-impact-preview.yml` (PR-time), `defender-graph-probe.yml`, `silent-rules.yml`, `kql-schemas-refresh.yml` | Read-only workflows (drift detection, suppression blast-radius preview, Defender Graph endpoint probing, silent-rule reporting). Separated from `production` so deploy protections don't slow down nightly automation. |
 | `conformance` (optional) | `conformance.yml` (write-identity leg) | Where `contentops conformance` authenticates **as the write identity** to verify its grants. Only needed if you run the dual-identity conformance check (the read leg runs on `automation`). |
 | `dev` (optional) | `prune.yml`, `retry-failed.yml` (when invoked with `--env dev`) | If you have a dev tenant workspace, scope dev-targeted runs here. Skip if you don't. |
 
@@ -114,9 +114,25 @@ These are recommendations, not requirements:
 
 | Setting | `production` | `integration` | `automation` |
 |---|---|---|---|
-| Required reviewers | At least 1 (gates manual `workflow_dispatch` of `deploy.yml`) | 0 (PR-time smoke test, automated) | 0 (cron, read-only) |
+| Required reviewers | At least 1 (gates manual `workflow_dispatch` of `deploy.yml`) | 0 for a fully automatic PR smoke test, **or** 1+ with *Prevent self-review* if not every writer should hold the integration identity (see below) | 0 (read-only) |
 | Wait timer | 0 | 0 | 0 |
-| Deployment branch policy | Only `main` | `main` + any branch (PRs need it too) | Only `main` |
+| Deployment branch policy | Only `main` | `main` + PR refs (`refs/pull/*/merge`) | `main` + PR refs (`refs/pull/*/merge`) — `drift-pr` and `tuning-impact-preview` run on PRs |
+
+**PR jobs run the PR's own code.** A pull-request job runs with the
+identity of its environment, and it runs before review. So anyone who
+can push a branch to this repository can act as that identity. Forks
+are excluded: they get no OIDC token, and every credentialed PR job
+skips them. Keep these identities small:
+
+- **`integration`:** use a dedicated App Registration whose RBAC covers
+  only the integration workspace's resource group, not the production
+  write identity. If that is not possible, require a reviewer on the
+  environment.
+- **`automation`:** use the **read** App Registration (see the split
+  note above).
+
+[`SECURITY.md`](../../SECURITY.md#ci-trust-model-for-pull-requests)
+has the full trust model.
 
 ## 4. Federated credentials on the App Registration
 

@@ -291,3 +291,78 @@ def test_prune_ignores_malformed_date_stems(tmp_path: Path) -> None:
     (tmp_path / "2026-13-99.json").write_text("{}", encoding="utf-8")
     assert prune_dated_snapshots(tmp_path, retention_days=1) == 0
     assert (tmp_path / "2026-13-99.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Review finding: snapshot deltas compared covered counts across ATT&CK
+# releases, so a weekly MITRE refresh could read as a coverage regression.
+# ---------------------------------------------------------------------------
+
+
+def _versioned(**over) -> ReportSummary:
+    return _summary(attack_version="19.2",
+                    coverage_scope="enabled production detections (hunting queries excluded)",
+                    in_scope_detections=1, **over)
+
+
+def test_snapshot_records_attack_version_scope_and_in_scope_rules() -> None:
+    snap = json.loads(render_snapshot(
+        [_row("rule-a"), _row("rule-b", in_coverage_scope=False)], _versioned(),
+    ))
+    assert snap["schema_version"] == 2
+    assert snap["summary"]["attack_version"] == "19.2"
+    assert snap["summary"]["coverage_scope"].startswith("enabled production")
+    assert {r["rule_id"]: r["in_scope"] for r in snap["rules"]} == {
+        "rule-a": True, "rule-b": False,
+    }
+
+
+def test_matrix_version_change_suppresses_coverage_deltas() -> None:
+    prev = json.loads(render_snapshot(
+        [_row("rule-a")], _summary(attack_version="18.1", coverage_covered=60),
+    ))
+    delta = compute_delta(
+        prev, [_row("rule-a", techniques=("T1190",))],
+        _summary(attack_version="19.2", coverage_covered=40),
+    )
+    assert delta.coverage_comparable is False
+    assert delta.coverage_techniques_delta == 0
+    assert delta.new_techniques == ()
+    assert "v18.1 -> v19.2" in delta.coverage_note
+
+
+def test_scope_change_suppresses_coverage_deltas() -> None:
+    prev = json.loads(render_snapshot([_row("rule-a")], _summary()))
+    delta = compute_delta(prev, [_row("rule-a")], _versioned(coverage_covered=10))
+    assert delta.coverage_comparable is False
+    assert delta.coverage_techniques_delta == 0
+
+
+def test_same_release_and_scope_keeps_coverage_deltas() -> None:
+    prev = json.loads(render_snapshot([_row("rule-a")], _versioned(coverage_covered=40)))
+    delta = compute_delta(
+        prev, [_row("rule-a"), _row("rule-b", techniques=("T1190",))],
+        _versioned(coverage_covered=41, total=2),
+    )
+    assert delta.coverage_comparable is True
+    assert delta.coverage_techniques_delta == 1
+    assert delta.new_techniques == ("T1190",)
+
+
+def test_out_of_scope_rules_do_not_feed_new_techniques() -> None:
+    prev = json.loads(render_snapshot([_row("rule-a")], _versioned()))
+    delta = compute_delta(
+        prev, [_row("rule-a"), _row("rule-x", techniques=("T1486",), in_coverage_scope=False)],
+        _versioned(total=2),
+    )
+    assert delta.new_techniques == ()
+    assert delta.new_rule_ids == ("rule-x",)
+
+
+def test_html_delta_phrase_explains_a_non_comparable_run() -> None:
+    from contentops.report import render_html
+
+    prev = json.loads(render_snapshot([_row("rule-a")], _summary(attack_version="18.1")))
+    delta = compute_delta(prev, [_row("rule-a")], _summary(attack_version="19.2"))
+    html = render_html([_row("rule-a")], _summary(attack_version="19.2"), delta=delta)
+    assert "ATT&amp;CK matrix changed (v18.1 -&gt; v19.2)" in html

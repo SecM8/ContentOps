@@ -205,6 +205,44 @@ class TestDetectionAlertMapping:
         matched, _ = _build_detection_alert_map([det], [alert])
         assert "det-1" in matched
 
+    def test_authored_rule_matches_by_envelope_id(self) -> None:
+        """An authored rule (no arm_name) deploys under its envelope id;
+        its alerts carry it as "<workspace>_<id>" or in an ARM id."""
+        det = _make_detection(id="brute-force", arm_name=None, display_name="Brute Force")
+        alerts = [
+            _make_alert(id="a1", title="Brute Force from 10.0.0.1", source="sentinel",
+                        rule_id="0b3c1f2e-1111-4a2b-9c3d-abcdefabcdef_brute-force"),
+            _make_alert(id="a2", title="renamed", source="sentinel",
+                        rule_id="/subscriptions/s/providers/Microsoft.SecurityInsights"
+                                "/alertRules/Brute-Force"),
+        ]
+        matched, unmatched = _build_detection_alert_map([det], alerts)
+        assert [a.id for a in matched["brute-force"]] == ["a1", "a2"]
+        assert unmatched == 0
+
+    def test_workspace_prefixed_alert_type_with_underscores(self) -> None:
+        det = _make_detection(id="det-1", arm_name="my_rule_v2", display_name="Other")
+        alert = _make_alert(title="Unrelated title",
+                            rule_id="0b3c1f2e-1111-4a2b-9c3d-abcdefabcdef_my_rule_v2")
+        matched, _ = _build_detection_alert_map([det], [alert])
+        assert "det-1" in matched
+
+    def test_defender_alert_title_matches(self) -> None:
+        det = _make_detection(
+            id="lsass", arm_name=None, display_name="LSASS dump",
+            asset=Asset.DEFENDER_CUSTOM_DETECTION,
+        )
+        det = LoadedAsset(
+            path=det.path, envelope=det.envelope,
+            payload={**det.payload, "detectionAction": {
+                "alertTemplate": {"title": "Credential dumping via LSASS"},
+            }},
+        )
+        alert = _make_alert(title="Credential dumping via LSASS")
+        matched, unmatched = _build_detection_alert_map([det], [alert])
+        assert "lsass" in matched
+        assert unmatched == 0
+
     def test_short_substring_no_match(self) -> None:
         det = _make_detection(id="det-1", display_name="Test")
         alert = _make_alert(title="Testing something entirely different")
@@ -491,6 +529,9 @@ class TestEnrichWithAlerts:
         assert result[0].alerts_30d == 50
         assert result[0].true_positives_30d == 40
         assert result[0].false_positives_30d == 5
+        # The report's one definition: FP / classified TP + FP + BP
+        # (5 / 45), not the health row's FP share of all 50 alerts.
+        assert result[0].fp_rate == 0.111
 
     def test_adds_new_fields(self) -> None:
         from contentops.report.assemble import ReportRow
@@ -692,3 +733,24 @@ class TestHealthBadge:
         badge_text = render_health_badge(report)
         badge = json.loads(badge_text)
         assert badge["color"] == "red"
+
+
+def test_defender_techniques_come_from_the_alert_template() -> None:
+    """The health rows used metadata, else payload.techniques -- which
+    Defender payloads don't have -- so Defender rules showed no ATT&CK
+    techniques. They now go through the shared coverage extractor."""
+    from pathlib import Path
+
+    from contentops.alerts.detection_health import _extract_techniques
+    from contentops.core.asset import Asset
+    from contentops.core.envelope import EnvelopeV2
+    from contentops.core.handler import LoadedAsset
+
+    env = EnvelopeV2(id="def-rule", version="1.0.0",
+                     asset=Asset.DEFENDER_CUSTOM_DETECTION, status="production")
+    payload = {"displayName": "D", "detectionAction": {"alertTemplate": {
+        "mitreTechniques": ["t1059.001", "T1562.001"], "category": "Execution",
+    }}}
+    techniques = _extract_techniques(LoadedAsset(path=Path("d.yml"), envelope=env,
+                                                 payload=payload))
+    assert techniques == ("T1059.001", "T1685")

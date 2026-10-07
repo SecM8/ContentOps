@@ -671,8 +671,9 @@ def lifecycle_promote_cmd(
         errors, including a failed credential or workspace lookup
         (use --force or --no-workspace-query to bypass).
       * fp_rate_threshold - live when a workspace is set and
-        --no-workspace-query is unset. Compares closed_fp_30d /
-        incidents_30d against config/lifecycle.yml's
+        --no-workspace-query is unset. Compares the FP rate (incidents
+        closed FalsePositive / closed TP + FP + BP; open and
+        Undetermined incidents left out) against config/lifecycle.yml's
         fp_rate_threshold (default 0.5). Fail-closed on workspace
         errors (use --force or --no-workspace-query to bypass).
     """

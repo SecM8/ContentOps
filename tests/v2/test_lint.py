@@ -259,3 +259,84 @@ def test_lint_cmd_skips_kql_checks_for_assets_without_kql_field(
     assert "KQL00" not in result.output
     assert "KQL10" not in result.output
     assert "KQL01" not in result.output
+
+
+# ENVELOPE001 --------------------------------------------------------------
+
+
+def _lint(path: Path, *args: str):
+    return CliRunner().invoke(cli, ["lint", "--path", str(path), *args])
+
+
+def _findings_by_file(output: str) -> dict[str, list[str]]:
+    by_file: dict[str, list[str]] = {}
+    current = ""
+    for line in output.splitlines():
+        if line.startswith("  ") and current:
+            by_file[current].append(line.strip())
+        elif line.endswith(".yml"):
+            current = Path(line).name
+            by_file[current] = []
+    return by_file
+
+
+def test_envelope001_reports_files_that_do_not_load(tmp_path: Path) -> None:
+    """plan / apply echo "load error" and skip a file that doesn't load;
+    lint used to skip it silently, so it passed CI and never deployed."""
+    d = tmp_path / "detections"
+    d.mkdir()
+    (d / "yaml.yml").write_text("id: x\nasset: [sentinel_analytic\n")
+    (d / "empty.yml").write_text("")
+    (d / "missing.yml").write_text(GOOD_V2_HUNTING.replace("status: production\n", ""))
+    (d / "bad-id.yml").write_text(GOOD_V2_HUNTING.replace("lint-good-hunting", "Not_Valid"))
+    (d / "bad-meta.yml").write_text(
+        GOOD_V2_HUNTING.replace("severity: low", "severity: catastrophic"),
+    )
+    (d / "good.yml").write_text(GOOD_V2_HUNTING)
+
+    result = _lint(d)
+    assert result.exit_code == 1, result.output
+    found = _findings_by_file(result.output)
+    for name, expected in {
+        "yaml.yml": "Envelope does not load (YAML does not parse: expected ',' or ']'",
+        "empty.yml": "Envelope does not load (envelope is empty or not a YAML mapping)",
+        "missing.yml": "Envelope does not load (missing required key 'status')",
+        "bad-id.yml": "Envelope does not load (id: String should match pattern",
+        "bad-meta.yml": "Envelope does not load (metadata.severity: Input should be",
+    }.items():
+        [finding] = found[name]
+        assert finding.startswith("ENVELOPE001 error"), finding
+        assert expected in finding, finding
+        assert finding.endswith("plan and apply skip this file."), finding
+    assert "line 3" in found["yaml.yml"][0]
+    assert not any(f.startswith("ENVELOPE001") for f in found.get("good.yml", []))
+    assert "6 files scanned" in result.output
+
+
+def test_envelope001_asset_filter_skips_only_other_kinds(tmp_path: Path) -> None:
+    """``lint --asset X`` leaves a broken file of another kind to that
+    kind's run, but still reports one whose kind can't be read."""
+    d = tmp_path / "detections"
+    d.mkdir()
+    (d / "hunting.yml").write_text(GOOD_V2_HUNTING.replace("status: production\n", ""))
+    (d / "unreadable.yml").write_text("asset: [sentinel_analytic\n")
+    (d / "no-kind.yml").write_text("id: x\n")
+
+    analytic = _findings_by_file(_lint(d, "--asset", "sentinel_analytic").output)
+    assert set(analytic) == {"unreadable.yml", "no-kind.yml"}
+    hunting = _lint(d, "--asset", "sentinel_hunting")
+    assert hunting.exit_code == 1
+    assert set(_findings_by_file(hunting.output)) == {
+        "hunting.yml", "unreadable.yml", "no-kind.yml",
+    }
+
+
+def test_envelope001_with_strict_mode(tmp_path: Path) -> None:
+    """--strict re-loads each linted file for the wrapper; a file that
+    doesn't load keeps its ENVELOPE001 and nothing crashes."""
+    d = tmp_path / "detections"
+    d.mkdir()
+    (d / "empty.yml").write_text("")
+    result = _lint(d, "--strict")
+    assert result.exit_code == 1, result.output
+    assert "ENVELOPE001" in result.output

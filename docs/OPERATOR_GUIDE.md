@@ -450,9 +450,13 @@ to alert. No deploy in flight; rule status is `production` in git.
         is wrong, that's your lead.
 
 2.  contentops silent-rules --since 30
-    └─► one-shot list of rules with zero SecurityAlert hits in the
-        lookback window. If your rule is on the list, it's a *real*
-        silent rule, not a deploy/drift problem.
+    └─► every enabled rule the workspace deploys, with its alert +
+        incident counts over the lookback window, summed over its
+        rule keys: ``id:<rule>`` (the name it deploys under: arm_name,
+        else the envelope id) and ``name:<display name>``. A rule
+        marked silent (no alert and no incident) is a *real* silent
+        rule, not a deploy/drift problem. --include-unmatched also
+        lists telemetry no repo rule claimed.
 
 3.  contentops drift --asset sentinel_analytic --diff
     └─► look for the rule in the CHANGED list. If a portal-side

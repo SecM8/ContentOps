@@ -4,8 +4,8 @@
 """``contentops auto-disabled-rules`` command (NVISO Part 7).
 
 Surfaces alert rules that Sentinel itself has disabled — distinct from
-``silent-rules``, which finds rules that simply produced no alerts.
-A disabled rule means the platform stepped in (consecutive query
+``silent-rules``, which finds rules that simply produced no alerts or
+incidents. A disabled rule means the platform stepped in (consecutive query
 failures, ingest schema break, deprecated table reference); a silent
 rule may just be waiting for the right behaviour to trigger.
 

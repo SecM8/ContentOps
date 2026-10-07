@@ -5,10 +5,10 @@ name: Tuning impact preview
 # suppression would have silenced. Turns "trust me" reviews into
 # data-backed reviews.
 #
-# Fork-PR caveat: GitHub's OIDC token is unavailable on PRs from
-# forks, so the workspace query branch only runs for base-repo PRs.
-# Fork PRs still get a comment but with '—' counts — same precedent
-# as drift-pr / validate.yml.
+# Same-repo PRs only: the job runs the PR's own code with the
+# `automation` identity. Fork PRs get neither an OIDC token nor secrets,
+# so the job is skipped for them (job-level guard below) before any PR
+# code is installed. See SECURITY.md "CI trust model".
 
 on:
   pull_request:
@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: automation
@@ -52,38 +53,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt && pip install -e .
 
-      - name: Detect fork PR (OIDC unavailable)
-        id: forkcheck
-        env:
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-        run: |
-          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
-            echo "is_fork=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Fork PR — OIDC token unavailable, skipping workspace query."
-          else
-            echo "is_fork=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Azure login (base-repo PRs only)
-        if: steps.forkcheck.outputs.is_fork != 'true'
+      - name: Azure login
         uses: ./.github/actions/pipeline-setup
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          # Keep the full history from the checkout above: the preview
+          # diffs drift_suppressions.yml against the base ref.
+          fetch-depth: '0'
 
       - name: Render impact preview
         env:
           BASE_REF: origin/${{ github.event.pull_request.base.ref }}
-          IS_FORK: ${{ steps.forkcheck.outputs.is_fork }}
         run: |
           set -euo pipefail
-          ARGS=( "preview" "--base-ref" "$BASE_REF" "--out" "tuning-preview.md" )
-          if [ "$IS_FORK" = "true" ]; then
-            ARGS+=( "--no-workspace-query" )
-          fi
-          contentops tuning "${ARGS[@]}"
+          contentops tuning preview --base-ref "$BASE_REF" --out tuning-preview.md
 
       - name: Post / update PR comment
         # actions/github-script@v8 — pinned per supply-chain policy.

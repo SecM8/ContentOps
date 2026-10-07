@@ -6,8 +6,9 @@
 Surfaces everything a Detection Engineer needs when paged about
 a misbehaving rule, in one shot:
 
-* YAML envelope summary (owner, runbook, severity, tactics, status,
-  path, locked).
+* YAML envelope summary (owner, runbook, severity, status, path,
+  locked) and the ATT&CK tags from metadata and payload, as coverage
+  reads them.
 * Dependencies (tables, watchlists, parsers, detections).
 * State snapshot (last applied at / by / sha, remote name).
 * Recent audit (last N records for this id).
@@ -61,8 +62,12 @@ class Explain:
     owner: str | None = None
     runbook_url: str | None = None
     severity: str | None = None
+    # ATT&CK from metadata *and* payload via the coverage extractor, so a
+    # collected rule (tags in the payload only) shows them too.
     tactics: list[str] = field(default_factory=list)
     techniques: list[str] = field(default_factory=list)
+    # Revoked / deprecated / unknown / malformed ids, inert Markdown.
+    attack_notes: list[str] = field(default_factory=list)
     expected_alerts_per_day: float | int | None = None
     fp_handling: str | None = None
     arm_name: str | None = None
@@ -244,6 +249,13 @@ def build_explain(
     drift = _drift_status(rule_id, drift_root)
     locked = _is_locked(la)
 
+    from contentops.coverage.extract import extract_mitre_for
+    from contentops.coverage.matrix import load_matrix
+    from contentops.coverage.report import rule_attack_notes
+
+    matrix = load_matrix()
+    attack = extract_mitre_for(la, matrix=matrix)
+
     metadata = la.envelope.metadata
     return Explain(
         found=True,
@@ -255,8 +267,9 @@ def build_explain(
         owner=getattr(metadata, "owner", None) if metadata else None,
         runbook_url=getattr(metadata, "runbookUrl", None) if metadata else None,
         severity=getattr(metadata, "severity", None) if metadata else None,
-        tactics=list(getattr(metadata, "tactics", []) or []) if metadata else [],
-        techniques=list(getattr(metadata, "techniques", []) or []) if metadata else [],
+        tactics=list(attack.tactics),
+        techniques=list(attack.techniques),
+        attack_notes=rule_attack_notes(attack, attack_version=matrix.attack_version),
         expected_alerts_per_day=(
             getattr(metadata, "expectedAlertsPerDay", None) if metadata else None
         ),
@@ -291,13 +304,16 @@ def render_markdown(e: Explain) -> str:
     if e.runbook_url:
         lines.append(f"Runbook:    {e.runbook_url}")
     if e.severity:
-        sev_extras = []
+        lines.append(f"Severity:   {e.severity}")
+    if e.tactics or e.techniques or e.attack_notes:
+        attack = []
         if e.tactics:
-            sev_extras.append(f"Tactics: {', '.join(e.tactics)}")
+            attack.append(f"Tactics: {', '.join(e.tactics)}")
         if e.techniques:
-            sev_extras.append(f"Techniques: {', '.join(e.techniques)}")
-        sev_extras_str = ("  •  " + "  •  ".join(sev_extras)) if sev_extras else ""
-        lines.append(f"Severity:   {e.severity}{sev_extras_str}")
+            attack.append(f"Techniques: {', '.join(e.techniques)}")
+        lines.append(f"ATT&CK:     {'  •  '.join(attack) or '(no valid tags)'}")
+        for note in e.attack_notes:
+            lines.append(f"            note: {note}")
     lines.append(f"Path:       {e.path}")
     if e.arm_name:
         lines.append(f"ARM name:   {e.arm_name}")

@@ -13,12 +13,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from contentops.coverage.matrix import load_matrix
 from contentops.navigator.extract import ScoredTechnique
 
-# Pinned to a known-good combination. The Navigator UI is permissive
-# about minor version drift; we surface these constants so callers
-# can override per-PR without touching this module.
-ATTACK_VERSION = "14"
+# Used only when the bundled matrix predates the recorded release.
+_FALLBACK_ATTACK_VERSION = "14"
+
+
+def default_attack_version() -> str:
+    """Major ATT&CK release of the bundled matrix (e.g. ``"19"``).
+
+    The layer must name the release its technique ids come from: the
+    matrix is refreshed weekly, and ids revoked since an older release
+    (T1562.x -> T1685 in v19) would otherwise point at the wrong tiles.
+    """
+    return load_matrix().attack_major or _FALLBACK_ATTACK_VERSION
+
+
+# Layer/Navigator schema versions are pinned to a known-good combination;
+# the ATT&CK version follows the bundled matrix.
+ATTACK_VERSION = default_attack_version()
 NAVIGATOR_LAYER_VERSION = "4.5"
 NAVIGATOR_TOOL_VERSION = "4.9.1"
 DOMAIN = "enterprise-attack"
@@ -37,9 +51,10 @@ def render_layer(
     *,
     name: str = "Microsoft Security Coverage",
     description: str = "MITRE ATT&CK coverage rendered by `contentops navigator`.",
-    attack_version: str = ATTACK_VERSION,
+    attack_version: str | None = None,
     layer_version: str = NAVIGATOR_LAYER_VERSION,
     tool_version: str = NAVIGATOR_TOOL_VERSION,
+    metadata: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Build the Navigator layer dict.
 
@@ -53,10 +68,10 @@ def render_layer(
     inputs.
     """
     max_score = max((t.score for t in techniques), default=0)
-    return {
+    layer: dict[str, Any] = {
         "name": name,
         "versions": {
-            "attack": attack_version,
+            "attack": attack_version or default_attack_version(),
             "layer": layer_version,
             "navigator": tool_version,
         },
@@ -102,11 +117,17 @@ def render_layer(
         ],
         "selectSubtechniquesWithParent": True,
     }
+    if metadata:
+        # Layer-level metadata (Navigator 4.x): shown in the layer's
+        # information panel, e.g. which detections the repo axis counted.
+        layer["metadata"] = [{"name": k, "value": v} for k, v in metadata]
+    return layer
 
 
 __all__ = [
     "ATTACK_VERSION",
     "DOMAIN",
+    "default_attack_version",
     "NAVIGATOR_LAYER_VERSION",
     "NAVIGATOR_TOOL_VERSION",
     "render_layer",

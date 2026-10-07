@@ -31,7 +31,10 @@ from contentops.report.assemble import ReportRow, ReportSummary
 logger = logging.getLogger(__name__)
 
 
-SCHEMA_VERSION = 1
+# v2 (2026-10): summary records the ATT&CK release + coverage scope and
+# each rule records whether it is in scope. Coverage deltas are only
+# computed between snapshots with the same version, scope and totals.
+SCHEMA_VERSION = 2
 
 
 def render_snapshot(rows: list[ReportRow], summary: ReportSummary) -> str:
@@ -57,6 +60,9 @@ def render_snapshot(rows: list[ReportRow], summary: ReportSummary) -> str:
                 summary.coverage_sub_techniques_covered,
             "coverage_sub_techniques_total":
                 summary.coverage_sub_techniques_total,
+            "attack_version": summary.attack_version,
+            "coverage_scope": summary.coverage_scope,
+            "in_scope_detections": summary.in_scope_detections,
         },
         "rules": sorted(
             [
@@ -67,6 +73,7 @@ def render_snapshot(rows: list[ReportRow], summary: ReportSummary) -> str:
                     "asset_kind": r.asset_kind,
                     "techniques": list(r.techniques),
                     "tactics": list(r.tactics),
+                    "in_scope": r.in_coverage_scope,
                     **({"alerts_30d": r.alerts_30d} if r.alerts_30d is not None else {}),
                     **({"fp_rate": r.fp_rate} if r.fp_rate is not None else {}),
                     **({"effectiveness_score": r.effectiveness_score} if r.effectiveness_score is not None else {}),
@@ -100,6 +107,11 @@ class ReportDelta:
     new_sub_techniques: tuple[str, ...] = field(default_factory=tuple)
     coverage_techniques_delta: int = 0
     coverage_sub_techniques_delta: int = 0
+    # False when the previous snapshot used another ATT&CK release, scope
+    # or matrix size: covered counts are then not comparable, the coverage
+    # deltas above are zero, and ``coverage_note`` says why.
+    coverage_comparable: bool = True
+    coverage_note: str = ""
 
 
 def load_snapshot(path: Path) -> dict | None:
@@ -204,6 +216,28 @@ def prune_dated_snapshots(reports_dir: Path, retention_days: int) -> int:
     return removed
 
 
+def _coverage_comparability(prev_summary: dict, current: ReportSummary) -> str:
+    """Return "" when covered counts are comparable, else the reason."""
+    prev_version = str(prev_summary.get("attack_version") or "")
+    if prev_version != (current.attack_version or ""):
+        before = f"v{prev_version}" if prev_version else "an unrecorded version"
+        after = f"v{current.attack_version}" if current.attack_version else "an unrecorded version"
+        return (
+            f"ATT&CK matrix changed ({before} -> {after}); coverage change "
+            "not comparable"
+        )
+    if str(prev_summary.get("coverage_scope") or "") != (current.coverage_scope or ""):
+        return "coverage scope changed; coverage change not comparable"
+    totals = (
+        ("coverage_techniques_total", current.coverage_total),
+        ("coverage_sub_techniques_total", current.coverage_sub_techniques_total),
+    )
+    for key, now in totals:
+        if int(prev_summary.get(key, 0) or 0) != now:
+            return "ATT&CK matrix size changed; coverage change not comparable"
+    return ""
+
+
 def compute_delta(
     previous: dict, current_rows: list[ReportRow],
     current_summary: ReportSummary,
@@ -214,15 +248,20 @@ def compute_delta(
 
     * Rules added (rule_ids in current, not in previous)
     * Rules removed (rule_ids in previous, not in current)
-    * Techniques newly covered (in current rule set, not in previous)
+    * Techniques newly covered (by in-scope rules, not covered before)
     * Sub-techniques newly covered
     * Counts delta per status
+
+    Coverage deltas are only computed when both snapshots used the same
+    ATT&CK release, coverage scope and matrix size; otherwise a weekly
+    MITRE refresh (or a scope change) would read as a coverage
+    regression, so they are zeroed and ``coverage_note`` explains why.
 
     ``previous`` is the dict from :func:`load_snapshot`; the function
     tolerates partial / older snapshots by treating missing fields
     as zero / empty.
     """
-    prev_summary = previous.get("summary", {})
+    prev_summary = previous.get("summary", {}) or {}
     prev_rules = previous.get("rules", []) or []
     prev_rule_ids: set[str] = {
         r["rule_id"] for r in prev_rules
@@ -231,7 +270,7 @@ def compute_delta(
     prev_techniques: set[str] = set()
     prev_sub_techniques: set[str] = set()
     for r in prev_rules:
-        if not isinstance(r, dict):
+        if not isinstance(r, dict) or r.get("in_scope", True) is False:
             continue
         for t in r.get("techniques", []) or []:
             if not isinstance(t, str):
@@ -245,6 +284,8 @@ def compute_delta(
     curr_techniques: set[str] = set()
     curr_sub_techniques: set[str] = set()
     for r in current_rows:
+        if not r.in_coverage_scope:
+            continue
         for t in r.techniques:
             parent = t.split(".", 1)[0]
             curr_techniques.add(parent)
@@ -256,6 +297,8 @@ def compute_delta(
     prev_generated = previous.get("generated_at") or ""
     previous_date = prev_generated[:10] if len(prev_generated) >= 10 else "unknown"
 
+    note = _coverage_comparability(prev_summary, current_summary)
+    comparable = not note
     return ReportDelta(
         previous_date=previous_date,
         total_delta=current_summary.total - int(prev_summary.get("total", 0)),
@@ -273,16 +316,22 @@ def compute_delta(
         ),
         new_rule_ids=tuple(sorted(curr_rule_ids - prev_rule_ids)),
         removed_rule_ids=tuple(sorted(prev_rule_ids - curr_rule_ids)),
-        new_techniques=tuple(sorted(curr_techniques - prev_techniques)),
-        new_sub_techniques=tuple(sorted(curr_sub_techniques - prev_sub_techniques)),
+        new_techniques=(
+            tuple(sorted(curr_techniques - prev_techniques)) if comparable else ()
+        ),
+        new_sub_techniques=(
+            tuple(sorted(curr_sub_techniques - prev_sub_techniques)) if comparable else ()
+        ),
         coverage_techniques_delta=(
             current_summary.coverage_covered
             - int(prev_summary.get("coverage_techniques_covered", 0))
-        ),
+        ) if comparable else 0,
         coverage_sub_techniques_delta=(
             current_summary.coverage_sub_techniques_covered
             - int(prev_summary.get("coverage_sub_techniques_covered", 0))
-        ),
+        ) if comparable else 0,
+        coverage_comparable=comparable,
+        coverage_note=note,
     )
 
 

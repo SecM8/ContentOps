@@ -385,7 +385,7 @@ contentops auto-disabled-rules --since 7
 Sentinel auto-disables rules after consecutive query failures (table
 gone, parser broken, ingest stopped). This command surfaces them
 from the `SentinelHealth` diagnostic table. Distinct from
-`contentops silent-rules` which finds rules with zero alerts —
+`contentops silent-rules` which finds rules with no alerts or incidents —
 silent ≠ disabled.
 
 > Prerequisite: the `SentinelHealth` diagnostic data collection must

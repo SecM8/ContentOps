@@ -46,7 +46,7 @@ def discover_assets(base: Path) -> list[Path]:
 def load_asset(path: Path) -> LoadedAsset:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     envelope, payload = parse_envelope(raw)
-    return LoadedAsset(path=path, envelope=envelope, payload=payload)
+    return LoadedAsset(path=path, envelope=envelope, payload=payload, raw=raw)
 
 
 def iter_loaded_assets(

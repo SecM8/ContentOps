@@ -328,9 +328,12 @@ def test_cli_gaps_prints_markdown_against_real_detections(tmp_path: Path) -> Non
     )
     assert result.exit_code == 0, result.output
     assert "MITRE ATT&CK Coverage Gaps" in result.output
-    # Empty tree → every reference technique is uncovered → totals match.
-    # (Don't hardcode the exact count — the bundled list may grow.)
-    assert "uncovered of " in result.output
+    # Empty tree → nothing covered. The headline counts distinct techniques
+    # and sub-techniques against the badge's denominators (review finding
+    # C9), not (tactic, technique) cells. Don't hardcode the totals.
+    assert "**0** of **" in result.output
+    assert "technique(s) covered" in result.output
+    assert "sub-technique(s)" in result.output
 
 
 def test_cli_gaps_with_custom_techniques_file(tmp_path: Path) -> None:

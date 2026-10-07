@@ -10,8 +10,7 @@ have silenced over the last 30 days. The calling workflow posts the
 output as a PR comment.
 
 Fork-PR caveat: GitHub's OIDC token is unavailable on PRs from forks,
-so the calling workflow exits early for fork PRs and only the
-base-repo PR path actually runs this command. See
+so the calling workflow's job only runs for same-repository PRs. See
 ``.github/workflows/tuning-impact-preview.yml``.
 """
 
@@ -87,8 +86,10 @@ def tuning_preview_cmd(
     out: Path | None, no_workspace_query: bool,
 ) -> None:
     """Estimate the blast-radius of new drift suppressions in this PR."""
+    from contentops.rule_keys import RuleKeys
     from contentops.tuning import (
-        new_suppressions, render_report, resolve_display_name,
+        impact_by_entry, new_suppressions, render_report,
+        resolve_display_name, resolve_rule_keys,
     )
 
     head_text = (
@@ -98,25 +99,30 @@ def tuning_preview_cmd(
     base_text = _git_show(base_ref, str(suppressions_path).replace("\\", "/"))
     entries = new_suppressions(head_text, base_text)
 
-    repo_root = Path.cwd()
+    detections_root = Path.cwd() / "detections"
     name_lookup: dict[tuple[str, str], str | None] = {}
+    keys_lookup: dict[tuple[str, str], RuleKeys] = {}
     for e in entries:
         name_lookup[(e.asset, e.id)] = resolve_display_name(
-            repo_root / "detections", e.asset, e.id,
+            detections_root, e.asset, e.id,
         )
+        keys = resolve_rule_keys(detections_root, e.asset, e.id)
+        if keys is not None:
+            keys_lookup[(e.asset, e.id)] = keys
 
-    impact_rows: dict[str, dict[str, int]] | None
+    impact_rows: dict[tuple[str, str], dict[str, int]] | None
     if no_workspace_query or not entries:
         impact_rows = None if no_workspace_query else {}
     else:
-        names = sorted({n for n in name_lookup.values() if n})
-        if not names:
+        rule_keys = sorted({k for keys in keys_lookup.values() for k in keys.candidates()})
+        if not rule_keys:
             impact_rows = {}
         else:
-            impact_rows = _run_impact_query(
-                names, workspace_id=workspace_id, role=role,
+            counts = _run_impact_query(
+                rule_keys, workspace_id=workspace_id, role=role,
                 since_days=since_days,
             )
+            impact_rows = None if counts is None else impact_by_entry(keys_lookup, counts)
 
     body = render_report(
         entries, impact_rows,
@@ -132,10 +138,10 @@ def tuning_preview_cmd(
 
 
 def _run_impact_query(
-    rule_names: list[str], *,
+    rule_keys: list[str], *,
     workspace_id: str | None, role: str, since_days: int,
 ) -> dict[str, dict[str, int]] | None:
-    """Run the LA query and return {displayName: {alerts_count, incidents_count}}.
+    """Run the LA query and return {match_key: {alerts_count, incidents_count}}.
 
     Returns ``None`` on any auth/query failure — the caller renders '—'
     in that case rather than failing the PR. The workflow shouldn't
@@ -153,7 +159,7 @@ def _run_impact_query(
             workspace_id = resolve_workspace_id(role=role, credential=cred)
         token = cred.get_token(LA_SCOPE).token
         result = query(
-            suppression_impact_query(rule_names=rule_names, since_days=since_days),
+            suppression_impact_query(rule_keys=rule_keys, since_days=since_days),
             workspace_id=workspace_id, token=token,
         )
     except (WorkspaceKqlError, Exception) as exc:
@@ -162,10 +168,10 @@ def _run_impact_query(
 
     out: dict[str, dict[str, int]] = {}
     for row in result.rows:
-        name = str(row.get("rule_name") or "")
-        if not name:
+        key = str(row.get("match_key") or "")
+        if not key:
             continue
-        out[name] = {
+        out[key] = {
             "alerts_count": int(row.get("alerts_count") or 0),
             "incidents_count": int(row.get("incidents_count") or 0),
         }

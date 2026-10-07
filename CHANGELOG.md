@@ -12,6 +12,30 @@ from the commit history.
 
 ### Added
 
+- **Conformance warns when pull requests can use an identity
+  unapproved.** Same-repository pull requests run `integration-deploy`
+  in the `integration` environment, and `drift-pr` / the tuning preview
+  in `automation`; whatever identity those environments hold is usable
+  by anyone who can push a branch. The new L7 check
+  `environment_protection[...]` reads the repo's environments and WARNs
+  when `integration` has no required reviewer, or when `automation` has
+  none under `identity_mode: single`. WARN is a new, non-blocking status
+  (text report, JSON and the status page show it; the exit code still
+  counts FAIL only), so a deliberate single-identity setup stays valid.
+  Result: the PR trust boundary is visible in every conformance run.
+- **The tool's KQL is checked against the workspace schema in CI.**
+  A new `kql-strict` job in `ci.yml` builds the Kusto.Language wrapper
+  (`scripts/build_kql_strict.sh`) and binds every KQL query the tool
+  builds against `schemas.json`: the `silent-rules` / telemetry and
+  tuning-impact queries, `auto-disabled-rules`, the alert-ledger and
+  reconciliation queries, the Navigator firings query and the report's
+  table-health probe, with a deliberately broken control query to prove
+  the binding runs. Those
+  tests used to skip in CI, which has no .NET in the `pytest` job;
+  `CONTENTOPS_REQUIRE_KQL_STRICT` now makes a missing wrapper fail the
+  job instead. Result: a typo'd column or function in any of these
+  queries turns the PR's `kql-strict` check red instead of failing the
+  scheduled run. Not a required check until added to branch protection.
 - **Team routine page.** New
   [`docs/operations/team-routine.md`](docs/operations/team-routine.md)
   sets out what a deployment fork needs from its team: a five-minute
@@ -59,8 +83,158 @@ from the commit history.
   way `drift.yml` already did. Result: one open PR per kind instead of
   one per run.
 
+- **ATT&CK coverage counts enabled production detections only.** The
+  heatmap, gaps report, badge, Navigator layer, HTML/Markdown report,
+  portfolio footer and unified report now share one coverage engine
+  (`contentops/coverage/corpus.py`) and one scope: enabled detections
+  with `status: production`; Sentinel hunting queries are excluded.
+  `--include-non-production` and `--include-hunting` (on `coverage`,
+  `navigator`, `report`, `portfolio`) widen it; disabled and deprecated
+  rules never count. Each output states the scope it counts; the
+  heatmap, the report and the Navigator layer also name the ATT&CK
+  release (v19.2). Result: expect the headline numbers to drop to
+  what is actually live, and every surface to show the same number.
+- **Telemetry is matched by rule id; TP means closed TruePositive.**
+  The telemetry query joined `SecurityAlert` / `SecurityIncident` to
+  rules by display name, so a rule using `alertDisplayNameFormat` (or a
+  renamed incident) looked silent, took the silence penalty in
+  `portfolio --rank` and was flagged for retirement. Rows are now keyed
+  by rule id, matched against the name the rule deploys under
+  (`metadata.arm_name`, else the envelope id): incidents by
+  `RelatedAnalyticRuleIds`; a Sentinel alert by the single related rule
+  of its incident, else by the rule id in `AlertType`
+  (`<workspace-guid>_<rule>`; Microsoft documents that field only as
+  "taken from the rule ID"). A rule's telemetry is the sum of its
+  rule-id and display-name rows -- each alert and incident sits in one
+  row -- so a rule split across keys is not undercounted; the
+  display-name join remains the fallback when none of the rule's own
+  keys appear (`contentops/rule_keys.py`). TP was
+  `incidents - FP`, crediting every open, benign or undetermined
+  incident; it is now the count closed as TruePositive, with new
+  `closed_tp_30d` / `closed_bp_30d` columns. Applies to `silent-rules`,
+  `portfolio --with-telemetry`, `report --with-telemetry`, the
+  `lifecycle promote` FP-rate gate, `tuning preview` and the alert
+  health view. Result: rules with templated alert names get their real
+  numbers; effectiveness scores drop where TPs were estimated.
+- **A failed sign-in no longer switches identity.** When the configured
+  credential failed, `get_credential()` silently fell back to another
+  one (e.g. a developer's Azure CLI login). It now fails with the
+  AADSTS code and the remedy; set `CONTENTOPS_AUTH_FALLBACK=1` to opt
+  back in locally. Never in GitHub Actions. See
+  [`authentication-setup.md`](docs/operations/authentication-setup.md).
+- **Pull-request workflows hold fewer credentials.** `validate.yml` no
+  longer requests an OIDC token or uses the `automation` environment
+  (it never exchanged the token). `drift-pr`, `tuning-impact-preview`
+  and `integration-deploy` only run for same-repository PRs (job-level
+  guard). The trust model is documented in
+  [`SECURITY.md`](SECURITY.md#ci-trust-model-for-pull-requests) and
+  [`github-actions-setup.md`](docs/operations/github-actions-setup.md).
+
 ### Fixed
 
+- **`silent-rules` left out the rules that never fired.** It printed the
+  telemetry query's rows, and a rule with no alert and no incident has
+  none, so the silent rules were the ones missing from the list. It now
+  starts from the repo (`--path`, default `detections`): every enabled
+  `sentinel_analytic` / `defender_custom_detection` rule whose status the
+  `--role` workspace deploys (Defender rules for `prod` only, as `apply`
+  does), with its counts summed over its rule keys, silent rules first
+  and a `silent` column (no alert and no incident). The table prints 0
+  instead of a blank cell. `--include-unmatched` appends telemetry no
+  repo rule claimed (`source: workspace`). When no Defender rule matches,
+  a note says their alerts reach SecurityAlert only through the Defender
+  XDR connector. The JSON / CSV columns are now `silent, source, asset,
+  id, status, rule_name`, the count columns and `rule_keys`.
+  Result: a rule that never fired is listed as silent.
+- **The FP rate counted open incidents.** The `lifecycle promote`
+  `fp_rate_threshold` gate, the report and `portfolio --with-telemetry`
+  divided incidents closed as FalsePositive by every incident in the
+  window, open and Undetermined ones included, so a rule whose incidents
+  were still open looked better than it was (3 FP and 7 open read 0.3
+  and passed a 0.5 threshold). All three now use one definition,
+  `closed_fp_rate`: FP ÷ incidents closed TP + FP + BP. With none closed
+  the rate is undefined and the gate passes. The gate's detail shows the
+  counts (`closed_fp=8 of 10 closed TP/FP/BP, 3 open or undetermined`).
+  The report's alert-ledger path uses the same formula over classified
+  alerts. `config/lifecycle.yml` no longer mentions a
+  `--fp-rate-threshold` flag that never existed.
+  Result: the FP rate is measured on incidents that have a verdict.
+- **`explain` and the detection docs showed no ATT&CK tags for collected
+  rules.** Both read tactics and techniques from `metadata` only, while a
+  collected rule carries them in the payload (Sentinel `tactics` /
+  `techniques` / `subTechniques`, Defender `mitreTechniques` and
+  `category`). `explain` also printed them only beside a metadata
+  severity. Both now use the coverage extractor, the one every coverage
+  number uses, and list revoked (remapped), deprecated, unknown and
+  malformed ids as notes; a malformed value is rendered as an inert code
+  span. `explain` prints its own `ATT&CK:` line. Forks that commit
+  `docs/detections/`: run `contentops detection-docs regenerate`.
+  Result: `explain` and the docs show the same ATT&CK tags coverage counts.
+- **`contentops lint` passed files that don't load.** A YAML file under
+  the lint path that failed to load as an envelope (invalid YAML, an
+  empty file, a missing `id` / `version` / `asset` / `status`, or a field
+  that fails validation) was skipped without a word. `plan` and `apply`
+  only echo "load error" and skip it too, so the file passed
+  `validate.yml` and never deployed. Lint now reports it as
+  `ENVELOPE001` (error) with the YAML line, the field and its error, or
+  the missing key; `lint --asset` leaves a file of another valid kind to
+  that kind's run.
+  Result: a fork with a broken envelope fails `validate.yml` instead of
+  silently not deploying it.
+- **Rules with incidents but no alerts took the silence penalty.**
+  `portfolio --rank` (and the report's effectiveness score) treated
+  `alerts_30d == 0` as silent, so a rule with incidents in the window but
+  no alerts of its own -- a Microsoft Security incident-creation rule,
+  whose alerts belong to another product, or an incident updated in the
+  window whose alert predates it -- lost 30 points as a retirement
+  candidate. Silence now means no alerts and no incidents.
+  Result: active incident-only rules no longer surface as retirement
+  candidates.
+- **"Closed" incident counts included reopened incidents.**
+  `closed_tp_30d` / `closed_fp_30d` / `closed_bp_30d` counted an
+  incident's classification without checking its status. Microsoft
+  describes `Classification` as the value given when the incident was
+  last closed, and it survives a reopen, so a reopened (`Active`) incident
+  still counted as a closed TP / FP / BP in `portfolio --rank` scores, the
+  report's TP / FP columns and the `lifecycle promote` FP-rate gate. The
+  counts now also require the incident's latest status to be `Closed`.
+  Result: only incidents that are closed count as closed.
+- **Coverage numbers disagreed and over-counted.** Sentinel
+  `subTechniques` were never read; a rule's techniques were listed under
+  every tactic it claimed, and a Defender rule under every tactic of its
+  technique (its alert category is now used); the gaps report counted
+  per-tactic pairs (862 of 872) while the badge counted distinct
+  techniques (222 + 475 sub-techniques); disabled rules and hunting
+  queries counted; a rule whose metadata failed strict validation was
+  skipped entirely; ids like `" T1082"` / `t1087` became junk keys and
+  unknown ids were never reported for Sentinel. The Navigator repo
+  layer read only `metadata.techniques`, keyed rules by the first line
+  of the description, fetched one page of deployed rules and declared
+  ATT&CK v14. All fixed; data-quality problems (invalid, unknown,
+  revoked, deprecated ids, techniques outside the rule's tactics) are
+  reported in the coverage output. Result: one covered set behind every
+  number; check the new diagnostics section for rules to clean up.
+- **Revoked ATT&CK ids were dropped silently.** ATT&CK v19.2 revoked
+  T1562 (Impair Defenses) and 148 more ids. The bundled matrix now
+  records `attack_version`, every revoked → replacement mapping
+  (chains resolved) and the deprecated ids; revoked ids are counted as
+  their replacement and reported. Report snapshots record the ATT&CK
+  version and coverage scope, and a delta across a change in either is
+  marked not comparable instead of showing a fake jump.
+- **`SecurityAlert` rows counted once per status change.** Alerts are now
+  de-duplicated per `SystemAlertId` before counting, in the telemetry
+  and the tuning-impact queries.
+- **`--out-badge` was ignored with `--gaps`, `--d3fend` and
+  `--by-source`**, and `--by-source --format both` overwrote
+  `coverage.md`. The badge is written in every mode; each mode has its
+  own default file names.
+- **HTML report headline.** The TL;DR called every production-status
+  rule "active" (disabled rules and hunting queries included) next to a
+  coverage % computed over a different set, and "reviewed in the last
+  90 days" divided by the rules that had a review date, so never-reviewed
+  rules dropped out; a future date counted as fresh. It now names the
+  scope ("N enabled production detections (hunting queries excluded)
+  cover X%") and computes review freshness over all rules.
 - **Template-link fix wrote `alertRuleTemplateName: null` into every
   custom rule.** ARM returns the field as `null` on rules not built from
   a template; keeping the link now also kept the null, which added a
@@ -240,6 +414,28 @@ from the commit history.
   unchanged rules are never re-pushed (no 400), deploys are idempotent, and
   beta-API writes drop sharply. Enable/disable still pushes (`isEnabled` is not
   in the content hash, so it is checked explicitly).
+
+### Security
+
+- **Resource names are validated before they reach an ARM or Graph URL.**
+  `arm_name`, watchlist and Defender rule ids were interpolated into
+  request paths unchecked, so a crafted `metadata.arm_name` (`..`, `/`,
+  `?`, `#`, `%`) could address a different resource. Path segments now go
+  through `contentops/utils/url_path.py` (deny-list + percent-encoding),
+  and pagination refuses a `nextLink` on another origin, which keeps the
+  bearer token on the API it was issued for.
+- **A committed `config/tenant.yml` can no longer silently override the
+  CI secret.** `scripts/materialise_tenant_config.py` (used by
+  `pipeline-setup`, `integration-deploy.yml`, `e2e-capability-tests.yml`)
+  fails the job when the file and `TENANT_CONFIG_YAML` are both present
+  and differ; Mode A (file only) is unchanged. It never prints either.
+- **`emergency-disable.yml` passes the rule id through the environment**
+  instead of interpolating `${{ inputs.rule_id }}` into the script.
+- **Audit-trail integrity wording.** `SECURITY.md` and
+  `docs/reference/audit-trail.md` now say how to compare a chain's head
+  hash with the Sigstore-attested head that `deploy.yml` already
+  publishes; the hash chain on its own detects edits, not a chain
+  recomputed from a tampered state.
 
 ## [1.0.0] - 2026-06-16
 

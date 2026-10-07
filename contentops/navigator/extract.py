@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
-from contentops.core.discovery import iter_loaded_assets
+from contentops.coverage.corpus import Corpus, CoverageScope, load_corpus
+from contentops.coverage.matrix import AttackMatrix, load_matrix, normalise_technique_id
 
 
 @dataclass(frozen=True)
@@ -31,34 +32,54 @@ class TechniqueHit:
     source: str
 
 
+def _current_ids(values: Iterable[Any], matrix: AttackMatrix) -> list[str]:
+    """Normalise ids (" t1059" -> T1059), remap revoked ones and keep only
+    techniques in the current ATT&CK matrix -- the same rules the coverage
+    engine applies, so every axis speaks the same id space."""
+    out: list[str] = []
+    for value in values:
+        tid = normalise_technique_id(value)
+        if tid is None:
+            continue
+        current, _status = matrix.resolve(tid)
+        if current is not None and current not in out:
+            out.append(current)
+    return out
+
+
+def _as_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
 # ---------------------------------------------------------------------------
 # Axis 1: repo envelopes
 # ---------------------------------------------------------------------------
 
 
-def extract_repo_techniques(detections_root: Path) -> list[TechniqueHit]:
-    """Walk envelopes under ``detections_root`` and collect technique IDs.
+def extract_repo_techniques(
+    detections_root: Path,
+    *,
+    scope: CoverageScope | None = None,
+    corpus: Corpus | None = None,
+) -> list[TechniqueHit]:
+    """Collect technique ids from the repo's in-scope detections.
 
-    Sources from ``metadata.techniques`` only (the canonical authoring
-    field). Envelopes that fail to parse are skipped silently --
-    ``contentops lint`` catches those elsewhere.
+    Uses the shared coverage engine (:func:`contentops.coverage.corpus.load_corpus`):
+    metadata *and* the platform-native payload fields (so collected rules,
+    which carry their ATT&CK tags only in the payload, are not empty), the
+    same scope as ``contentops coverage`` (default: enabled production
+    rules, hunting excluded), so this axis covers exactly the techniques
+    the badge counts. The display name is the payload ``displayName`` --
+    the same key the deployed axis uses, so one rule seen in the repo and
+    deployed scores once.
     """
+    corpus = corpus or load_corpus(detections_root, scope=scope)
     out: list[TechniqueHit] = []
-    for loaded in iter_loaded_assets(detections_root):
-        meta = loaded.envelope.metadata
-        if meta is None:
-            continue
-        # Display name preference: metadata.description first line ->
-        # envelope id. Matches what detection-docs uses so the Navigator
-        # axis labels stay consistent with the per-detection docs.
-        display = (
-            meta.description.splitlines()[0] if meta.description else loaded.envelope.id
-        )
-        for tech in meta.techniques or []:
-            if isinstance(tech, str) and tech:
-                out.append(TechniqueHit(
-                    technique_id=tech, display_name=display, source="repo",
-                ))
+    for entry in corpus.in_scope():
+        for tech in entry.mitre.counted_techniques:
+            out.append(TechniqueHit(
+                technique_id=tech, display_name=entry.display_name, source="repo",
+            ))
     return out
 
 
@@ -67,50 +88,49 @@ def extract_repo_techniques(detections_root: Path) -> list[TechniqueHit]:
 # ---------------------------------------------------------------------------
 
 
-def extract_sentinel_rule_techniques(provider: Any) -> list[TechniqueHit]:
+def extract_sentinel_rule_techniques(
+    provider: Any, *, include_disabled: bool = False,
+) -> list[TechniqueHit]:
     """Pull techniques from live Sentinel analytic-rule definitions.
 
     ``provider`` is a ``contentops.providers.sentinel_arm.SentinelArmProvider``
-    instance. The shape is duck-typed (so tests can pass a stub) -- we
-    only call ``provider.request("GET", provider.resource_url("alertRules"))``.
+    (duck-typed so tests can pass a stub); only ``list_resource("alertRules")``
+    is called, which follows ARM ``nextLink`` pagination -- a large
+    workspace's rules beyond the first page are no longer dropped.
 
-    Returns one TechniqueHit per (rule, technique) pair. Rules with no
-    techniques in their properties are skipped.
+    Reads ``techniques`` and ``subTechniques``. Disabled rules detect
+    nothing and are skipped unless ``include_disabled``. Returns one
+    TechniqueHit per (rule, technique) pair.
     """
     try:
-        url = provider.resource_url("alertRules")
-        resp = provider.request("GET", url)
+        rules = provider.list_resource("alertRules")
     except Exception as exc:
         raise RuntimeError(f"Sentinel alertRules fetch failed: {exc}") from exc
-    if resp.status_code >= 400:
-        raise RuntimeError(
-            f"Sentinel alertRules returned {resp.status_code}: "
-            f"{(resp.text or '')[:200]}"
-        )
-    try:
-        body = resp.json()
-    except Exception as exc:
-        raise RuntimeError(f"Sentinel alertRules response not JSON: {exc}") from exc
 
+    matrix = load_matrix()
     out: list[TechniqueHit] = []
-    for rule in body.get("value") or []:
+    for rule in rules or []:
         if not isinstance(rule, dict):
             continue
         properties = rule.get("properties") or {}
+        if not include_disabled and properties.get("enabled") is False:
+            continue
         display = (
             properties.get("displayName")
             or rule.get("name")
             or "(unnamed Sentinel rule)"
         )
-        for tech in properties.get("techniques") or []:
-            if isinstance(tech, str) and tech:
-                out.append(TechniqueHit(
-                    technique_id=tech, display_name=str(display), source="deployed",
-                ))
+        ids = _as_list(properties.get("techniques")) + _as_list(properties.get("subTechniques"))
+        for tech in _current_ids(ids, matrix):
+            out.append(TechniqueHit(
+                technique_id=tech, display_name=str(display), source="deployed",
+            ))
     return out
 
 
-def extract_defender_rule_techniques(client: Any) -> list[TechniqueHit]:
+def extract_defender_rule_techniques(
+    client: Any, *, include_disabled: bool = False,
+) -> list[TechniqueHit]:
     """Pull techniques from live Defender XDR custom detection definitions.
 
     ``client`` is a ``contentops.defender.client.DefenderClient`` (or a
@@ -120,25 +140,31 @@ def extract_defender_rule_techniques(client: Any) -> list[TechniqueHit]:
     ``CustomDetection.Read.All`` (or ``ReadWrite.All``) scope.
 
     The Defender side carries MITRE techniques on the
-    ``detectionAction.alertTemplate.mitreTechniques`` path.
+    ``detectionAction.alertTemplate.mitreTechniques`` path. Disabled
+    rules (``status`` disabled / autoDisabled) are skipped unless
+    ``include_disabled``.
     """
+    from contentops.defender.rule_status import is_enabled
+
     try:
         rules = client.list_rules()
     except Exception as exc:
         raise RuntimeError(f"Defender detectionRules fetch failed: {exc}") from exc
 
+    matrix = load_matrix()
     out: list[TechniqueHit] = []
     for rule in rules or []:
         if not isinstance(rule, dict):
             continue
+        if not include_disabled and not is_enabled(rule):
+            continue
         display = rule.get("displayName") or rule.get("id") or "(unnamed Defender rule)"
         action = rule.get("detectionAction") or {}
         template = action.get("alertTemplate") or {}
-        for tech in template.get("mitreTechniques") or []:
-            if isinstance(tech, str) and tech:
-                out.append(TechniqueHit(
-                    technique_id=tech, display_name=str(display), source="deployed",
-                ))
+        for tech in _current_ids(_as_list(template.get("mitreTechniques")), matrix):
+            out.append(TechniqueHit(
+                technique_id=tech, display_name=str(display), source="deployed",
+            ))
     return out
 
 
@@ -197,11 +223,13 @@ def extract_firing_techniques(
         workspace_id=workspace_id,
         token=token,
     )
+    matrix = load_matrix()
     out: list[TechniqueHit] = []
     for row in result.rows:
-        tech = row.get("technique_id")
         name = row.get("display_name")
-        if isinstance(tech, str) and isinstance(name, str) and tech and name:
+        if not isinstance(name, str) or not name:
+            continue
+        for tech in _current_ids([row.get("technique_id")], matrix):
             out.append(TechniqueHit(
                 technique_id=tech, display_name=name, source="firings",
             ))

@@ -142,7 +142,7 @@ def test_lint_registry_covers_every_emitted_rule() -> None:
     prevents that class of silent under-reporting.
     """
     lint_dir = REPO_ROOT / "contentops" / "lint"
-    rule_literal = re.compile(r'"(KQL\d+|KQLOVERRIDE\d+|META\d+|PAYLOAD\d+)"')
+    rule_literal = re.compile(r'"(ENVELOPE\d+|KQL\d+|KQLOVERRIDE\d+|META\d+|PAYLOAD\d+)"')
     emitted: set[str] = set()
     for py in sorted(lint_dir.glob("*.py")):
         emitted |= set(rule_literal.findall(py.read_text(encoding="utf-8")))

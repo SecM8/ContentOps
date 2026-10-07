@@ -54,6 +54,25 @@ def test_summary_counts_appear_with_glyphs() -> None:
     assert "⚪ 1 skipped" in md
 
 
+def test_warnings_are_counted_and_mark_the_layer() -> None:
+    """WARN is non-blocking but visible: counted in the summary and the
+    layer heading shows a warning (not the PASS tick) when nothing failed."""
+    report = ConformanceReport(
+        checks=[
+            _check("L7", "github_repo", "PASS"),
+            _check("L7", "environment_protection[integration]", "WARN",
+                   detail="no required reviewer", remediation="Add required reviewers"),
+        ],
+        scope=("L7",),
+    )
+    md = render_configuration(report, generated_at=_fixed_now())
+    assert "⚠️ 1 warning(s)" in md
+    assert "## L7 ⚠️" in md
+    assert "⚠️ WARN" in md
+    assert "Add required reviewers" in md
+    assert report.passed  # WARN never fails the report
+
+
 def test_one_section_per_layer_with_table() -> None:
     report = ConformanceReport(
         checks=[

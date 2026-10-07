@@ -216,6 +216,16 @@ verify which CI run produced a given chain head:
 gh attestation verify audit-head.json --owner KustoKing
 ```
 
+`contentops audit verify` on its own cannot notice records removed from
+the end of a chain, or a chain recomputed from scratch — both still
+verify. To check a downloaded `audit-<run_id>` artifact, compare its head
+with the attested one:
+
+```bash
+contentops audit head --root . --out /tmp/head.json
+jq -r .head_hash /tmp/head.json audit-head.json   # the two lines must match
+```
+
 This is **provenance, not authenticity**: it proves "KustoKing CI run N
 produced this head hash," and its durability is bounded by GitHub
 retention. It does NOT defend against an attacker who controls

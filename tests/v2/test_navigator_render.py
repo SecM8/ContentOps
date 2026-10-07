@@ -145,3 +145,20 @@ def test_cli_navigator_help_lists_axes() -> None:
     assert result.exit_code == 0
     for needle in ("--repo", "--deployed", "--firings", "--since", "--out"):
         assert needle in result.output, f"--help missing {needle}"
+
+
+
+def test_layer_attack_version_follows_the_bundled_matrix() -> None:
+    from contentops.coverage.matrix import load_matrix
+    from contentops.navigator.render import default_attack_version
+
+    major = load_matrix().attack_major
+    assert major and default_attack_version() == major
+    assert render_layer(_scored(("T1059", 1)))["versions"]["attack"] == major
+    assert render_layer([], attack_version="15")["versions"]["attack"] == "15"
+
+
+def test_layer_metadata_is_rendered_when_given() -> None:
+    layer = render_layer([], metadata=[("repo scope", "enabled production detections")])
+    assert layer["metadata"] == [{"name": "repo scope", "value": "enabled production detections"}]
+    assert "metadata" not in render_layer([])

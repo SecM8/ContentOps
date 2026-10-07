@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+from pydantic import ValidationError
+
 from contentops.core.asset import KQL_FIELDS_BY_ASSET, Asset
 from contentops.core.discovery import iter_loaded_assets
 from contentops.core.handler import LoadedAsset
@@ -93,8 +96,9 @@ _KQL_FIELD_BY_ASSET = KQL_FIELDS_BY_ASSET
 class LintedFile:
     path: Path
     # ``None`` for snippet-file findings (KQLOVERRIDE004) under
-    # ``overrides/`` -- those files don't have an Asset kind. Verified
-    # no consumer dispatches on ``asset``; only ``findings`` is read.
+    # ``overrides/`` -- those files don't have an Asset kind -- and for
+    # envelopes that don't load (ENVELOPE001). Verified no consumer
+    # dispatches on ``asset``; only ``findings`` is read.
     asset: Asset | None
     findings: list[LintFinding] = field(default_factory=list)
 
@@ -119,6 +123,55 @@ def _query_for(loaded: LoadedAsset) -> str | None:
     return None
 
 
+def _load_error_finding(exc: Exception) -> LintFinding:
+    """ENVELOPE001 -- a YAML file under ``detections/`` that doesn't load
+    as an envelope. ``plan`` / ``apply`` only echo "load error" and skip
+    it, so without this finding a broken file passed lint and silently
+    never deployed. The message is one line: the YAML problem (with its
+    line), the first validation error, or the missing key."""
+    line: int | None = None
+    if isinstance(exc, yaml.YAMLError):
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            line = mark.line + 1
+        detail = f"YAML does not parse: {getattr(exc, 'problem', None) or exc}"
+    elif isinstance(exc, ValidationError):
+        errors = exc.errors()
+        first = errors[0] if errors else {}
+        # RuleMetadata validates the ``metadata:`` block, EnvelopeV2 the top level.
+        block = "metadata" if exc.title == "RuleMetadata" else ""
+        field_path = ".".join(str(part) for part in first.get("loc", ()))
+        loc = ".".join(part for part in (block, field_path) if part)
+        msg = first.get("msg", "invalid")
+        detail = f"{loc}: {msg}" if loc else msg
+        if len(errors) > 1:
+            detail += f" (+{len(errors) - 1} more)"
+    elif isinstance(exc, KeyError):
+        detail = f"missing required key {exc.args[0]!r}" if exc.args else "missing required key"
+    elif isinstance(exc, UnicodeDecodeError):
+        detail = "not UTF-8 text"
+    else:
+        detail = str(exc) or type(exc).__name__
+    detail = " ".join(detail.split())
+    return LintFinding(
+        rule_id="ENVELOPE001",
+        severity="error",
+        message=f"Envelope does not load ({detail}); plan and apply skip this file.",
+        line=line,
+    )
+
+
+def _is_other_kind(path: Path, asset_filter: Asset) -> bool:
+    """True when ``path`` names a valid asset kind other than
+    ``asset_filter``, so ``lint --asset`` can leave its load error to a
+    run for that kind. A file whose kind can't be read is reported."""
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return isinstance(raw, dict) and Asset(raw.get("asset")) != asset_filter
+    except Exception:  # noqa: BLE001 -- unreadable or no valid kind: report it
+        return False
+
+
 def lint_assets(
     detections_path: Path,
     *,
@@ -133,9 +186,18 @@ def lint_assets(
     False here exists so call sites that don't load tenant.yml (e.g.
     unit tests, the snippets-only path) stay lenient — the lint CLI
     flips it via ``cfg.is_scaffold_strict()``.
+
+    A file that doesn't load as an envelope is reported as an
+    ENVELOPE001 error in discovery order, not skipped.
     """
     results: list[LintedFile] = []
-    for loaded in iter_loaded_assets(detections_path):
+
+    def _load_error(path: Path, exc: Exception) -> None:
+        if asset_filter is not None and _is_other_kind(path, asset_filter):
+            return
+        results.append(LintedFile(path=path, asset=None, findings=[_load_error_finding(exc)]))
+
+    for loaded in iter_loaded_assets(detections_path, on_error=_load_error):
         if asset_filter is not None and loaded.envelope.asset != asset_filter:
             continue
 

@@ -235,9 +235,10 @@ def test_csv_renders_lists_and_bools_and_empties(tree: Path) -> None:
     text = render_csv_string(rows)
     reader = csv.DictReader(io.StringIO(text))
     row = next(reader)
-    # tactics joined by ';'
-    assert row["tactics"] == "Execution;DefenseEvasion"
-    assert row["techniques"] == "T1059.001;T1027"
+    # tactics joined by ';' -- sorted, as the shared coverage extractor
+    # returns them (rows and coverage numbers come from one extraction).
+    assert row["tactics"] == "DefenseEvasion;Execution"
+    assert row["techniques"] == "T1027;T1059.001"
     assert row["enabled"] == "true"
     # cohort + last_validated populated
     assert row["cohort"] == "pipeline-self"
@@ -373,3 +374,44 @@ def test_cli_portfolio_skips_mitre_footer_when_empty(tmp_path: Path) -> None:
     result = runner.invoke(cli, ["portfolio", "--path", str(empty)])
     assert result.exit_code == 0
     assert "MITRE ATT&CK coverage:" not in result.output
+
+
+
+# --------------------------------------------------------------------------
+# Shared coverage engine (review: one coverage source)
+# --------------------------------------------------------------------------
+
+
+def test_collected_rule_rows_carry_payload_attack_tags(coverage_corpus) -> None:
+    rows = {r["id"]: r for r in build_rows(coverage_corpus)}
+    assert rows["r1-subtechniques"]["techniques"] == ["T1110", "T1110.003"]
+    assert rows["r8-defender"]["tactics"] == ["InitialAccess"]
+    # Every detection gets a row; the scope only affects coverage numbers.
+    assert {"r4-disabled", "r5-hunting", "r10-experimental"} <= set(rows)
+    # Full-key metadata with one bad reference is no longer skipped.
+    assert "r6b-bad-reference" in rows
+
+
+def test_portfolio_footer_matches_badge_and_honours_cohort(tmp_path) -> None:
+    import yaml
+
+    root = tmp_path / "detections" / "sentinel_analytic"
+    root.mkdir(parents=True)
+    for rule_id, cohort, technique in (("a-rule", "team-a", "T1059"),
+                                       ("b-rule", "team-b", "T1110")):
+        (root / f"{rule_id}.yml").write_text(yaml.safe_dump({
+            "id": rule_id, "version": "1.0.0", "asset": "sentinel_analytic",
+            "status": "production",
+            "metadata": {"cohort": cohort, "tactics": ["Execution"]},
+            "payload": {"displayName": rule_id, "query": "T", "enabled": True,
+                        "techniques": [technique]},
+        }), encoding="utf-8")
+    runner = CliRunner()
+    whole = runner.invoke(cli, ["portfolio", "--path", str(tmp_path / "detections")])
+    assert whole.exit_code == 0, whole.output
+    assert "MITRE ATT&CK coverage: 2/" in whole.output
+    one = runner.invoke(cli, ["portfolio", "--path", str(tmp_path / "detections"),
+                              "--cohort", "team-a"])
+    assert one.exit_code == 0, one.output
+    assert "MITRE ATT&CK coverage: 1/" in one.output
+    assert "cohort team-a" in one.output

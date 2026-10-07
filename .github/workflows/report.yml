@@ -28,6 +28,7 @@ on:
     paths:
       - "detections/**"
       - "contentops/report/**"
+      - "contentops/coverage/**"
       - "contentops/cli/commands/report.py"
       - ".github/workflows/report.yml"
   workflow_dispatch: {}

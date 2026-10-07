@@ -216,6 +216,28 @@ def test_l4_approle_pagination_followed(monkeypatch) -> None:
     assert _statuses(report).get("app_role_assignments") == "PASS"
 
 
+@respx.mock
+def test_l4_approle_pagination_refuses_cross_origin_nextlink(monkeypatch) -> None:
+    # The paging client carries a Graph bearer token, so a nextLink that
+    # leaves graph.microsoft.com must never be requested.
+    monkeypatch.setenv("AZURE_CLIENT_ID", "cid")
+    respx.get(url__regex=r".*/servicePrincipals\(appId=").mock(
+        return_value=Response(200, json={"id": "sp-1"}),
+    )
+    respx.get(url__regex=r".*/appRoleAssignments$").mock(
+        return_value=Response(200, json={
+            "value": [], "@odata.nextLink": "https://evil.example/steal",
+        }),
+    )
+    evil = respx.get(url__regex=r"https://evil\.example/.*").mock(
+        return_value=Response(200, json={"value": []}),
+    )
+    report = C.ConformanceReport()
+    C.check_l4_graph_permissions(report, _jwt({"scp": "x"}), C.ConformanceConfig())
+    assert not evil.called
+    assert _statuses(report).get("app_role_assignments_paging") == "FAIL"
+
+
 # ---------------------------------------------------------------------------
 # L5 — Azure RBAC: effective-permissions write check
 # ---------------------------------------------------------------------------
@@ -523,3 +545,98 @@ def test_l7_branch_protection_404_still_fails(monkeypatch) -> None:
     report = C.ConformanceReport()
     C.check_l7_github(report, cfg)
     assert _statuses(report).get("branch_protection") == "FAIL"
+
+
+# ---------------------------------------------------------------------------
+# L7 — environments that same-repo pull requests run in
+# ---------------------------------------------------------------------------
+
+
+def _env_gh_api(environments_response):
+    """``_gh_api`` fake: repo reachable, no secrets/vars, a caller-supplied
+    ``/environments`` response."""
+    def _fake(path: str):
+        if path.endswith("/environments"):
+            return environments_response
+        if path.endswith("/actions/secrets"):
+            return (0, {"secrets": []})
+        if path.endswith("/actions/variables"):
+            return (0, {"variables": []})
+        return (0, {})
+    return _fake
+
+
+def _env(name: str, *rule_types: str) -> dict:
+    return {"name": name, "protection_rules": [{"type": t} for t in rule_types]}
+
+
+def _run_l7(monkeypatch, environments_response, *, identity_mode: str = "split"):
+    monkeypatch.setattr(C, "_gh_cli_available", lambda: True)
+    monkeypatch.setattr(C, "_gh_api", _env_gh_api(environments_response))
+    cfg = C.ConformanceConfig(
+        github_repo="owner/repo", github_required_checks=(),
+        github_required_credentials=(), identity_mode=identity_mode,
+    )
+    report = C.ConformanceReport()
+    C.check_l7_github(report, cfg)
+    return report
+
+
+def _env_rows(report: C.ConformanceReport) -> dict[str, C.ConformanceCheck]:
+    return {c.name: c for c in _with_prefix(report, "environment_protection")}
+
+
+def test_l7_pr_environment_with_reviewers_passes(monkeypatch) -> None:
+    report = _run_l7(monkeypatch, (0, {"environments": [
+        _env("integration", "required_reviewers", "branch_policy"),
+        _env("automation", "required_reviewers"),
+    ]}))
+    rows = _env_rows(report)
+    assert rows["environment_protection[integration]"].status == "PASS"
+    assert rows["environment_protection[automation]"].status == "PASS"
+
+
+def test_l7_integration_without_reviewers_warns_never_fails(monkeypatch) -> None:
+    """Review of #395: same-repo PR code deploys with the integration
+    identity. Surface it -- as a warning, never a failure."""
+    report = _run_l7(monkeypatch, (0, {"environments": [
+        _env("integration", "branch_policy"), _env("automation"),
+    ]}))
+    rows = _env_rows(report)
+    integration = rows["environment_protection[integration]"]
+    assert integration.status == "WARN"
+    assert "integration-deploy" in integration.detail
+    assert "'integration' identity" in integration.detail
+    assert "Add required reviewers" in integration.remediation
+    # Split mode: the automation identity is the read-only one.
+    assert rows["environment_protection[automation]"].status == "INFO"
+    assert report.passed and not report.failed
+    text = C.render_text(report)
+    assert "[WARN]  environment_protection[integration]" in text
+    assert "remediation: Add required reviewers" in text
+    assert "Conformance: PASS" in text and "1 WARN" in text
+
+
+def test_l7_single_identity_warns_about_both_environments(monkeypatch) -> None:
+    """identity_mode: single stays supported -- WARN, with the stronger
+    wording that the shared identity also deploys to production."""
+    report = _run_l7(monkeypatch, (0, {"environments": [
+        _env("integration"), _env("automation"),
+    ]}), identity_mode="single")
+    rows = _env_rows(report)
+    assert rows["environment_protection[integration]"].status == "WARN"
+    assert "also deploys to production" in rows["environment_protection[integration]"].detail
+    automation = rows["environment_protection[automation]"]
+    assert automation.status == "WARN"
+    assert "shared write identity" in automation.detail
+    assert "scheduled" in automation.remediation
+    assert report.passed
+
+
+def test_l7_environments_unreadable_or_absent_skip(monkeypatch) -> None:
+    report = _run_l7(monkeypatch, (1, "gh: Resource not accessible by integration (HTTP 403)"))
+    assert _statuses(report).get("environment_protection") == "SKIP"
+    report = _run_l7(monkeypatch, (0, {"environments": []}))
+    rows = _env_rows(report)
+    assert {r.status for r in rows.values()} == {"SKIP"}
+    assert len(rows) == 2

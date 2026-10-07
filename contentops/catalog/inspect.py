@@ -284,6 +284,8 @@ _RULE_REGISTRY: tuple[tuple[str, str, str], ...] = (
     # wrapper diagnostics + allowlist-parse warnings that have no
     # specific rule id of their own.
     ("KQL000", "warning", "contentops.lint.strict"),
+    # A detections/ YAML file that doesn't load as an envelope.
+    ("ENVELOPE001", "error", "contentops.lint.runner"),
     ("KQL001", "error",   "contentops.lint.kql"),
     ("KQL002", "error",   "contentops.lint.kql"),
     ("KQL003", "error",   "contentops.lint.kql"),

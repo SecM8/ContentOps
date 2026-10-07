@@ -18,6 +18,7 @@ from typing import Any
 from contentops.alerts.models import AlertClassification, AlertStatus, NormalizedAlert
 from contentops.core.asset import Asset
 from contentops.core.handler import LoadedAsset
+from contentops.rule_keys import normalise_rule_id, rule_keys_for
 from contentops.utils.markdown import gfm_cell
 
 logger = logging.getLogger(__name__)
@@ -104,27 +105,32 @@ def _build_detection_alert_map(
     """Map alerts to detections. Returns (matched_map, unmatched_count).
 
     Four-tier strategy (in priority order):
-    1. ARM GUID match (Sentinel relatedAnalyticRuleIds)
-    2. Exact title match (Defender displayName)
+    1. Rule id (Sentinel ``AlertType`` / ``relatedAnalyticRuleIds``, Graph
+       ``detectorId``) against the id each rule deploys under
+       (``metadata.arm_name``, else the envelope id)
+    2. Exact title match (``displayName``; Defender ``alertTemplate.title``)
     3. Alert format prefix match (Sentinel alertDisplayNameFormat)
     4. Substring containment (MITRE-prefixed names, dynamic suffixes)
     """
     title_index: dict[str, str] = {}
+    id_index: dict[str, str] = {}
     arm_guid_index: dict[str, str] = {}
     prefix_index: list[tuple[str, str]] = []
 
     for d in detections:
         det_id = d.envelope.id
+        keys = rule_keys_for(d)
         display = (d.payload.get("displayName") or d.payload.get("DisplayName") or det_id)
-        title_key = display.strip().lower()
-        if title_key in title_index:
-            logger.debug(
-                "Duplicate displayName '%s' — first wins (%s over %s)",
-                display, title_index[title_key], det_id,
-            )
-        else:
-            title_index[title_key] = det_id
+        for title_key in dict.fromkeys((display.strip().lower(), *keys.names)):
+            first = title_index.setdefault(title_key, det_id)
+            if first != det_id:
+                logger.debug(
+                    "Duplicate title '%s' — first wins (%s over %s)",
+                    title_key, first, det_id,
+                )
 
+        for rule_id in keys.ids:
+            id_index.setdefault(rule_id, det_id)
         arm = d.envelope.arm_name
         if arm:
             arm_guid_index[arm.strip().lower()] = det_id
@@ -143,11 +149,12 @@ def _build_detection_alert_map(
         detection_id: str | None = None
         alert_title_lower = (alert.title or "").strip().lower()
 
-        # Tier 1: ARM GUID / detectorId
+        # Tier 1: rule id (ARM id -> last segment; "<workspace>_<rule>" ->
+        # rule), then the truncated Graph detectorId of collected rules.
         if alert.rule_id:
+            rule_id = normalise_rule_id(alert.rule_id)
+            detection_id = id_index.get(rule_id) if rule_id else None
             raw_id = alert.rule_id.strip().lower()
-            guid = raw_id.rsplit("/", 1)[-1]
-            detection_id = arm_guid_index.get(guid)
             # Graph detectorId uses composite format like
             # "prefix_sentinel-GUID" where GUID may be truncated.
             if detection_id is None and "_" in raw_id:
@@ -262,11 +269,12 @@ def _extract_severity(d: LoadedAsset) -> str:
 
 
 def _extract_techniques(d: LoadedAsset) -> tuple[str, ...]:
-    meta = d.envelope.metadata
-    if meta is not None and hasattr(meta, "techniques") and meta.techniques:
-        return tuple(meta.techniques)
-    techs = d.payload.get("techniques") or []
-    return tuple(techs)
+    """ATT&CK techniques via the shared coverage extractor (metadata +
+    payload, incl. Defender ``mitreTechniques`` and Sentinel
+    ``subTechniques``; ids normalised, revoked ids remapped)."""
+    from contentops.coverage.extract import extract_mitre_for
+
+    return extract_mitre_for(d).techniques
 
 
 def compute_detection_health(

@@ -364,6 +364,15 @@ AZURE_SUBSCRIPTION_ID=<subscription-containing-your-workspace>
 
 `.env` is gitignored — never commit it.
 
+**When the secret fails, ContentOps stops.** If `AZURE_CLIENT_SECRET`
+is set but rejected (expired, wrong value), commands fail with
+`CredentialFallbackRefused` and the `AADSTS` code instead of quietly
+signing in as someone else. Falling back to OIDC / `az login` would
+switch to a different — often more privileged — identity, possibly in
+another tenant, and audit records would name the wrong actor. To allow
+that fallback for local work, set `CONTENTOPS_AUTH_FALLBACK=1`; it is
+never honoured inside GitHub Actions.
+
 **Alternative: `az login`.** Run `az login` and sign in interactively;
 `DefaultAzureCredential` (the auth chain ContentOps uses) picks up
 the resulting token cache automatically. Convenient for ad-hoc work,
@@ -471,8 +480,10 @@ federated credential and re-run.
 
 ### Client secret expired
 
-App Registration → **Certificates & secrets** → **Client secrets**
-→ **+ New client secret**. Update `AZURE_CLIENT_SECRET` in `.env`.
+Symptom: `CredentialFallbackRefused: Client-secret sign-in from .env
+failed (AADSTS7000222)`. App Registration → **Certificates & secrets**
+→ **Client secrets** → **+ New client secret**. Update
+`AZURE_CLIENT_SECRET` in `.env` (or remove it and use `az login`).
 You can keep the old secret valid until you've confirmed the new one
 works; click **Delete** on the old row when you're ready to revoke.
 

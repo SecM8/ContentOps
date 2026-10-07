@@ -373,7 +373,7 @@ This runs four gates:
 | `status_is_experimental` | The current status is `experimental` (you can't promote a `deprecated` rule directly). |
 | `recent_validation` | `metadata.lastValidatedAt` is within 30 days (you need to have eyeballed the rule recently). |
 | `live_test_pass` | DEFERRED (F2 — Python KQL evaluator parked); always passes. |
-| `fp_rate_threshold` | If `--workspace-id` is set, computes `closed_fp_30d / incidents_30d`; fails the gate if above `config/lifecycle.yml`'s threshold (default 0.5). |
+| `fp_rate_threshold` | If `--workspace-id` is set, computes the FP rate (incidents closed FalsePositive ÷ incidents closed TP / FP / BP; open and Undetermined ones are left out); fails the gate if above `config/lifecycle.yml`'s threshold (default 0.5). |
 
 If all gates pass, the command flips `status: experimental` → `status:
 production` in your YAML and stamps `lifecycle.promotedAt` /

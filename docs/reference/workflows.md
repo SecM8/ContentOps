@@ -44,18 +44,18 @@ but lose the operator's "which workflow do I click" mental model.
 | `alerts-report.yml` | daily cron + manual | Alert pipeline: sync alerts into the PII-free ledger, compute the daily rollup, 30-day detection health, and week-over-week trend. Markdown + JSON artefacts; step summary. | `contents: read`, `id-token: write` | ~3 min |
 | `attack-matrix-refresh.yml` | weekly cron + manual | Refresh the bundled MITRE ATT&CK matrix JSON from MITRE's STIX source; opens a PR when the matrix changed. | `contents: write`, `pull-requests: write` | ~2 min |
 | `audit-verify.yml` | weekly cron | Run `contentops audit verify` over the full hash chain. Fails if any record's `prev_hash` / `record_hash` / timestamp regresses. | `contents: read` | ~1 min |
-| `ci.yml` | PR + push to main | Full pytest suite (`pytest -n auto` via xdist) plus pip-audit. | `contents: read` | ~3–5 min |
+| `ci.yml` | PR + push to main | Full pytest suite (`pytest -n auto` via xdist) plus pip-audit; `kql-strict` job builds the Kusto.Language wrapper and binds every KQL query the tool builds against the cached schema. | `contents: read` | ~3–5 min |
 | `collect.yml` | weekly cron | Run `contentops collect --full` against production; commit any drift back as a `chore(collect)` PR. | `contents: write`, `pull-requests: write`, `id-token: write` | ~10 min |
 | `conformance.yml` | weekly cron | Run L1–L7 conformance read-only checks against the configured tenants. Reports skipped layers when GH CLI / secrets are absent. | `contents: read`, `id-token: write` | ~3 min |
 | `coverage.yml` | weekly cron | Generate the MITRE ATT&CK coverage report from `detections/` + `contentops/coverage/data/`. Uploads as artifact. | `contents: read` | ~2 min |
 | `dco.yml` | PR | Every commit must carry a `Signed-off-by:` trailer. Dependabot / Renovate / `github-actions[bot]` PRs and upstream-mirror-authored commits (arriving via [upstream-sync stitches](../operations/upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history)) are skipped; merge commits always pass. | `pull-requests: read` | <30 s |
 | `defender-graph-probe.yml` | weekly cron | Probe the Defender Graph beta endpoints (deferred features) to detect when MS ships them GA. Reports to step summary. | `id-token: write`, `contents: read` | ~2 min |
 | `deploy.yml` | push to main (paths: `detections/**`) + manual | Apply changed detection content to every prod-role Sentinel workspace + Defender. Includes post-deploy smoke + audit-verify gate. Skips bot-authored mirror commits. | `id-token: write`, `contents: write` (state branch) | ~5–15 min |
-| `drift.yml` | daily cron + PR comment | Compare tenant ↔ `detections/`; open / update a drift PR when remote state diverges. Two jobs: `drift-pr` (read-only diff) + `drift-write` (commit if drift). | `contents: write`, `pull-requests: write`, `id-token: write` | ~5 min |
+| `drift.yml` | daily cron + PR comment | Compare tenant ↔ `detections/`; open / update a drift PR when remote state diverges. Two jobs: `drift-pr` (read-only diff; same-repo PRs only) + `drift-write` (commit if drift). | `contents: write`, `pull-requests: write`, `id-token: write` | ~5 min |
 | `e2e-capability-tests.yml` | weekly cron + manual | Full CLI capability matrix (every leaf command × offline / mocked / live mode). Non-destructive sandbox. | `contents: read`, `id-token: write` (live mode) | ~10 min |
 | `emergency-disable.yml` | manual | Break-glass: branch + `contentops disable <rule>` + commit + open PR. Wall-clock target <5 min from dispatch to opened PR. Does NOT auto-apply. | `contents: write`, `pull-requests: write` | ~1 min |
-| `integration-deploy.yml` | PR (paths: `detections/**`) + manual | Deploy changed detections to the integration workspace as a smoke test. PR-time `--changed-since` + `--continue-on-error` so one broken rule doesn't block a merge. | `id-token: write`, `contents: read` | ~3–10 min |
-| `integration.yml` | manual + scheduled (DANGER flag) | Live tenant integration tests. Requires explicit ack input. | `id-token: write`, `contents: read` | ~10 min |
+| `integration-deploy.yml` | PR (paths: `detections/**`; same-repo PRs only) + manual | Deploy changed detections to the integration workspace as a smoke test. PR-time `--changed-since` + `--continue-on-error` so one broken rule doesn't block a merge. Runs the PR's code with the `integration` identity — see [SECURITY.md](../../SECURITY.md#ci-trust-model-for-pull-requests). | `id-token: write`, `contents: read` | ~3–10 min |
+| `integration.yml` | manual (explicit ack input) + PR label `run-integration` | Live tenant integration tests against the integration workspace (`integration` environment). | `id-token: write`, `contents: read` | ~10 min |
 | `kql-schemas-refresh.yml` | weekly cron (Mon) + manual | Refresh `tools/kql_strict/schemas.json` from live Log Analytics workspace metadata (Sentinel tables + Defender XDR pseudo-tables); opens a schema-refresh PR on change. | `contents: write`, `pull-requests: write`, `id-token: write` | ~3 min |
 | `lock-unlock.yml` | manual | Wrapper around `contentops lock` / `unlock`. Mutates a YAML file and opens a PR for review. | `contents: write`, `pull-requests: write` | ~1 min |
 | `portfolio.yml` | weekly cron | Generate per-detection CSV + JSON + summary. Posts summary to a tracked file or issue. | `contents: read`, `pull-requests: write` (summary) | ~2 min |
@@ -74,18 +74,20 @@ but lose the operator's "which workflow do I click" mental model.
 | `spelling.yml` | PR + manual | codespell over envelope prose, docs, and Python source. Config + domain ignore-list in `.codespellrc`. | `contents: read` | <1 min |
 | `state-adopt.yml` | manual | Pull the state branch, run `contentops state adopt` (records rules already in sync with the tenant as managed; read-only against Azure), push the state branch. Dry-run by default; `automation` environment, same identity as `collect.yml`. | `contents: write` (state branch), `id-token: write` | ~5 min |
 | `status-refresh.yml` | daily cron + manual | Pull the per-env state branch, then regenerate `docs/status/` pages from live L1–L7 conformance + state + audit; commits any diff directly to main. | `contents: write`, `id-token: write` | ~3 min |
-| `tuning-impact-preview.yml` | PR | When a PR adds a drift suppression, comment with its 30-day blast radius (alerts + incidents the suppression would have silenced). | `pull-requests: write`, `id-token: write` | ~2 min |
+| `tuning-impact-preview.yml` | PR (same-repo PRs only) | When a PR adds a drift suppression, comment with its 30-day blast radius (alerts + incidents the suppression would have silenced). | `pull-requests: write`, `id-token: write` | ~2 min |
 | `upstream-watchers.yml` | weekly cron + manual | Poll Microsoft's content-package + alert-rule-template catalogs; update `manifests/` + `docs/whats-new/` and open a PR when upstream changed. | `contents: write`, `pull-requests: write`, `id-token: write` | ~2 min |
-| `validate.yml` | PR + push to main + nightly cron + manual | Envelope parse + strict lint + plan + version-bump + PR-added URL check (PR gate job); lint-regression job catches tightened rules outside PR flow. | `contents: read`, `id-token: write` (optional schema refresh) | ~2 min |
+| `validate.yml` | PR + push to main + nightly cron + manual | Envelope parse + strict lint (committed schema baseline) + plan + version-bump + PR-added URL check (PR gate job, no Azure credentials); lint-regression job catches tightened rules outside PR flow. | `contents: read` | ~2 min |
 
 ## Composite actions
 
-Two reusable composite actions live under `.github/actions/`:
+Four reusable composite actions live under `.github/actions/`:
 
 | Path | Purpose |
 |---|---|
-| `.github/actions/pipeline-setup/action.yml` | Checkout + `setup-python@v5` + `pip install` + `azure/login@v2` (OIDC). Used by every workflow that touches Azure. Materialises `config/tenant.yml` from secret. |
-| `.github/actions/notify-workflow-failure/action.yml` | Post a step-summary block on failure with the run URL + trigger context. Used by long-running workflows. |
+| `.github/actions/pipeline-setup/action.yml` | Checkout + `setup-python` + `pip install` + `azure/login` (OIDC). Used by most workflows that touch Azure. Materialises `config/tenant.yml` from the secret via `scripts/materialise_tenant_config.py` (a committed file that differs from the secret fails the job). |
+| `.github/actions/lint-strict/action.yml` | Build the `kql_strict` wrapper, optional pre-PR schema refresh, then `contentops lint --strict`. |
+| `.github/actions/auto-pr/action.yml` | Detect working-tree changes and open a PR (collect, drift, refresh workflows). |
+| `.github/actions/notify-workflow-failure/action.yml` | Open / comment on a dedup'd `pipeline-alert` issue when a scheduled run fails. |
 
 ## Branch protection alignment
 
@@ -95,7 +97,9 @@ following checks: `dco`, `spdx-headers`, `bandit`, `semgrep`,
 to job names inside the workflow files (not the workflow filenames),
 e.g. `bandit` and `semgrep` are jobs inside `sast.yml`; `cli-smoke`
 + `pytest` are jobs inside `ci.yml`; `actionlint` is a job inside
-its own check (verify in repo settings before assuming).
+its own check (verify in repo settings before assuming). `ci.yml`'s
+`kql-strict` job (every KQL query the tool builds, bound against the cached schema) is not
+in that list; add it to branch protection to make it blocking.
 
 When adding a new workflow that should be required for merge,
 update branch protection in the repo settings — this index does

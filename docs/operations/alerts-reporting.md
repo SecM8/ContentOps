@@ -332,12 +332,17 @@ contentops alerts health --period 30d \
 
 Each alert is mapped to its originating detection via:
 
-1. **ARM resource ID** (Sentinel): `relatedAnalyticRuleIds` from the
-   incident contains the GUID matching `envelope.arm_name`.
+1. **Rule id** (Sentinel): `relatedAnalyticRuleIds` from the incident
+   (or the alert's `AlertType`, `<workspace-guid>_<rule>`) names the
+   rule the detection deploys under — `metadata.arm_name`, else the
+   envelope id.
 2. **Title matching** (Graph / Defender XDR): `alert.title` matches
-   `payload.displayName` (case-insensitive).
+   `payload.displayName` or, for Defender custom detections,
+   `detectionAction.alertTemplate.title` (case-insensitive).
+3. **Alert name format prefix** and **substring containment** as
+   fallbacks for templated alert names.
 
-ARM match takes priority over title match.
+The rule-id match takes priority over title matching.
 
 ### Recommendations
 

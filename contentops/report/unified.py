@@ -21,6 +21,7 @@ from contentops.alerts.detection_health import (
     DetectionHealthRow,
 )
 from contentops.alerts.health_snapshot import HealthDelta
+from contentops.coverage.matrix import ENTERPRISE_TACTICS
 from contentops.report.assemble import ReportRow, ReportSummary
 from contentops.report.snapshot import ReportDelta
 
@@ -531,7 +532,12 @@ def _render_executive(
     parts.append(_score_gauge(score))
 
     cards = []
-    cards.append(_card("Active Detections", str(summary.production), f"{summary.coverage_pct}% MITRE coverage"))
+    # The count and the % describe the same detections (the coverage scope).
+    counted = (
+        summary.in_scope_detections
+        if summary.in_scope_detections is not None else summary.production
+    )
+    cards.append(_card("Active Detections", str(counted), f"{summary.coverage_pct}% MITRE coverage"))
 
     if health:
         healthy = sum(1 for r in health.rows if r.recommendation == "HEALTHY")
@@ -578,9 +584,14 @@ def _render_ciso(
 ) -> str:
     parts: list[str] = []
 
-    # MITRE coverage heatmap
-    tactic_data: dict[str, dict[str, int]] = {}
-    for r in rows:
+    # MITRE coverage heatmap: the in-scope detections (same scope as the
+    # coverage %), every Enterprise tactic listed so uncovered ones show
+    # as GAP.
+    scoped_rows = [r for r in rows if r.in_coverage_scope]
+    tactic_data: dict[str, dict[str, int]] = {
+        t: {"detections": 0, "with_alerts": 0, "silent": 0} for t in ENTERPRISE_TACTICS
+    }
+    for r in scoped_rows:
         for t in r.tactics:
             if t not in tactic_data:
                 tactic_data[t] = {"detections": 0, "with_alerts": 0, "silent": 0}
@@ -588,7 +599,7 @@ def _render_ciso(
 
     if health:
         health_by_id = {r.detection_id: r for r in health.rows}
-        for r in rows:
+        for r in scoped_rows:
             hr = health_by_id.get(r.rule_id)
             if hr and hr.alert_count > 0:
                 for t in r.tactics:
@@ -599,10 +610,11 @@ def _render_ciso(
                     if t in tactic_data:
                         tactic_data[t]["silent"] += 1
 
-    if tactic_data:
+    if scoped_rows:
         parts.append("<h3>MITRE ATT&CK Coverage</h3>")
         tactic_rows = []
-        for tactic in sorted(tactic_data.keys()):
+        order = [t for t in ENTERPRISE_TACTICS] + sorted(set(tactic_data) - set(ENTERPRISE_TACTICS))
+        for tactic in order:
             d = tactic_data[tactic]
             total = d["detections"]
             active = d["with_alerts"]
@@ -715,6 +727,8 @@ def _render_threat_hunter(rows: list[ReportRow], health: DetectionHealthReport |
     tech_count: Counter[str] = Counter()
     tech_alerts: Counter[str] = Counter()
     for r in rows:
+        if not r.in_coverage_scope:
+            continue
         for t in r.techniques:
             tech_count[t] += 1
 
