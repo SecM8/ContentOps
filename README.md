@@ -17,6 +17,12 @@ validates, lints, plans, applies via ARM REST + Graph beta, watches
 for portal-side drift, and writes a hash-chained audit trail of
 every write.
 
+> **Scope.** ContentOps manages detection *content* only. It does not
+> provision or change infrastructure. It deploys to an existing
+> Sentinel workspace and Defender XDR tenant. For a reviewer-friendly
+> overview of the flow, permissions, and every pipeline, see
+> [`docs/reference/how-it-works.md`](docs/reference/how-it-works.md).
+
 > **CLI.** `contentops` is the only entry point after
 > `pip install -e .`. Both `contentops <cmd>` and
 > `python -m contentops <cmd>` work.
@@ -254,6 +260,7 @@ if a GHEC org with SAML SSO returns 404 on `git push` or `gh repo view`.
 
 Once you're past Day-1, these are the docs to bookmark.
 
+- [`docs/reference/how-it-works.md`](docs/reference/how-it-works.md): what the tool does (and doesn't), auth, permissions, and every pipeline in one page; written for security reviewers.
 - [`docs/quickstart.md`](docs/quickstart.md) — deploy your first detection in 15 minutes.
 - [`docs/glossary.md`](docs/glossary.md) — pipeline vocabulary on one page.
 - [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — daily flow, when-things-break decision tree.
