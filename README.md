@@ -103,6 +103,23 @@ python -m contentops plan --role prod                # read-only diff vs the ten
 
 ### Permissions: grant only what you use
 
+**App Registration at a glance**
+
+- **Sign-in:** OAuth 2.0 client credentials (app-only). No SAML, no
+  interactive user sign-in for the app.
+  - **CI (recommended):** OIDC workload identity federation from GitHub
+    Actions. No client secret or certificate is stored anywhere.
+  - **Local only:** a client secret (`.env`, gitignored) or a
+    certificate (via `az login --service-principal --certificate`) is
+    possible, or `az login` with your own account. For security, keep
+    secrets and certificates off CI and rotate them.
+- **Scope:** Azure roles are assigned on the Sentinel workspace's
+  resource group only, not on the subscription.
+- **Graph permissions:** Application type (not Delegated), with admin consent.
+- **Not needed:** Owner, User Access Administrator, or any Entra
+  directory role for the app; user provisioning (SCIM); Conditional
+  Access policies; App Proxy.
+
 The identity ContentOps authenticates as needs at most four permission
 surfaces, and the pipeline **degrades gracefully** — read-only grants work
 (everything except deploy), read-write grants enable deploy, and the two
