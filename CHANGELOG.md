@@ -12,6 +12,16 @@ from the commit history.
 
 ### Added
 
+- **Lint rule KQL009: query-length advisory (warning).** Fires when a
+  Sentinel `query` or Defender `queryText` exceeds 10,000 characters,
+  the figure Microsoft documents for a Sentinel analytics rule. The
+  message names the usual cause (a static list that belongs in a
+  watchlist or a user-defined function) and is phrased per asset kind;
+  for `defender_custom_detection`, which documents no limit, it is
+  advisory. Warning severity, so the default `validate` gate does not
+  block on it. Pinned by `tests/v2/test_lint_query_length.py` and the
+  severity table in `tests/v2/test_lint_coverage.py`.
+
 - **Opt-in PR landing for generated output (`CONTENTOPS_LAND_VIA_PR`).**
   `status-refresh.yml`, `coverage.yml` and `report.yml` used to `git push`
   their regenerated status pages, Navigator layer / badge and reports
@@ -93,6 +103,15 @@ from the commit history.
   [`operations/adopt.md`](docs/operations/adopt.md).
 
 ### Changed
+
+- **Payload models no longer cap query length.** `SentinelScheduledPayload`,
+  `SentinelNRTPayload` and `DefenderQueryCondition` used to reject a
+  query longer than 10,000 characters as a validation error, which made
+  `contentops plan` exit 1 for the whole tree (and `cli-smoke` fail on
+  every PR) as soon as one such rule was present. Rules collected back
+  from live tenants exceed that figure and the ARM / Graph APIs accept
+  and run them, so the models now only require a non-empty Sentinel
+  query; the length moved to the new KQL009 lint warning.
 
 - **Conformance L4 accepts both OIDC subject formats; L7 understands
   rulesets.** GitHub repositories created after 2026-07-15 emit immutable

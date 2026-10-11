@@ -247,14 +247,45 @@ def _check_cross_scope(query: str, stripped: str) -> list[LintFinding]:
     return out
 
 
+# Microsoft documents 1-10,000 characters for a Sentinel analytics rule
+# query. The ARM API accepts and runs longer queries (rules collected back
+# from live tenants exceed the figure), so the payload models no longer cap
+# the length and this rule warns instead: an oversized query almost always
+# carries a static list that belongs in a watchlist or a user-defined
+# function.
+QUERY_LENGTH_ADVISORY = 10_000
+
+
+def _check_query_length(query: str, kind: str | None) -> list[LintFinding]:
+    length = len(query)
+    if length <= QUERY_LENGTH_ADVISORY:
+        return []
+    if kind == "defender_custom_detection":
+        scope = (
+            "Defender documents no query-length limit for custom detections, "
+            "so this is advisory"
+        )
+    else:
+        scope = (
+            "Microsoft documents 10,000 characters as the maximum for a "
+            "Sentinel analytics rule query (the service accepts and runs "
+            "longer ones)"
+        )
+    return [LintFinding(
+        "KQL009", "warning",
+        f"query is {length:,} characters, above the {QUERY_LENGTH_ADVISORY:,}"
+        f"-character advisory — {scope}. Move static lists into a watchlist "
+        "or a user-defined function to shorten it",
+        1,
+    )]
+
+
 def lint_kql(query: str, *, kind: str | None = None) -> list[LintFinding]:
     """Run all KQL lint rules over `query`.
 
-    `kind` (optional) is accepted for forward compatibility with rules
-    that key off the asset kind; the current heuristic rules are kind-
-    agnostic.
+    `kind` (optional) is the asset kind (``Asset.value``); KQL009 phrases
+    its advice per kind, the other heuristic rules are kind-agnostic.
     """
-    del kind  # currently unused; reserved for future per-kind rules
     findings: list[LintFinding] = []
     findings.extend(_check_non_empty(query))
     stripped, ended_in_string = _strip_strings_and_comments(query)
@@ -266,6 +297,7 @@ def lint_kql(query: str, *, kind: str | None = None) -> list[LintFinding]:
     findings.extend(_check_union_star(query, stripped))
     findings.extend(_check_externaldata(query, stripped))
     findings.extend(_check_cross_scope(query, stripped))
+    findings.extend(_check_query_length(query, kind))
     return findings
 
 

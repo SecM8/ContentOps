@@ -207,6 +207,7 @@ _EXPECTED_SEVERITIES: dict[str, str] = {
     "KQL006": "warning",    # evaluate bag_unpack
     "KQL007": "error",      # union *
     "KQL008": "warning",    # externaldata() references external infra
+    "KQL009": "warning",    # query longer than the 10,000-char advisory
     "KQL010": "error",      # cluster()/workspace() cross-scope
     # Snippet rules in contentops/lint/snippets.py (Phase 4)
     "KQLOVERRIDE001": "error",
@@ -279,6 +280,8 @@ def _all_emitted_severities() -> dict[str, set[str]]:
         _record(lint_kql(bad_query, kind=kind))
     # Empty query -> KQL003
     _record(lint_kql("   \n  // only comment\n", kind="sentinel_analytic"))
+    # Oversized query -> KQL009 (comment padding trips nothing else)
+    _record(lint_kql("T\n" + "// pad\n" * 2_000, kind="sentinel_analytic"))
 
     # Snippet-placeholder rules (KQLOVERRIDE001-003)
     _record(lint_kql_placeholders(

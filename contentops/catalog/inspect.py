@@ -294,6 +294,7 @@ _RULE_REGISTRY: tuple[tuple[str, str, str], ...] = (
     ("KQL006", "warning", "contentops.lint.kql"),
     ("KQL007", "error",   "contentops.lint.kql"),
     ("KQL008", "warning", "contentops.lint.kql"),  # externaldata()
+    ("KQL009", "warning", "contentops.lint.kql"),  # query longer than the 10,000-char advisory
     ("KQL010", "error",   "contentops.lint.kql"),  # cluster()/workspace() cross-scope
     ("KQL101", "error",   "contentops.lint.strict_rules"),
     ("KQLOVERRIDE001", "error", "contentops.lint.snippets"),

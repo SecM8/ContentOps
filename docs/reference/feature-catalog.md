@@ -274,6 +274,9 @@ KQL rules in [`contentops/lint/kql.py`](../../contentops/lint/kql.py):
 | KQL005 | warning  | Bare `\| take` with no number. KQL101 (strict mode) catches the operator regardless of argument; KQL005 stays a warning at the heuristic tier so non-strict runs still see it. |
 | KQL006 | warning  | `evaluate bag_unpack` (expensive). |
 | KQL007 | error    | `union *` / `union kind=inner *` (reads every table). |
+| KQL008 | warning  | `externaldata()` references external infrastructure — the source URL must be approved and auditable. |
+| KQL009 | warning  | Query longer than 10,000 characters, the figure Microsoft documents for a Sentinel analytics rule query. The service accepts and runs longer queries (rules collected back from live tenants exceed it), so the payload models no longer cap the length; the warning points at the usual cause, a static list that belongs in a watchlist or a user-defined function. Advisory for `defender_custom_detection`, which documents no limit. |
+| KQL010 | error    | `cluster()` / `workspace()` cross-scope reference — a detection must target only the workspace it is deployed to. |
 
 Payload rule in [`contentops/lint/payload.py`](../../contentops/lint/payload.py):
 

@@ -454,7 +454,7 @@ What runs at PR time, in order:
 1. **`contentops validate`** (legacy v1 entrypoint) — Pydantic
    schema, unique ids, unique Defender displayNames. Still wired in
    `validate.yml`.
-2. **`contentops lint`** — KQL static checks (KQL001-KQL007),
+2. **`contentops lint`** — KQL static checks (KQL001-KQL010),
    payload-contract checks (PAYLOAD001 + PAYLOAD002), snippet-
    substitution rules (KQLOVERRIDE001-004), and `--strict` mode
    adds policy rule KQL101 (`\| take` / `\| limit` forbidden).

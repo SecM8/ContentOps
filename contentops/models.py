@@ -213,7 +213,11 @@ class SentinelScheduledPayload(BaseModel):
     description: str | None = None
     enabled: bool = True
     severity: Severity
-    query: str = Field(min_length=1, max_length=10_000)
+    # No upper bound: the ARM API accepts and runs queries longer than the
+    # 10,000 characters Microsoft documents for analytics rules (rules
+    # collected back from live tenants exceed it). Lint rule KQL009 warns
+    # above that figure instead of failing validation here.
+    query: str = Field(min_length=1)
     queryFrequency: str
     queryPeriod: str
     triggerOperator: TriggerOperator
@@ -264,7 +268,11 @@ class SentinelNRTPayload(BaseModel):
     description: str | None = None
     enabled: bool = True
     severity: Severity
-    query: str = Field(min_length=1, max_length=10_000)
+    # No upper bound: the ARM API accepts and runs queries longer than the
+    # 10,000 characters Microsoft documents for analytics rules (rules
+    # collected back from live tenants exceed it). Lint rule KQL009 warns
+    # above that figure instead of failing validation here.
+    query: str = Field(min_length=1)
     suppressionEnabled: bool | None = None
     suppressionDuration: str | None = None
     tactics: list[AttackTactic] | None = None
@@ -438,7 +446,9 @@ class DefenderDetectionAction(BaseModel):
 
 class DefenderQueryCondition(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    queryText: str = Field(max_length=10_000)
+    # No upper bound (see SentinelScheduledPayload.query); KQL009 is
+    # advisory for Defender, which documents no query-length limit.
+    queryText: str
 
 
 class DefenderPayload(BaseModel):

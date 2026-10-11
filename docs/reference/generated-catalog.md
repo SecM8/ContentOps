@@ -215,6 +215,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 | `KQL006` | warning | `contentops.lint.kql` |
 | `KQL007` | error | `contentops.lint.kql` |
 | `KQL008` | warning | `contentops.lint.kql` |
+| `KQL009` | warning | `contentops.lint.kql` |
 | `KQL010` | error | `contentops.lint.kql` |
 | `KQL101` | error | `contentops.lint.strict_rules` |
 | `KQLOVERRIDE001` | error | `contentops.lint.snippets` |
@@ -290,7 +291,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **183** files, **2132** test functions. Integration: **11** files, **15** test functions.
+Unit: **184** files, **2140** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -404,6 +405,7 @@ Unit: **183** files, **2132** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_lint_new_rules.py` | 21 |
 | `tests/v2/test_lint_payload002_slug_truncation.py` | 13 |
 | `tests/v2/test_lint_payload_defender.py` | 10 |
+| `tests/v2/test_lint_query_length.py` | 8 |
 | `tests/v2/test_lint_strict.py` | 13 |
 | `tests/v2/test_lint_strict_config.py` | 13 |
 | `tests/v2/test_lint_strict_dotnet.py` | 5 |

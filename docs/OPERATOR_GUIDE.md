@@ -593,6 +593,7 @@ The 8-step playbook from KQL idea → production rule.
       KQL002  unterminated string - look for missing close-quote
       KQL004  project * - project explicit columns instead
       KQL007  union *  - replace with explicit table list
+      KQL009  query > 10,000 chars - move static lists to a watchlist / function (warning)
       KQL101  | take / | limit  - use ``top N by`` for bounded results
       PAYLOAD001  templateVersion without alertRuleTemplateName
       PAYLOAD002  displayName slug > 80 chars (advisory)
