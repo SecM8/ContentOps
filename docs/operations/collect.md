@@ -150,6 +150,16 @@ By default the SDK loggers (`azure.identity`, `azure.core`, `httpx`,
 ~25–30 lines. Pass `-v` for `INFO` or `-vv` for `DEBUG` to debug
 auth / HTTP issues.
 
+## Watchlists come back without rows
+
+Every collected `sentinel_watchlist` envelope is definition-only:
+`rawContent` is an input-only ARM property (parsed into items on PUT,
+never returned on GET) and collect does not read the `watchlistItems`
+child resource. Applying such an envelope uploads nothing and drift
+compares the definition only. Why, what it covers, and the three ways
+to handle it are in
+[`docs/assets/sentinel_watchlist_sas.md`](../assets/sentinel_watchlist_sas.md#collected-watchlists-carry-no-rows).
+
 ## Round-trip contract
 
 After `contentops collect`, running `contentops drift` against the same

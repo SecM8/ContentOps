@@ -113,7 +113,10 @@ anything.
    request on a `collect/<run-id>` branch with a `chore(collect):`
    commit. Resource names and GUIDs are preserved in `metadata.arm_name`
    and `payload.watchlistAlias`, so a later deploy updates the same
-   resources rather than creating new ones.
+   resources rather than creating new ones. Watchlists arrive as
+   **definitions without rows**; that is the API's behaviour, not a
+   failed collect
+   ([why, and the options](../assets/sentinel_watchlist_sas.md#collected-watchlists-carry-no-rows)).
 2. **Held checks.** If the PR was opened with `GITHUB_TOKEN`, its
    workflow runs sit in *action required*. Open the Checks tab and
    *Approve and run*. An approved `AUTO_PR_TOKEN` removes this step.

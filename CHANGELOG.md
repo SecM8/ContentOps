@@ -12,6 +12,17 @@ from the commit history.
 
 ### Added
 
+- **Docs: why collected watchlists carry no rows.** `rawContent` is
+  input-only on the ARM watchlist resource and collect does not read
+  `watchlistItems`, so a first collect writes every watchlist as a
+  metadata-only envelope: `apply` skips it, drift compares the
+  definition only. The watchlist asset page now has a section with the
+  API facts, what each operation covers and the three ways to handle
+  it (portal-owned rows, hand-populated `rawContent` with a
+  personal-data caution, or a future opt-in item collect tracked as an
+  open gap); linked from the collect page, asset coverage, the
+  troubleshooting page and the deployment-fork walkthrough.
+
 - **`docs/operations/deployment-fork-walkthrough.md`.** One ordered page
   for a team's first day with a private deployment fork under
   organization rulesets: decisions, fork and clone, repository settings,

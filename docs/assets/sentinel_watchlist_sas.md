@@ -136,6 +136,53 @@ as part of the deploy workflow, e.g.:
   run: contentops apply --path /tmp --asset sentinel_watchlist
 ```
 
+## Collected watchlists carry no rows
+
+A `contentops collect` run writes every watchlist in the tenant as a
+**metadata-only envelope**: display name, alias, provider, source,
+search key, description, labels, retention. No `rawContent`, no
+`sasUri`, no items. That is what the first collect of any existing
+tenant looks like, and it is expected, for two reasons on the API side:
+
+- `rawContent` is an **input-only** property of the ARM watchlist
+  resource. Microsoft's schema describes it as "the raw content that
+  represents the watchlist items to create": the service parses it into
+  items on PUT and does not return it on GET. The handler re-fetches
+  each watchlist individually hoping for it (`to_envelope` in
+  [`contentops/handlers/sentinel_watchlist.py`](../../contentops/handlers/sentinel_watchlist.py))
+  and the service still answers without it.
+- The rows live in a separate child resource, `watchlistItems`. Collect
+  does not read it; the handler only reads it after an apply, to compare
+  the item count with the CSV it just uploaded.
+
+What that means for a collected watchlist:
+
+| Operation | What it covers |
+|---|---|
+| `apply` | nothing to upload; the handler reports `skipped (no-content)` |
+| `drift` | the definition only; rows edited in the portal are invisible |
+| `state adopt` / status page | "in-sync" refers to the definition |
+| `prune` | the watchlist counts as managed and is never an orphan |
+
+Three ways to work with that boundary:
+
+1. **Keep rows portal-owned** (the default). Nothing to do; tell the
+   team drift does not cover watchlist rows.
+2. **Bring a list under change control by hand.** Export the rows,
+   paste them into `rawContent` as CSV, apply: the handler uploads the
+   items and verifies the count on every deploy from then on. Stay
+   under 3.5 MB, keep the `itemsSearchKey` column in the header, and
+   strip the system columns that `_GetWatchlist()` adds (`SearchKey`,
+   `_DTItemId`, `LastUpdatedTimeUTC`, `TenantId`, `WatchlistId`). Lists
+   of people (admin accounts, VIPs, leavers) are personal data; decide
+   with the data owner before committing them, private repository or
+   not.
+3. **Collect the rows.** An opt-in collect mode that reads
+   `watchlistItems`, rebuilds the CSV sorted by the search key and
+   writes it into `rawContent` would make drift cover row changes and
+   give every list a backup in git. Not built yet; tracked in
+   [`docs/reference/gap-assessment.md`](../reference/gap-assessment.md#full-gap-table).
+
 ## Limitations
 
 - ARM rejects SAS URLs without read permission on the blob; verify

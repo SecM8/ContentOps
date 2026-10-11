@@ -573,6 +573,26 @@ contentops collect --role prod --asset sentinel_analytic --full
 contentops collect --role prod --clear
 ```
 
+### Collected watchlist YAML has no items
+
+**Looks like:** every file under `detections/sentinel_watchlist/`
+carries `displayName`, `itemsSearchKey`, `provider`, `source` and
+the alias, but no `rawContent`, no `sasUri` and no rows.
+
+**Why:** this is what the API gives back. `rawContent` is input-only
+on the ARM watchlist resource (parsed into items on PUT, not returned
+on GET), and the rows live in the `watchlistItems` child resource,
+which collect does not read. The envelope is a metadata-only
+watchlist by design: `apply` reports `skipped (no-content)`, drift
+compares the definition only, the status page's "in-sync" refers to
+the definition.
+
+**Fix:** nothing to fix if rows stay portal-owned. To put a list
+under change control, export its rows into `rawContent` (CSV, under
+3.5 MB, search-key column present, `_GetWatchlist()` system columns
+stripped) and apply. Details and the personal-data caution:
+[`docs/assets/sentinel_watchlist_sas.md`](assets/sentinel_watchlist_sas.md#collected-watchlists-carry-no-rows).
+
 ### `unmanaged` on every row of the deployments status page
 
 **Looks like:** `docs/status/deployments.md` reports `0 in-sync` and
