@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""KQL101 — `| take` / `| limit` forbidden in production detections."""
+"""KQL101 — `| take` / `| limit` in production detections (warning).
+
+KQL101 is a policy advisory: it always fires, at warning severity, so
+the default ``contentops lint`` gate (errors only) does not block on
+it while ``--fail-on-warn`` still makes it gating on demand.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +26,7 @@ def test_kql101_flags_take() -> None:
     findings = list(no_take_or_limit("T | take 100"))
     assert len(findings) == 1
     assert findings[0].rule_id == "KQL101"
-    assert findings[0].severity == "error"
+    assert findings[0].severity == "warning"
     assert "take" in findings[0].message
 
 
@@ -86,7 +91,8 @@ def test_kql101_flags_multiple_occurrences() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI integration — `contentops lint --strict` flags KQL101 + exits non-zero
+# CLI integration — `contentops lint --strict` reports KQL101 as a warning;
+# exit code is 0 by default and 1 with --fail-on-warn
 # ---------------------------------------------------------------------------
 
 
@@ -122,7 +128,7 @@ def _indent(text: str, n: int) -> str:
     return "\n".join(pad + line for line in text.splitlines())
 
 
-def test_cli_lint_strict_flags_take_and_exits_nonzero(tmp_path: Path) -> None:
+def test_cli_lint_strict_reports_take_as_warning_and_exits_zero(tmp_path: Path) -> None:
     detections = tmp_path / "detections" / "sentinel_analytic"
     _write_rule(
         detections,
@@ -133,9 +139,24 @@ def test_cli_lint_strict_flags_take_and_exits_nonzero(tmp_path: Path) -> None:
         "lint", "--strict",
         "--path", str(tmp_path / "detections"),
     ])
+    assert result.exit_code == 0, result.output
+    assert "KQL101 warning" in result.output
+    assert "take" in result.output
+
+
+def test_cli_lint_strict_fail_on_warn_makes_take_gating(tmp_path: Path) -> None:
+    detections = tmp_path / "detections" / "sentinel_analytic"
+    _write_rule(
+        detections,
+        "SecurityEvent\n| where TimeGenerated > ago(1h)\n| take 1",
+    )
+
+    result = CliRunner().invoke(cli, [
+        "lint", "--strict", "--fail-on-warn",
+        "--path", str(tmp_path / "detections"),
+    ])
     assert result.exit_code == 1, result.output
     assert "KQL101" in result.output
-    assert "take" in result.output
 
 
 def test_cli_lint_strict_clean_rule_passes(tmp_path: Path) -> None:

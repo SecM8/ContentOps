@@ -457,7 +457,7 @@ What runs at PR time, in order:
 2. **`contentops lint`** — KQL static checks (KQL001-KQL010),
    payload-contract checks (PAYLOAD001 + PAYLOAD002), snippet-
    substitution rules (KQLOVERRIDE001-004), and `--strict` mode
-   adds policy rule KQL101 (`\| take` / `\| limit` forbidden).
+   adds policy rule KQL101 (`\| take` / `\| limit`, warning).
    See [`contentops/lint/kql.py`](../../contentops/lint/kql.py),
    [`contentops/lint/payload.py`](../../contentops/lint/payload.py),
    [`contentops/lint/snippets.py`](../../contentops/lint/snippets.py),

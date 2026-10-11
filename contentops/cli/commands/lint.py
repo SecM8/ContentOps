@@ -44,7 +44,7 @@ from contentops.lint.runner import lint_assets
     "--strict", "strict_mode", is_flag=True, default=False,
     help=(
         "Augment regex lint with strict policy rules (F1). Ships "
-        "with KQL101 (`| take` / `| limit` forbidden in production). "
+        "with KQL101 (`| take` / `| limit` in production rules, warning). "
         "If the optional Kusto.Language wrapper is installed at "
         "tools/kql_strict.dll, its semantic diagnostics are layered "
         "on top; otherwise an advisory is printed once and Python "

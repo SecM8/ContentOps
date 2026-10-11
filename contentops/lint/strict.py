@@ -8,8 +8,8 @@
 1. **Built-in Python rules** (``contentops.lint.strict_rules``).
    These always run and encode policy-level checks that go
    beyond the heuristics in ``contentops.lint.kql``. The first
-   shipped rule is KQL101 (``| take``/``| limit`` forbidden in
-   production detections). New rules drop into the registry
+   shipped rule is KQL101 (``| take``/``| limit`` in production
+   detections, warning severity). New rules drop into the registry
    in ``strict_rules.py`` — see that module for the contract.
 
 2. **Optional Kusto.Language wrapper** (this module). When a

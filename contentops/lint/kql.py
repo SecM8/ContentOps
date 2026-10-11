@@ -239,9 +239,14 @@ def _check_cross_scope(query: str, stripped: str) -> list[LintFinding]:
     for m in _CROSS_SCOPE.finditer(stripped):
         op = m.group(1)
         out.append(LintFinding(
-            "KQL010", "error",
-            f"`{op}()` crosses workspace/cluster scope — detections must "
-            "target only the workspace they are deployed to",
+            "KQL010", "warning",
+            f"`{op}()` reads outside the deployed workspace — Sentinel "
+            "supports cross-workspace analytics rules (up to 20 workspaces "
+            "per query; alerts land only in the rule's home workspace; "
+            "cross-tenant rules run under their creator's credentials and "
+            "auto-disable when that access is lost), but the reference is "
+            "not portable across a multi-workspace deploy and widens the "
+            "rule's data scope. Confirm it is intended",
             _line_of(query, m.start()),
         ))
     return out

@@ -40,13 +40,17 @@ jobs:
         # step (see invariant in CONTRIBUTING / OPERATOR_GUIDE about
         # auto-deploy short-circuits for bot-mirror commits).
         #
-        # Limitation: this only checks the HEAD commit subject. A
-        # PR that mixes a chore(collect) commit with a real
-        # human-authored promotion in a separate commit would
-        # currently skip — that mixed shape isn't expected, and a
-        # reviewer can require a clean PR. If it becomes a real
-        # problem, the script can be taught to per-rule diff against
-        # only the human-authored commits in the PR range.
+        # Two signals are checked: the PR head branch (`collect/*` and
+        # `drift/auto-*`, the branches collect.yml / drift.yml create)
+        # and the head commit subject. The branch check keeps the skip
+        # in place after GitHub's *Update branch* button adds a
+        # `Merge branch 'main' into collect/...` head commit, whose
+        # subject never matches the chore(collect|drift) regex.
+        #
+        # Limitation: a PR that mixes a chore(collect) commit with a
+        # real human-authored promotion in a separate commit would
+        # still skip — that mixed shape isn't expected, and a reviewer
+        # can require a clean PR.
         #
         # Read the PR's *head* commit explicitly via $HEAD_SHA rather
         # than `git log -1` on the checkout. For a pull_request event
@@ -61,9 +65,23 @@ jobs:
         id: gate
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           subj=$(git log -1 --format=%s "$HEAD_SHA")
+          echo "Head branch        : $HEAD_REF"
           echo "Head commit subject: $subj"
+          case "$HEAD_REF" in
+            collect/*|drift/auto-*)
+              echo "::notice::Head branch $HEAD_REF is a tenant-mirror branch — collected/drifted content, not a human-initiated promotion. Skipping promotion gate."
+              {
+                echo "## Production promotion check: skipped"
+                echo ""
+                echo "Head branch \`$HEAD_REF\` is a \`collect/\` or \`drift/auto-\` branch. Collected and drift-reconciliation content is a snapshot of already-promoted rules in the tenant — the lifecycle.promotedAt gate does not apply. (Matching on the branch keeps the skip in place after the PR branch is updated with a merge commit from main.)"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           if echo "$subj" | grep -qE '^chore\((collect|drift)\):'; then
             echo "::notice::Head commit is a $subj — collected/drifted content, not a human-initiated promotion. Skipping promotion gate."
             {

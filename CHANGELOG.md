@@ -104,6 +104,23 @@ from the commit history.
 
 ### Changed
 
+- **Lint policy rules KQL101, KQLOVERRIDE001 and KQL010 are warnings.**
+  All three used to emit `error` and therefore failed the default
+  `validate` gate; a deployment fork's first collect snapshot showed
+  that each shape exists in healthy production tenants. `KQL101`
+  (`| take` / `| limit`) is a tuning choice, not a defect, and now
+  warns for every envelope status instead of erroring on production.
+  `KQLOVERRIDE001` fired on any `{{…}}` token, including Sentinel
+  template tokens such as `{{StartTimeISO}}`; the apply-time resolver
+  only substitutes exact `{{folder/file.yml}}` placeholders and passes
+  everything else to the service unchanged, so the finding is
+  advisory. `KQL010` (`cluster()` / `workspace()`) flags a
+  cross-workspace read that Sentinel supports (up to 20 workspaces per
+  query, alerts only in the home workspace, cross-tenant rules
+  auto-disable on lost access); the message now carries those caveats
+  and the portability / data-scope concern instead of blocking.
+  `contentops lint --fail-on-warn` still turns all three into a gate.
+
 - **Payload models no longer cap query length.** `SentinelScheduledPayload`,
   `SentinelNRTPayload` and `DefenderQueryCondition` used to reject a
   query longer than 10,000 characters as a validation error, which made
@@ -213,6 +230,15 @@ from the commit history.
   [`github-actions-setup.md`](docs/operations/github-actions-setup.md).
 
 ### Fixed
+
+- **`production-promotion-check.yml` skips collect / drift PRs by head
+  branch as well as head commit subject.** The gate only recognised a
+  `chore(collect|drift):` head commit, so GitHub's *Update branch*
+  button — which adds a `Merge branch 'main' into collect/...` head
+  commit — made it run the `lifecycle.promotedAt` check over every
+  collected rule and fail. A head branch of `collect/*` or
+  `drift/auto-*` (passed through `env`, never expanded in `run:`)
+  now skips the gate too, mirroring `deploy.yml`.
 
 - **Stale workflow reference rows.** `workflows.md` described
   `coverage.yml` as a weekly cron with `contents: read`; it runs on PR +

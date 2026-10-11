@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 KustoKing / SecM8
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression for L-2: KQL101 fires on production envelopes without --strict.
+"""Regression for L-2: KQL101 fires on every envelope without --strict.
 
 Previously ``no_take_or_limit`` lived only in the strict pipeline, so
 ``contentops lint`` (no flag) silently accepted a production rule
 with ``| take 100``. The runner now invokes the strict Python rules
-inline and downgrades severity to warning on non-production
-envelopes, mirroring the gradual-strict pattern used for META rules.
+inline for every status. KQL101 is a policy advisory and emits
+warning severity regardless of status (``--fail-on-warn`` makes it
+gating), so the two cases below pin the same severity.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ def _write(tmp_path: Path, content: str) -> Path:
     return target
 
 
-def test_kql101_errors_on_production_without_strict(tmp_path: Path) -> None:
+def test_kql101_warns_on_production_without_strict(tmp_path: Path) -> None:
     _write(tmp_path, _PROD_YAML)
     results = lint_assets(tmp_path, asset_filter=Asset.SENTINEL_ANALYTIC)
     assert results
@@ -50,7 +51,7 @@ def test_kql101_errors_on_production_without_strict(tmp_path: Path) -> None:
         f for r in results for f in r.findings if f.rule_id == "KQL101"
     ]
     assert len(k101) == 1
-    assert k101[0].severity == "error"
+    assert k101[0].severity == "warning"
 
 
 def test_kql101_warns_on_non_production_without_strict(tmp_path: Path) -> None:

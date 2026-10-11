@@ -216,9 +216,9 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 | `KQL007` | error | `contentops.lint.kql` |
 | `KQL008` | warning | `contentops.lint.kql` |
 | `KQL009` | warning | `contentops.lint.kql` |
-| `KQL010` | error | `contentops.lint.kql` |
-| `KQL101` | error | `contentops.lint.strict_rules` |
-| `KQLOVERRIDE001` | error | `contentops.lint.snippets` |
+| `KQL010` | warning | `contentops.lint.kql` |
+| `KQL101` | warning | `contentops.lint.strict_rules` |
+| `KQLOVERRIDE001` | warning | `contentops.lint.snippets` |
 | `KQLOVERRIDE002` | error | `contentops.lint.snippets` |
 | `KQLOVERRIDE003` | error | `contentops.lint.snippets` |
 | `KQLOVERRIDE004` | error | `contentops.lint.snippets` |
@@ -291,7 +291,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **184** files, **2140** test functions. Integration: **11** files, **15** test functions.
+Unit: **186** files, **2151** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -400,6 +400,7 @@ Unit: **184** files, **2140** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_landing_mode_workflows.py` | 16 |
 | `tests/v2/test_lifecycle_promote.py` | 53 |
 | `tests/v2/test_lint.py` | 27 |
+| `tests/v2/test_lint_advisory_severities.py` | 4 |
 | `tests/v2/test_lint_coverage.py` | 6 |
 | `tests/v2/test_lint_graduated_strict.py` | 10 |
 | `tests/v2/test_lint_new_rules.py` | 21 |
@@ -409,7 +410,7 @@ Unit: **184** files, **2140** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_lint_strict.py` | 13 |
 | `tests/v2/test_lint_strict_config.py` | 13 |
 | `tests/v2/test_lint_strict_dotnet.py` | 5 |
-| `tests/v2/test_lint_strict_take_limit.py` | 12 |
+| `tests/v2/test_lint_strict_take_limit.py` | 13 |
 | `tests/v2/test_lock_unlock_retry.py` | 12 |
 | `tests/v2/test_materialise_tenant_config.py` | 8 |
 | `tests/v2/test_meta001_lint.py` | 26 |
@@ -428,6 +429,7 @@ Unit: **184** files, **2140** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_pr_l_chunks.py` | 12 |
 | `tests/v2/test_product_filter_enum.py` | 3 |
 | `tests/v2/test_production_promotion_detector.py` | 8 |
+| `tests/v2/test_production_promotion_gate_workflow.py` | 3 |
 | `tests/v2/test_prune.py` | 22 |
 | `tests/v2/test_refresh_attack_matrix.py` | 3 |
 | `tests/v2/test_registry_and_handler.py` | 6 |
@@ -449,7 +451,7 @@ Unit: **184** files, **2140** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_silent_rules.py` | 8 |
 | `tests/v2/test_slug_arm_name.py` | 12 |
 | `tests/v2/test_snapshot_diff.py` | 15 |
-| `tests/v2/test_snippets.py` | 36 |
+| `tests/v2/test_snippets.py` | 39 |
 | `tests/v2/test_state_adopt.py` | 10 |
 | `tests/v2/test_state_file.py` | 10 |
 | `tests/v2/test_state_sync.py` | 13 |

@@ -285,6 +285,40 @@ def test_lint_001_passes_valid_placeholder() -> None:
     assert not any(f.rule_id == "KQLOVERRIDE001" for f in findings)
 
 
+def test_lint_001_is_a_warning() -> None:
+    findings = [f for f in lint_kql_placeholders("{{ 001/x.yml }}")
+                if f.rule_id == "KQLOVERRIDE001"]
+    assert len(findings) == 1
+    assert findings[0].severity == "warning"
+
+
+def test_lint_001_sentinel_template_token_warns_once_and_nothing_else() -> None:
+    """A ``{{StartTimeISO}}``-style token left in a production query is
+    not a snippet path: one KQLOVERRIDE001 warning, no 002/003."""
+    query = (
+        "let starttime = todatetime('{{StartTimeISO}}');\n"
+        "let endtime = todatetime('{{EndTimeISO}}');\n"
+        "SecurityEvent | where TimeGenerated between (starttime .. endtime)\n"
+    )
+    findings = lint_kql_placeholders(query)
+    assert [f.rule_id for f in findings] == ["KQLOVERRIDE001", "KQLOVERRIDE001"]
+    assert {f.severity for f in findings} == {"warning"}
+    assert [f.line for f in findings] == [1, 2]
+    assert "StartTimeISO" in findings[0].message
+
+
+def test_apply_leaves_non_snippet_tokens_untouched(tmp_path: Path) -> None:
+    """The resolver only substitutes strict ``{{folder/file.yml}}`` matches,
+    so a template token reaches the service unchanged (why KQLOVERRIDE001
+    can be a warning)."""
+    overrides = tmp_path / "overrides"
+    overrides.mkdir()
+    query = "let starttime = todatetime('{{StartTimeISO}}');\nSecurityEvent\n"
+    la = _make_loaded(asset=Asset.SENTINEL_ANALYTIC, payload={"query": query})
+    out = apply_snippets(la, "law-prod", overrides_root=overrides)
+    assert out.payload["query"] == query
+
+
 def test_lint_002_path_traversal() -> None:
     findings = lint_kql_placeholders("{{../etc/passwd.yml}}")
     assert any(f.rule_id == "KQLOVERRIDE002" for f in findings)

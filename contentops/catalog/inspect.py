@@ -295,9 +295,9 @@ _RULE_REGISTRY: tuple[tuple[str, str, str], ...] = (
     ("KQL007", "error",   "contentops.lint.kql"),
     ("KQL008", "warning", "contentops.lint.kql"),  # externaldata()
     ("KQL009", "warning", "contentops.lint.kql"),  # query longer than the 10,000-char advisory
-    ("KQL010", "error",   "contentops.lint.kql"),  # cluster()/workspace() cross-scope
-    ("KQL101", "error",   "contentops.lint.strict_rules"),
-    ("KQLOVERRIDE001", "error", "contentops.lint.snippets"),
+    ("KQL010", "warning", "contentops.lint.kql"),  # cluster()/workspace() cross-scope (advisory)
+    ("KQL101", "warning", "contentops.lint.strict_rules"),  # | take / | limit (advisory)
+    ("KQLOVERRIDE001", "warning", "contentops.lint.snippets"),  # non-snippet {{...}} tokens pass through
     ("KQLOVERRIDE002", "error", "contentops.lint.snippets"),
     ("KQLOVERRIDE003", "error", "contentops.lint.snippets"),
     ("KQLOVERRIDE004", "error", "contentops.lint.snippets"),

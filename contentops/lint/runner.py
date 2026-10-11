@@ -225,24 +225,15 @@ def lint_assets(
         if query is not None:
             findings.extend(lint_kql(query, kind=kind))
             findings.extend(lint_kql_placeholders(query))
-            # L-2: KQL101 (``| take`` / ``| limit`` forbidden) used to
-            # only fire under ``--strict``, so a status:production rule
-            # with ``| take 100`` shipped through ``contentops lint``
-            # clean. Run the strict rules unconditionally on production
-            # envelopes (error severity) and as warnings on non-prod
-            # envelopes so the same rule surfaces at PR time. Strict
-            # mode still triggers the full strict pipeline including
-            # the Kusto.Language wrapper.
+            # L-2: the Python policy rules (KQL101 ``| take`` /
+            # ``| limit``) used to fire only under ``--strict``, so a
+            # status:production rule with ``| take 100`` shipped through
+            # ``contentops lint`` clean. Run them unconditionally so the
+            # finding surfaces at PR time. They emit warning severity for
+            # every status (``--fail-on-warn`` makes them gating); strict
+            # mode still adds the Kusto.Language wrapper on top.
             from contentops.lint.strict_rules import run_python_rules
-            for finding in run_python_rules(query):
-                if loaded.envelope.status != "production":
-                    finding = LintFinding(
-                        rule_id=finding.rule_id,
-                        severity="warning",
-                        message=finding.message,
-                        line=finding.line,
-                    )
-                findings.append(finding)
+            findings.extend(run_python_rules(query))
 
         # Emit a LintedFile for files that produced findings or for
         # KQL-bearing assets (so the "0 findings" line still reports

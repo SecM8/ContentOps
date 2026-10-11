@@ -3,8 +3,8 @@
 
 """Pure-Python strict-mode lint rules (F1).
 
-Strict rules encode *policy* — what is not allowed in production
-detection logic — rather than the heuristic style/perf checks in
+Strict rules encode *policy advisories* — what should not appear in
+production detection logic — rather than the heuristic style/perf checks in
 ``contentops.lint.kql``. They run regardless of whether the optional
 Kusto.Language wrapper (also gated on ``--strict``) is installed.
 
@@ -23,7 +23,7 @@ from contentops.lint.kql import LintFinding, _line_of, _strip_strings_and_commen
 
 
 # ---------------------------------------------------------------------------
-# KQL101 — `| take` / `| limit` forbidden in production rules
+# KQL101 — `| take` / `| limit` in production rules (warning)
 # ---------------------------------------------------------------------------
 
 # Match the pipe-prefixed operator. Word boundary on the right
@@ -32,7 +32,7 @@ _TAKE_OR_LIMIT = re.compile(r"\|\s*(take|limit)\b", re.IGNORECASE)
 
 
 def no_take_or_limit(query: str) -> Iterable[LintFinding]:
-    """KQL101 — `| take` and `| limit` are not allowed.
+    """KQL101 — `| take` and `| limit` are flagged at warning severity.
 
     Both operators cap the result set non-deterministically; in a
     deployed detection that means real telemetry volume is hidden,
@@ -47,12 +47,11 @@ def no_take_or_limit(query: str) -> Iterable[LintFinding]:
         op = m.group(1).lower()
         yield LintFinding(
             rule_id="KQL101",
-            severity="error",
+            severity="warning",
             message=(
-                f"`| {op}` is not allowed in production detections — it "
-                f"caps results and masks true rule volume. Use "
-                f"`top N by <field>` if a bounded result set is "
-                f"required, or remove the operator."
+                f"`| {op}` caps results and masks true rule volume in a "
+                f"production detection — use `top N by <field>` if a "
+                f"bounded result set is required, or remove the operator."
             ),
             line=_line_of(query, m.start()),
         )

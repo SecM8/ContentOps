@@ -358,6 +358,10 @@ A trailing `// ...` line comment is tolerated:
 
 * `KQLOVERRIDE001` — placeholder must match exactly
   `{{folder/file.yml}}` (no surrounding spaces, `.yml` required).
+  Warning severity: the resolver only substitutes strict matches, so
+  any other `{{…}}` token (for example a Sentinel template token such
+  as `{{StartTimeISO}}`) is left untouched and reaches the service
+  unchanged.
 * `KQLOVERRIDE002` — the path must be relative, with no `..`
   segments and no leading `/` or `\`. Defends against path traversal.
 * `KQLOVERRIDE004` — every file under `overrides/**/*.yml` must

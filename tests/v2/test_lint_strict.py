@@ -79,7 +79,7 @@ def test_run_strict_runs_python_rules_when_wrapper_unavailable(
         repo_root=tmp_path,
     )
     assert [f.rule_id for f in findings] == ["KQL101"]
-    assert findings[0].severity == "error"
+    assert findings[0].severity == "warning"
 
 
 def test_run_strict_returns_no_findings_for_clean_query(tmp_path: Path) -> None:

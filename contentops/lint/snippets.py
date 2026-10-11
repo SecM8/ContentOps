@@ -13,6 +13,10 @@ Rules:
 * ``KQLOVERRIDE001`` - placeholder must match the strict regex
   ``\\{\\{[A-Za-z0-9_\\-./\\\\]+\\.yml\\}\\}``. Catches leading /
   trailing whitespace, missing ``.yml`` suffix, illegal characters.
+  Warning severity: the resolver (``contentops.snippets.apply``)
+  only substitutes strict matches, so any other ``{{...}}`` token --
+  for example a Sentinel template token such as ``{{StartTimeISO}}``
+  left in a query -- reaches the service unchanged.
 
 * ``KQLOVERRIDE002`` - the path inside the placeholder must be
   relative, with no ``..`` segments and no leading ``/`` or ``\\``.
@@ -49,7 +53,7 @@ from contentops.lint.kql import LintFinding
 # placeholder regex in contentops/snippets/apply.py in sync.
 _STRICT_PLACEHOLDER_RE = re.compile(r"\{\{([A-Za-z0-9_\-./\\]+\.yml)\}\}")
 # Loose shape: matches anything between ``{{`` and ``}}`` so we can
-# fail KQLOVERRIDE001 on malformed forms (e.g. extra spaces, missing
+# warn (KQLOVERRIDE001) on malformed forms (e.g. extra spaces, missing
 # ``.yml``) instead of silently ignoring them.
 _LOOSE_PLACEHOLDER_RE = re.compile(r"\{\{(.*?)\}\}")
 
@@ -78,11 +82,14 @@ def lint_kql_placeholders(query: str) -> list[LintFinding]:
             if not strict_ok:
                 findings.append(LintFinding(
                     rule_id="KQLOVERRIDE001",
-                    severity="error",
+                    severity="warning",
                     message=(
-                        f"snippet placeholder {literal!r} is malformed; "
-                        "expected exactly '{{folder/file.yml}}' (no spaces, "
-                        "trailing '.yml' required)"
+                        f"placeholder {literal!r} is not a snippet path; "
+                        "a snippet must be written exactly as "
+                        "'{{folder/file.yml}}' (no spaces, trailing '.yml' "
+                        "required). Other '{{...}}' tokens, for example "
+                        "Sentinel template tokens such as '{{StartTimeISO}}', "
+                        "are not substituted and reach the service unchanged"
                     ),
                     line=line_no,
                 ))

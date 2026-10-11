@@ -208,9 +208,9 @@ _EXPECTED_SEVERITIES: dict[str, str] = {
     "KQL007": "error",      # union *
     "KQL008": "warning",    # externaldata() references external infra
     "KQL009": "warning",    # query longer than the 10,000-char advisory
-    "KQL010": "error",      # cluster()/workspace() cross-scope
+    "KQL010": "warning",    # cluster()/workspace() cross-scope (advisory)
     # Snippet rules in contentops/lint/snippets.py (Phase 4)
-    "KQLOVERRIDE001": "error",
+    "KQLOVERRIDE001": "warning",  # non-snippet {{...}} tokens pass through
     "KQLOVERRIDE002": "error",
     "KQLOVERRIDE003": "error",
     "KQLOVERRIDE004": "error",
@@ -222,7 +222,7 @@ _EXPECTED_SEVERITIES: dict[str, str] = {
     "PAYLOAD005": "warning", # FileProfile output column filtered w/o column_ifexists
     "PAYLOAD006": "warning", # entity column not re-projected after FileProfile
     # Strict-mode policy in contentops/lint/strict_rules.py
-    "KQL101": "error",       # | take / | limit forbidden in production
+    "KQL101": "warning",     # | take / | limit in production (advisory)
     # Envelope-metadata rules in contentops/lint/metadata_rules.py.
     # Baseline severities (the non-strict default path): META002-005
     # escalate to error under policy.scaffoldStrict=true and META001

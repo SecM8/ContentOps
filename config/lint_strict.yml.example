@@ -2,8 +2,8 @@
 # `config/lint_strict.yml` and tune to taste.
 #
 # `mode` controls the global wrapper behaviour:
-#   off    - wrapper not invoked. Python KQL101 still runs (catches
-#            `| take` / `| limit` in production rules at error
+#   off    - wrapper not invoked. Python KQL101 still runs (flags
+#            `| take` / `| limit` in production rules at warning
 #            severity). No semantic findings at all.
 #   report - wrapper runs. All wrapper findings (KS204 / KS142 /
 #            etc.) downgrade to `warning` severity so lint exits 0

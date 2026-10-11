@@ -878,9 +878,9 @@ drift-gated, so trust it over this table if they ever disagree.
 | `KQL006` | warning | `evaluate bag_unpack` can be expensive. | Project explicit columns rather than unpacking the bag. |
 | `KQL007` | error | `union *` fans out across all tables. | Enumerate the source tables explicitly. |
 | `KQL008` | warning | `externaldata()` references external infrastructure. | Ensure the source URL is approved and auditable. |
-| `KQL010` | error | `cluster()` / `workspace()` crosses workspace or cluster scope. | Target only the workspace the detection deploys to; drop the cross-scope call. |
-| `KQL101` | error | `\| take` / `\| limit` in a production detection — caps results and masks true rule volume. | Use `top N by <field>` for a bounded set, or remove the operator. |
-| `KQLOVERRIDE001` | error | Snippet placeholder is malformed (spaces, missing `.yml`, illegal chars). | Write it as exactly `{{folder/file.yml}}`. |
+| `KQL010` | warning | `cluster()` / `workspace()` crosses workspace or cluster scope. | Confirm the cross-workspace read is intended: it is not portable across a multi-workspace deploy and widens the rule's data scope (the message lists Sentinel's caveats). |
+| `KQL101` | warning | `\| take` / `\| limit` in a production detection — caps results and masks true rule volume. | Use `top N by <field>` for a bounded set, or remove the operator. `--fail-on-warn` makes it gating. |
+| `KQLOVERRIDE001` | warning | A `{{…}}` token is not a snippet path (spaces, missing `.yml`, illegal chars). | If a snippet was intended, write it as exactly `{{folder/file.yml}}`; other tokens (for example Sentinel template tokens such as `{{StartTimeISO}}`) are not substituted and reach the service unchanged. |
 | `KQLOVERRIDE002` | error | Snippet placeholder path is unsafe (absolute or contains `..`). | Use a relative path under `overrides/`. |
 | `KQLOVERRIDE003` | error | Snippet placeholder shares its line with other KQL tokens. | Put `{{...}}` alone on its own line (trailing `//` comment is allowed). |
 | `KQLOVERRIDE004` | error | An `overrides/**/*.yml` file is unreadable / not a mapping / missing or non-string `content:`. | Make the file valid YAML with a string `content:` key. |
