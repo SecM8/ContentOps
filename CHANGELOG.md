@@ -94,6 +94,21 @@ from the commit history.
 
 ### Changed
 
+- **Conformance L4 accepts both OIDC subject formats; L7 understands
+  rulesets.** GitHub repositories created after 2026-07-15 emit immutable
+  subjects (`repo:<org>@<org-id>/<repo>@<repo-id>:...`) instead of the
+  legacy `repo:<org>/<repo>:...`. L4's federated-credential row now
+  compares subjects on the ID-stripped form, so either format on the App
+  Registration satisfies either format in `federated_credential_subjects`
+  (exact matches behave as before), and a missing subject's remediation
+  quotes the ID-based form when the run knows the repository ids. L7,
+  which only read the classic branch-protection API and therefore called
+  a ruleset-protected `main` "unprotected", now reads the rules in effect
+  on `main` when classic protection is absent: PASS when a ruleset
+  requires every expected status check, FAIL naming the missing checks
+  when it only requires a pull request or a workflow, FAIL as before when
+  no rules exist, and WARN (never PASS) when the token cannot read
+  rulesets. No configuration keys change.
 - **`AUTO_PR_TOKEN` contract documented in full.** Resource owner = the
   organization, this repository only, Contents + Pull requests RW,
   Workflows RW only for branches that change workflow files, organization

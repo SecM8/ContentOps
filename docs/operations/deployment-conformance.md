@@ -284,23 +284,31 @@ incident. Default is `split`; an unrecognised value falls back to
 
 ### Protected-fork notes (verified 2026-10-11)
 
-- **L4 subjects and the ID-based OIDC format.** The default expected
-  federated-credential subjects are the legacy `repo:<org>/<repo>:...`
-  strings. A repository created after 2026-07-15 emits
-  `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>` instead, so with the
-  defaults L4 reports *missing subjects* even when the App Registration
-  is configured correctly. Until the check accepts both forms, list the
-  ID-based subjects explicitly under `federated_credential_subjects` in
-  `.contentops-conformance.yml` (IDs via
-  `gh api repos/<org>/<repo> --jq '{owner_id: .owner.id, repo_id: .id}'`;
-  see [authentication-setup.md, step 3](authentication-setup.md#step-3-add-an-oidc-federated-credential-for-ci)).
-- **L7 and rulesets.** L7 reads the classic branch-protection API only.
-  On a `main` protected by a **ruleset** that endpoint answers *Branch not
-  protected*, so L7 cannot see the ruleset's pull-request / required-
-  workflow rules. Verify them manually
-  (`gh api repos/<org>/<repo>/rules/branches/main`) and record the result
-  in the [protected-fork validation runbook](protected-fork-validation.md);
-  do not read the L7 row as proof either way.
+- **L4 subjects and the ID-based OIDC format.** GitHub emits two default
+  subject formats: the legacy `repo:<org>/<repo>:...` and, for repositories
+  created after 2026-07-15 (or opted in),
+  `repo:<org>@<org-id>/<repo>@<repo-id>:...`. L4 compares expected and
+  configured subjects on the ID-stripped form, so either format on the
+  App Registration satisfies either format in `federated_credential_subjects`
+  (the detail row says when the other format matched). A missing subject's
+  remediation quotes the ID-based form when the run knows the ids (Actions
+  sets `GITHUB_REPOSITORY_OWNER_ID` / `GITHUB_REPOSITORY_ID`). The emitted
+  claim is still the authority — see
+  [authentication-setup.md, step 3](authentication-setup.md#step-3-add-an-oidc-federated-credential-for-ci).
+  Note that the federated-credential row only runs on the delegated-token
+  path (local `az login`); an app-only CI token with a `roles` claim takes
+  the fast path and does not evaluate it.
+- **L7 and rulesets.** When the classic branch-protection API answers
+  *Branch not protected*, L7 now reads the rules in effect on `main`
+  (`repos/<org>/<repo>/rules/branches/main`). A ruleset whose
+  *Require status checks to pass* rule covers every `github_required_checks`
+  entry PASSes (detail: "via rulesets" plus the rule types and required
+  workflows seen); a ruleset with only pull-request / required-workflow
+  rules FAILs with the missing checks named; no rules at all FAILs as
+  before; rulesets unreadable with the token WARNs — never a PASS-shaped
+  result. Record the manual check from the
+  [protected-fork validation runbook](protected-fork-validation.md) when
+  you see that WARN.
 - **Layers, not one green light.** A successful `azure/login` proves the
   OIDC trust exchange (L3). Graph consent (L4), Azure RBAC (L5), functional
   reach (L6) and repository policy (L7) are independent and can each fail

@@ -161,7 +161,7 @@ remediation hint on failure or warning (WARN never fails the run):
 | L4 | Microsoft Graph permissions on the App Registration (app role assignments + federated credential subjects) |
 | L5 | Azure RBAC: every configured Sentinel workspace exists, RG exists, Sentinel onboarded |
 | L6 | Functional reach: `list alertRules`, `list detectionRules`, KQL `print 1` |
-| L7 | GitHub repo: required secrets exist, branch protection requires expected checks (skipped without `gh` CLI) |
+| L7 | GitHub repo: required secrets exist, branch protection — classic or rulesets — requires expected checks (skipped without `gh` CLI) |
 
 The full reference, including how to override the expected-permissions
 list per-fork via `.contentops-conformance.yml`, lives in

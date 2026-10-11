@@ -261,6 +261,51 @@ def _default_fed_creds() -> tuple[str, ...]:
     )
 
 
+# GitHub emits two default OIDC ``sub`` formats. Legacy:
+#   repo:<owner>/<name>:<rest>
+# Immutable (repositories created after 2026-07-15, renamed/transferred after
+# that date, or opted in):
+#   repo:<owner>@<owner-id>/<name>@<repo-id>:<rest>
+# Both name the same trust relationship, so L4 compares subjects on the
+# ID-stripped canonical form and accepts either on the App Registration.
+_SUBJECT_RE = re.compile(
+    r"^repo:(?P<owner>[^/@:]+)(?:@(?P<owner_id>\d+))?"
+    r"/(?P<name>[^/@:]+)(?:@(?P<repo_id>\d+))?:(?P<rest>.+)$"
+)
+
+
+def canonical_subject(subject: str) -> str:
+    """Strip the ``@<id>`` parts from an OIDC subject (identity otherwise)."""
+    m = _SUBJECT_RE.match(subject)
+    if not m:
+        return subject
+    return f"repo:{m['owner']}/{m['name']}:{m['rest']}"
+
+
+def id_based_subject(subject: str, owner_id: str, repo_id: str) -> str:
+    """Return the immutable (ID-based) twin of ``subject``.
+
+    Falls back to ``subject`` unchanged when it does not parse or when
+    either id is empty (local runs outside Actions have no ids).
+    """
+    m = _SUBJECT_RE.match(subject)
+    if not m:
+        return subject
+    oid = m["owner_id"] or owner_id
+    rid = m["repo_id"] or repo_id
+    if not (oid and rid):
+        return subject
+    return f"repo:{m['owner']}@{oid}/{m['name']}@{rid}:{m['rest']}"
+
+
+def _repo_ids_from_env() -> tuple[str, str]:
+    """(owner id, repository id) from the Actions default environment."""
+    return (
+        os.environ.get("GITHUB_REPOSITORY_OWNER_ID", ""),
+        os.environ.get("GITHUB_REPOSITORY_ID", ""),
+    )
+
+
 def apply_identity_profile(config: ConformanceConfig, identity: str) -> ConformanceConfig:
     """Adjust a config's grant expectations for a read vs write identity.
 
@@ -1062,22 +1107,52 @@ def check_l4_graph_permissions(
                         f.get("subject", "")
                         for f in fc_resp.json().get("value") or []
                     }
-                    missing = [
-                        s for s in config.federated_credential_subjects
-                        if s not in configured_subjects
-                    ]
+                    # Compare on the ID-stripped canonical form so a legacy
+                    # expectation is satisfied by an ID-based credential and
+                    # vice versa (see _SUBJECT_RE). Exact matches still match.
+                    configured_by_canon = {
+                        canonical_subject(s): s for s in configured_subjects
+                    }
+                    owner_id, repo_id = _repo_ids_from_env()
+                    missing: list[str] = []
+                    alternate_hits: list[str] = []
+                    for expected in config.federated_credential_subjects:
+                        hit = configured_by_canon.get(canonical_subject(expected))
+                        if hit is None:
+                            missing.append(expected)
+                        elif hit != expected:
+                            alternate_hits.append(f"{expected} ~ {hit}")
                     if missing:
+                        remediation = (
+                            "Add a federated credential to the App "
+                            "Registration with one of the missing subjects "
+                            "(legacy or ID-based form; both are accepted)."
+                        )
+                        if owner_id and repo_id:
+                            remediation += (
+                                " Repositories created after 2026-07-15 emit the "
+                                "ID-based form, e.g. "
+                                f"{id_based_subject(missing[0], owner_id, repo_id)}"
+                                " -- copy the subject quoted by an AADSTS700213 "
+                                "error rather than deriving it."
+                            )
                         report.add(ConformanceCheck(
                             layer, "federated_credentials", "FAIL",
                             f"missing subjects: {', '.join(missing)}",
-                            "Add a federated credential to the App "
-                            "Registration with one of the missing subjects.",
+                            remediation,
                         ))
                     else:
-                        report.add(ConformanceCheck(
-                            layer, "federated_credentials", "PASS",
+                        detail = (
                             f"all required subjects configured "
-                            f"({len(config.federated_credential_subjects)})",
+                            f"({len(config.federated_credential_subjects)})"
+                        )
+                        if alternate_hits:
+                            detail += (
+                                "; matched in the other subject format: "
+                                + ", ".join(alternate_hits)
+                            )
+                        report.add(ConformanceCheck(
+                            layer, "federated_credentials", "PASS", detail,
                         ))
         else:
             report.add(ConformanceCheck(
@@ -1499,12 +1574,10 @@ def check_l7_github(
                 f"(needs an admin-scoped PAT/App token): {body_str}",
             ))
         elif rc != 0:
-            report.add(ConformanceCheck(
-                layer, "branch_protection", "FAIL",
-                f"no branch protection on main: {body_str}",
-                "Enable branch protection on main; require status checks "
-                "for: " + ", ".join(config.github_required_checks),
-            ))
+            # "Branch not protected" (404) from the classic endpoint is also
+            # what a RULESET-protected main answers -- look there before
+            # concluding main is open.
+            _check_branch_rulesets(report, config, repo, layer, body_str)
         else:
             contexts = (
                 ((body.get("required_status_checks") or {}).get("contexts")) or []
@@ -1523,6 +1596,94 @@ def check_l7_github(
             ))
 
     _check_pr_environments(report, config, repo, layer)
+
+
+def _check_branch_rulesets(
+    report: ConformanceReport,
+    config: ConformanceConfig,
+    repo: str,
+    layer: str,
+    classic_error: str,
+) -> None:
+    """Classic branch protection is absent: evaluate rulesets in effect on main.
+
+    Rulesets (repository- or organization-level) are the other way to
+    protect a branch, and ``repos/{repo}/branches/main/protection`` answers
+    "Branch not protected" even when a ruleset requires a pull request, a
+    required workflow and status checks. ``repos/{repo}/rules/branches/main``
+    lists the rules in effect for the caller. Outcomes:
+
+    * rules readable, ``required_status_checks`` covers every expected
+      check -> PASS (detail says "via rulesets");
+    * rules readable but checks missing (or only PR / workflow rules) ->
+      FAIL with the rule types seen, so the fix is actionable;
+    * no rules at all -> FAIL exactly as before (main really is open);
+    * rules unreadable with this token (403) -> WARN, never a PASS-shaped
+      result: protection cannot be verified, say so.
+    """
+    rc, rules = _gh_api(f"repos/{repo}/rules/branches/main")
+    if rc != 0:
+        rules_str = str(rules)
+        if "403" in rules_str or "not accessible" in rules_str.lower():
+            report.add(ConformanceCheck(
+                layer, "branch_protection", "WARN",
+                f"no classic branch protection on main ({classic_error}); "
+                f"rulesets unreadable with this token ({rules_str}) -- "
+                "protection cannot be verified",
+                "Verify manually: `gh api repos/<org>/<repo>/rules/branches/main` "
+                "with a token that can read rulesets, or Settings -> Rules -> "
+                "Rulesets. Record the result in the protected-fork runbook.",
+            ))
+            return
+        rules = []
+    rule_list = [r for r in rules if isinstance(r, dict)] if isinstance(rules, list) else []
+    if not rule_list:
+        report.add(ConformanceCheck(
+            layer, "branch_protection", "FAIL",
+            f"no branch protection on main: {classic_error}; no rulesets in effect",
+            "Enable branch protection or a ruleset on main; require status "
+            "checks for: " + ", ".join(config.github_required_checks),
+        ))
+        return
+
+    types = sorted({str(r.get("type", "")) for r in rule_list if r.get("type")})
+    contexts: list[str] = []
+    workflows: list[str] = []
+    for r in rule_list:
+        params = r.get("parameters") or {}
+        if r.get("type") == "required_status_checks":
+            contexts.extend(
+                str(chk.get("context", ""))
+                for chk in params.get("required_status_checks") or []
+                if isinstance(chk, dict)
+            )
+        elif r.get("type") == "workflows":
+            workflows.extend(
+                str(w.get("path", ""))
+                for w in params.get("workflows") or []
+                if isinstance(w, dict)
+            )
+    summary = f"{len(rule_list)} ruleset rule(s) in effect: {', '.join(types)}"
+    if workflows:
+        summary += "; required workflows: " + ", ".join(workflows)
+
+    missing = [chk for chk in config.github_required_checks if chk not in contexts]
+    if missing:
+        report.add(ConformanceCheck(
+            layer, "branch_protection", "FAIL",
+            f"main is protected by rulesets but lacks required checks: "
+            f"{', '.join(missing)} ({summary})",
+            "Add a 'Require status checks to pass' rule listing the missing "
+            "checks to the ruleset that targets main (or override "
+            "github_required_checks in .contentops-conformance.yml if your "
+            "merge gate is intentionally different).",
+        ))
+    else:
+        report.add(ConformanceCheck(
+            layer, "branch_protection", "PASS",
+            f"main requires {len(config.github_required_checks)} checks via "
+            f"rulesets ({summary})",
+        ))
 
 
 # GitHub environments whose credentials same-repository pull_request jobs

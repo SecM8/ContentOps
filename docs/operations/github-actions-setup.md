@@ -225,9 +225,13 @@ Two consequences for this pipeline:
   mandates the same scan; change both together or the merge gate stays
   red while CI looks changed.
 
-`contentops conformance` L7 currently reads the classic branch-protection
-API only, so on a ruleset-protected `main` it reports the branch as
-unprotected. Verify rulesets by hand until the check learns about them:
+`contentops conformance` L7 reads classic branch protection first and,
+when that answers *Branch not protected*, the rules in effect on `main`
+(`repos/<org>/<repo>/rules/branches/main`): a ruleset that requires the
+expected status checks PASSes, one that only requires a pull request or a
+workflow FAILs with the missing checks named, and rulesets the token
+cannot read produce a WARN rather than a verdict. Verify by hand whenever
+you see that WARN:
 
 ```bash
 gh api repos/<org>/<repo>/rules/branches/main

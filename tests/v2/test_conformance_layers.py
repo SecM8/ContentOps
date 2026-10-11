@@ -640,3 +640,206 @@ def test_l7_environments_unreadable_or_absent_skip(monkeypatch) -> None:
     rows = _env_rows(report)
     assert {r.status for r in rows.values()} == {"SKIP"}
     assert len(rows) == 2
+
+
+# ---------------------------------------------------------------------------
+# OIDC subject formats — legacy vs immutable (ID-based) subjects
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_subject_strips_ids() -> None:
+    assert (
+        C.canonical_subject("repo:owner@123/repo@456:environment:production")
+        == "repo:owner/repo:environment:production"
+    )
+    assert (
+        C.canonical_subject("repo:owner/repo:ref:refs/heads/main")
+        == "repo:owner/repo:ref:refs/heads/main"
+    )
+    # Unparseable subjects pass through untouched (never raise).
+    assert C.canonical_subject("something-else") == "something-else"
+
+
+def test_id_based_subject_needs_both_ids() -> None:
+    legacy = "repo:owner/repo:environment:automation"
+    assert (
+        C.id_based_subject(legacy, "123", "456")
+        == "repo:owner@123/repo@456:environment:automation"
+    )
+    assert C.id_based_subject(legacy, "", "456") == legacy
+    assert C.id_based_subject(legacy, "123", "") == legacy
+    # Already ID-based: ids in the subject win over the arguments.
+    idb = "repo:owner@1/repo@2:pull_request"
+    assert C.id_based_subject(idb, "9", "9") == idb
+
+
+def _l4_fed_cred_mocks(configured_subjects: list[str]) -> None:
+    """Delegated-token L4 path with an SP that has no app roles, so the
+    federated-credential check is the row under test."""
+    respx.get(url__regex=r".*/servicePrincipals\(appId=").mock(
+        return_value=Response(200, json={"id": "sp-1"}),
+    )
+    respx.get(url__regex=r".*/appRoleAssignments$").mock(
+        return_value=Response(200, json={"value": []}),
+    )
+    respx.get(url__regex=r".*/applications\(appId=").mock(
+        return_value=Response(200, json={"id": "app-1"}),
+    )
+    respx.get(url__regex=r".*/applications/app-1/federatedIdentityCredentials").mock(
+        return_value=Response(
+            200, json={"value": [{"subject": s} for s in configured_subjects]},
+        ),
+    )
+
+
+def _l4_fed_cred_report(monkeypatch, expected: tuple[str, ...]) -> C.ConformanceReport:
+    monkeypatch.setenv("AZURE_CLIENT_ID", "cid")
+    cfg = C.ConformanceConfig(federated_credential_subjects=expected)
+    report = C.ConformanceReport()
+    C.check_l4_graph_permissions(report, _jwt({"scp": "x"}), cfg)
+    return report
+
+
+def _row(report: C.ConformanceReport, name: str) -> C.ConformanceCheck:
+    return [c for c in report.checks if c.name == name][0]
+
+
+@respx.mock
+def test_l4_fed_cred_legacy_subject_still_matches_exactly(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_REPOSITORY_OWNER_ID", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY_ID", raising=False)
+    _l4_fed_cred_mocks(["repo:owner/repo:ref:refs/heads/main"])
+    report = _l4_fed_cred_report(monkeypatch, ("repo:owner/repo:ref:refs/heads/main",))
+    row = _row(report, "federated_credentials")
+    assert row.status == "PASS"
+    assert "other subject format" not in row.detail
+
+
+@respx.mock
+def test_l4_fed_cred_accepts_id_based_credential_for_legacy_expectation(monkeypatch) -> None:
+    # Repository created after 2026-07-15: the App Registration carries the
+    # immutable subject while the (default) expectation is legacy.
+    monkeypatch.delenv("GITHUB_REPOSITORY_OWNER_ID", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY_ID", raising=False)
+    _l4_fed_cred_mocks(["repo:owner@123/repo@456:ref:refs/heads/main"])
+    report = _l4_fed_cred_report(monkeypatch, ("repo:owner/repo:ref:refs/heads/main",))
+    row = _row(report, "federated_credentials")
+    assert row.status == "PASS"
+    assert "other subject format" in row.detail
+    assert "repo:owner@123/repo@456:ref:refs/heads/main" in row.detail
+
+
+@respx.mock
+def test_l4_fed_cred_accepts_legacy_credential_for_id_based_expectation(monkeypatch) -> None:
+    _l4_fed_cred_mocks(["repo:owner/repo:environment:production"])
+    report = _l4_fed_cred_report(
+        monkeypatch, ("repo:owner@123/repo@456:environment:production",),
+    )
+    assert _row(report, "federated_credentials").status == "PASS"
+
+
+@respx.mock
+def test_l4_fed_cred_missing_fails_and_hints_id_based_form(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY_OWNER_ID", "123")
+    monkeypatch.setenv("GITHUB_REPOSITORY_ID", "456")
+    _l4_fed_cred_mocks(["repo:owner/repo:environment:production"])
+    report = _l4_fed_cred_report(monkeypatch, ("repo:owner/repo:environment:automation",))
+    row = _row(report, "federated_credentials")
+    assert row.status == "FAIL"
+    assert "repo:owner/repo:environment:automation" in row.detail
+    assert "repo:owner@123/repo@456:environment:automation" in row.remediation
+
+
+@respx.mock
+def test_l4_fed_cred_missing_without_ids_has_no_id_hint(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_REPOSITORY_OWNER_ID", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY_ID", raising=False)
+    _l4_fed_cred_mocks([])
+    report = _l4_fed_cred_report(monkeypatch, ("repo:owner/repo:pull_request",))
+    row = _row(report, "federated_credentials")
+    assert row.status == "FAIL"
+    assert "@" not in row.remediation
+
+
+# ---------------------------------------------------------------------------
+# L7 — rulesets when classic branch protection is absent
+# ---------------------------------------------------------------------------
+
+
+def _l7_rules_gh_api(rules_response):
+    """Classic protection 404 ("Branch not protected"), rulesets endpoint
+    answers with the caller-supplied response, everything else reachable."""
+    def _fake(path: str):
+        if "branches/main/protection" in path:
+            return (1, "gh: Branch not protected (HTTP 404)")
+        if path.endswith("/rules/branches/main"):
+            return rules_response
+        if path.endswith("/actions/secrets"):
+            return (0, {"secrets": []})
+        if path.endswith("/actions/variables"):
+            return (0, {"variables": []})
+        return (0, {})
+    return _fake
+
+
+def _l7_cfg(*checks: str) -> C.ConformanceConfig:
+    return C.ConformanceConfig(
+        github_repo="owner/repo",
+        github_required_checks=tuple(checks),
+        github_required_credentials=(),
+    )
+
+
+def test_l7_ruleset_with_required_checks_passes(monkeypatch) -> None:
+    monkeypatch.setattr(C, "_gh_cli_available", lambda: True)
+    monkeypatch.setattr(C, "_gh_api", _l7_rules_gh_api((0, [
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+        {"type": "required_status_checks", "parameters": {
+            "required_status_checks": [{"context": "pytest"}, {"context": "gitleaks"}],
+        }},
+        {"type": "workflows", "parameters": {
+            "workflows": [{"path": ".github/workflows/gitleaks.yml", "repository_id": 1}],
+        }},
+    ])))
+    report = C.ConformanceReport()
+    C.check_l7_github(report, _l7_cfg("pytest", "gitleaks"))
+    row = _row(report, "branch_protection")
+    assert row.status == "PASS"
+    assert "rulesets" in row.detail
+    assert ".github/workflows/gitleaks.yml" in row.detail
+
+
+def test_l7_ruleset_without_required_checks_fails_actionably(monkeypatch) -> None:
+    monkeypatch.setattr(C, "_gh_cli_available", lambda: True)
+    monkeypatch.setattr(C, "_gh_api", _l7_rules_gh_api((0, [
+        {"type": "pull_request", "parameters": {"require_code_owner_review": True}},
+        {"type": "workflows", "parameters": {"workflows": [{"path": "w.yml"}]}},
+    ])))
+    report = C.ConformanceReport()
+    C.check_l7_github(report, _l7_cfg("pytest"))
+    row = _row(report, "branch_protection")
+    assert row.status == "FAIL"
+    assert "pytest" in row.detail and "pull_request" in row.detail
+    assert "Require status checks" in row.remediation
+
+
+def test_l7_rulesets_unreadable_warns_never_passes(monkeypatch) -> None:
+    monkeypatch.setattr(C, "_gh_cli_available", lambda: True)
+    monkeypatch.setattr(C, "_gh_api", _l7_rules_gh_api(
+        (1, "gh: Resource not accessible by integration (HTTP 403)"),
+    ))
+    report = C.ConformanceReport()
+    C.check_l7_github(report, _l7_cfg("pytest"))
+    row = _row(report, "branch_protection")
+    assert row.status == "WARN"
+    assert "cannot be verified" in row.detail
+
+
+def test_l7_no_rulesets_still_fails_as_unprotected(monkeypatch) -> None:
+    monkeypatch.setattr(C, "_gh_cli_available", lambda: True)
+    monkeypatch.setattr(C, "_gh_api", _l7_rules_gh_api((0, [])))
+    report = C.ConformanceReport()
+    C.check_l7_github(report, _l7_cfg("pytest"))
+    row = _row(report, "branch_protection")
+    assert row.status == "FAIL"
+    assert "no rulesets in effect" in row.detail

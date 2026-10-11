@@ -48,9 +48,9 @@ gh api repos/<org>/<repo> --jq '{created_at, owner_id: .owner.id, repo_id: .id}'
 Record: which rules apply (`pull_request`, `required_status_checks`,
 `workflows`), whether any bypass actor exists (there should be none), and
 the repository creation date (it decides the OIDC subject format, check 8).
-`contentops conformance` L7 reads classic protection only, so a ruleset-
-protected `main` shows as unprotected there — the API call above is the
-authority.
+`contentops conformance` L7 evaluates classic protection and, failing
+that, the rules in effect on `main`; when it reports **WARN** (rulesets
+unreadable with its token) the API call above is the authority.
 
 ## 1. Licence secret reaches the scanner
 
@@ -193,10 +193,10 @@ the next.
    ([`authentication-setup.md`, step 3](authentication-setup.md#step-3-add-an-oidc-federated-credential-for-ci)).
    Never print or store the token itself.
 2. **Graph consent (L4).** `contentops conformance --scope L4` shows the
-   application permissions granted *and* admin-consented. On a repository
-   using the ID-based subject format, list those subjects explicitly under
-   `federated_credential_subjects` in `.contentops-conformance.yml` or L4
-   reports them missing ([`deployment-conformance.md`](deployment-conformance.md#protected-fork-notes-verified-2026-10-11)).
+   application permissions granted *and* admin-consented. Its
+   federated-credential row accepts the legacy and the ID-based subject
+   format interchangeably and quotes the ID-based form in its remediation
+   ([`deployment-conformance.md`](deployment-conformance.md#protected-fork-notes-verified-2026-10-11)).
 3. **Azure RBAC (L5).** Workspace, resource group and Sentinel onboarding
    reachable with the right role per identity. With one shared App
    Registration declare `identity_mode: single` and accept the documented
@@ -227,7 +227,7 @@ you added such as `dev`.
 | Scheduled workflow skipped | `CONTENTOPS_SCHEDULES` unset, schedules disabled by inactivity, or another job condition | Inspect eligibility (check 7); a manual dispatch does not prove cron activation |
 | `AADSTS700213` on `azure/login` | Trust tuple does not match the emitted claims (format or environment) | Verify issuer / subject / audience against the error text and the environment selection (check 8.1) |
 | Conformance read leg rejects a shared identity | Dual-profile expectations applied to a write-capable shared identity | Declare `identity_mode: single` and document the trade-off; do not relax dual mode globally (check 8.3) |
-| L7 says `main` is unprotected although a ruleset exists | L7 reads classic branch protection only | Record the ruleset from check 0 as the authority; the L7 row is **not verified** for rulesets |
+| L7 reports **WARN** "rulesets unreadable" | The conformance token cannot read `rules/branches/main` | Record the ruleset from check 0 (run with your own `gh` token) as the authority; the L7 row is **not verified** until then |
 
 ## Sign-off
 
