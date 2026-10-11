@@ -5,12 +5,23 @@ name: Detection inventory report
 # - Generates reports/latest.html + reports/<date>.html + reports/latest.md
 #   + reports/badge.json.
 # - Uploads as workflow artifact on every run.
-# - On push-to-main: commits the regenerated reports back to main via the
+# - On push-to-main: lands the regenerated files back in the repo via the
 #   github-actions[bot] identity (same pattern as coverage.yml). reports/ is
 #   normal versioned content, so this gives a deployment fork a durable,
 #   diffable posture history. Per-detection telemetry is kept off the PUBLIC
 #   mirror by the sync allowlist (only reports/badge.json mirrors), not by
 #   gitignore.
+#
+# Landing mode -- repo variable CONTENTOPS_LAND_VIA_PR:
+#   * unset / anything but 'true' (default): commit and push directly
+#     to main, exactly as before.
+#   * 'true': open or update ONE rolling PR on the fixed branch
+#     `report/refresh` via the auto-pr composite action, for deployments
+#     whose rulesets reject direct pushes to main. Same push-to-main
+#     event restriction either way: scheduled and manual runs upload the
+#     artifact but never write back. See
+#     docs/operations/github-actions-setup.md §1 and
+#     docs/operations/durable-reports.md.
 #
 # Report retention: `tenant.yml` reports.retentionDays bounds the committed
 # dated-snapshot history (contentops report prunes dated snapshots older than
@@ -34,7 +45,8 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write    # push-to-main job commits the regenerated report
+  contents: write        # push-to-main run commits the regenerated report (direct) or pushes the report/refresh branch (PR mode)
+  pull-requests: write   # PR mode (CONTENTOPS_LAND_VIA_PR=true): open / update the rolling report PR
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -123,20 +135,73 @@ jobs:
           path: reports/
           if-no-files-found: error
 
-      - name: Commit refreshed report (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Commit refreshed report (main only, direct-push mode)
+        # Default landing mode. Push-to-main runs only; skipped when
+        # CONTENTOPS_LAND_VIA_PR is 'true' (the rolling-PR steps below run
+        # instead). The two landing steps are mutually exclusive.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          echo "Landing mode: direct push to main (CONTENTOPS_LAND_VIA_PR is not 'true')."
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reports/
           if git diff --staged --quiet; then
             echo "no report drift to commit"
+            echo "## Detection inventory report -- no changes (landing mode: direct push)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           git commit \
             -m "chore(report): refresh detection inventory snapshot" \
             -s
           git push origin HEAD:main
+          echo "## Detection inventory report -- refreshed snapshot pushed to main (landing mode: direct push)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open / update rolling PR with refreshed report (main only, PR-landing mode)
+        # Same push-to-main restriction as the direct step. Fixed branch
+        # name = one rolling PR, updated in place on the next run.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: reports
+          branch: report/refresh
+          commit-message: "chore(report): refresh detection inventory snapshot"
+          title: "chore(report): refresh detection inventory snapshot (rolling)"
+          body: |
+            Auto-opened by `.github/workflows/report.yml` because this
+            repository lands generated output via pull request
+            (`CONTENTOPS_LAND_VIA_PR=true`). Regenerated `reports/` (latest.*
+            plus the dated snapshot) after a push to `main`.
+
+            **Rolling PR:** the `report/refresh` branch is updated in place on
+            the next run, so nothing piles up. If the PR's checks show *action
+            required*, a user with write access must approve the held workflow
+            runs first (see the run's step summary).
+          labels: report,automated
+          add-paths: "reports/**"
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
+
+      - name: Step summary (PR-landing mode)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        env:
+          CHANGED: ${{ steps.auto-pr.outputs.changed }}
+          PR_NUMBER: ${{ steps.auto-pr.outputs.pull-request-number }}
+          PR_OPERATION: ${{ steps.auto-pr.outputs.pull-request-operation }}
+          TOKEN_SOURCE: ${{ steps.auto-pr.outputs.token-source }}
+        run: |
+          set -euo pipefail
+          {
+            if [ "$CHANGED" != "true" ]; then
+              echo "## Detection inventory report -- no changes (landing mode: rolling PR)"
+            elif [ -n "$PR_NUMBER" ]; then
+              echo "## Detection inventory report -- rolling PR #${PR_NUMBER} ${PR_OPERATION:-touched} (landing mode: rolling PR)"
+            else
+              echo "## Detection inventory report -- changes detected but no PR number returned (landing mode: rolling PR); inspect the auto-pr step"
+            fi
+            echo ""
+            echo "Branch: \`report/refresh\` | Token source: \`${TOKEN_SOURCE:-n/a}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

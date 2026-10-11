@@ -174,5 +174,5 @@ the right `--asset` will remove them.
 | `403 Forbidden` on a Sentinel handler | App reg missing Sentinel Contributor | `az role assignment create` per above |
 | `403 Forbidden` on Defender custom detection | Graph admin consent not granted | App Registration → API permissions → grant admin consent |
 | `INTEGRATION_WORKSPACE_NAME matches a prod-role Sentinel workspace` exit | Production-workspace guard tripped | Point at a non-prod workspace; only set `I_UNDERSTAND_THIS_IS_PRODUCTION=yes` if you really mean it |
-| Tests pass locally but fail in CI | OIDC federated credential subject mismatch | Verify the federated credential subject matches the workflow's `repo:org/repo:environment:<env>` claim |
+| Tests pass locally but fail in CI | OIDC federated credential subject mismatch | Verify the federated credential subject matches the workflow's `repo:org/repo:environment:<env>` claim — ID-based `repo:org@<org-id>/repo@<repo-id>:environment:<env>` for repositories created after 2026-07-15; copy the subject quoted in the `AADSTS700213` error |
 | `ModuleNotFoundError: No module named 'pipeline'` after a `git pull` | Stale `detection-pipeline` editable install metadata from before the rebrand | See [Clearing stale editable-install metadata](live-integration-tests.md#clearing-stale-editable-install-metadata) |

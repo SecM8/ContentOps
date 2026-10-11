@@ -185,6 +185,14 @@ The seven conformance check tiers. L1 is the lightest (local
 install); L7 is the heaviest (GitHub repo settings via `gh`).
 See *Conformance*.
 
+### Landing mode (direct push vs PR landing)
+How the generated-output workflows (`status-refresh.yml`, `coverage.yml`,
+`report.yml`) put their results on `main`. Default: a direct `git push`
+(upstream `main` is unprotected). With the repo variable
+`CONTENTOPS_LAND_VIA_PR=true` they open a *rolling PR* instead, for a
+`main` whose ruleset rejects direct pushes (`GH013`). See
+[`github-actions-setup.md` §1](operations/github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers).
+
 ### Lifecycle stage
 Optional `lifecycleStage` field on the envelope —
 `concept | research | engineering | delivery | optimization |
@@ -225,6 +233,12 @@ from the bundled matrix). The hosted UI
 renders the JSON for free; the project intentionally does NOT ship
 an SVG export to keep the runtime dependency surface lean.
 
+### Mode A / Mode B (tenant config)
+Mode A: `config/tenant.yml` is committed in a private deployment fork
+(commit it with LF line endings). Mode B (upstream default): the file is
+gitignored and materialised in CI from the `TENANT_CONFIG_YAML` secret.
+See [`tenant-config-modes.md`](operations/tenant-config-modes.md).
+
 ## P
 
 ### Payload
@@ -242,6 +256,20 @@ their own tenant configuration and detection content in their
 deployment repositories.
 
 ## R
+
+### Required workflow (ruleset)
+A repository or organization ruleset rule ("Require workflows to pass
+before merging") that makes a named workflow a merge gate for `main`. It
+also rejects direct pushes to the branch, and it is satisfied only by
+workflow runs on a pull request — which `GITHUB_TOKEN`-opened PRs do not
+start automatically. See *Token source* and
+[`protected-fork-validation.md`](operations/protected-fork-validation.md).
+
+### Rolling PR
+A pull request on a fixed branch name (`status/refresh`,
+`coverage/refresh`, `report/refresh`) that the `auto-pr` action updates
+in place on every run instead of opening a new PR per run. Review and
+merge whenever convenient; nothing piles up.
 
 ### Revoked / deprecated ATT&CK id
 MITRE retires technique ids between releases: a *revoked* id is
@@ -323,6 +351,13 @@ accepts ONLY envelopes with `status: test` (plus `deprecated`),
 keeping test workloads isolated from live production content. Closes
 G21. Operators who prefer the shared-lower-env pattern (test +
 production both deploy together) continue to use `role: integration`.
+
+### Token source (auto-pr)
+The non-secret label (`AUTO_PR_TOKEN` or `GITHUB_TOKEN`) a workflow passes
+to the `auto-pr` action saying which secret it resolved for PR creation.
+With `GITHUB_TOKEN` the action warns that the PR's workflow runs will be
+held for manual approval; with an approved `AUTO_PR_TOKEN` PAT they start
+automatically.
 
 ### Tuning preview
 The PR-time blast-radius comment posted by

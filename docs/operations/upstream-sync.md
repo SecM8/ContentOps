@@ -199,6 +199,13 @@ git merge --signoff --allow-unrelated-histories -X theirs upstream/main
   no longer one of them: it is opt-in via the repo variable
   `CONTENTOPS_SCHEDULES`, which lives in repo settings and survives
   any merge ([github-actions-setup.md §6](github-actions-setup.md#6-scheduled-workflows--opt-in-with-contentops_schedules)).
+  The same holds for PR landing of generated output
+  (`CONTENTOPS_LAND_VIA_PR`, [§1](github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers))
+  and the automation token (`AUTO_PR_TOKEN`): configuration, not
+  workflow edits. If your fork hand-edited `status-refresh.yml`,
+  `coverage.yml` or `report.yml` to open pull requests, take upstream's
+  versions and set the variable instead — otherwise every sync conflicts
+  on those files.
 - `--signoff` signs the merge commit for the DCO gate.
 
 Push the branch (`git push -u origin chore/upstream-sync`) and open a

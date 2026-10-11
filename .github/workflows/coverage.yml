@@ -1,5 +1,19 @@
 name: MITRE ATT&CK coverage
 
+# Renders the MITRE ATT&CK coverage report on every PR / push that touches
+# detections or pipeline code, posts the sticky PR comment, uploads the
+# artifacts, and -- on push to main only -- lands the regenerated
+# Navigator layer + badge back in the repo.
+#
+# Landing mode -- repo variable CONTENTOPS_LAND_VIA_PR:
+#   * unset / anything but 'true' (default): commit and push directly
+#     to main, exactly as before.
+#   * 'true': open or update ONE rolling PR on the fixed branch
+#     `coverage/refresh` via the auto-pr composite action, for
+#     deployments whose rulesets reject direct pushes to main. Same
+#     push-to-main event restriction either way: PR and manual runs
+#     never write back. See docs/operations/github-actions-setup.md §1.
+
 on:
   pull_request:
     paths:
@@ -13,8 +27,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write           # push-to-main branch commits the regenerated badge + layer
-  pull-requests: write
+  contents: write           # push-to-main run commits the regenerated badge + layer (direct) or pushes the coverage/refresh branch (PR mode)
+  pull-requests: write      # sticky PR comment; PR mode: open / update the rolling coverage PR
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -75,20 +89,76 @@ jobs:
             coverage/badge.json
           if-no-files-found: error
 
-      - name: Commit refreshed badge + layer (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Commit refreshed badge + layer (main only, direct-push mode)
+        # Default landing mode. Push-to-main runs only; skipped when
+        # CONTENTOPS_LAND_VIA_PR is 'true' (the rolling-PR steps below run
+        # instead). The two landing steps are mutually exclusive.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          echo "Landing mode: direct push to main (CONTENTOPS_LAND_VIA_PR is not 'true')."
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add coverage/navigator-layer.json coverage/badge.json
           if git diff --staged --quiet; then
             echo "no coverage drift to commit"
+            echo "## MITRE coverage -- no changes (landing mode: direct push)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           git commit \
             -m "chore(coverage): refresh MITRE Navigator layer + badge" \
             -s
           git push origin HEAD:main
+          echo "## MITRE coverage -- refreshed layer + badge pushed to main (landing mode: direct push)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open / update rolling PR with refreshed badge + layer (main only, PR-landing mode)
+        # Same push-to-main restriction as the direct step. Fixed branch
+        # name = one rolling PR, updated in place on the next run.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: coverage
+          branch: coverage/refresh
+          commit-message: "chore(coverage): refresh MITRE Navigator layer + badge"
+          title: "chore(coverage): refresh MITRE Navigator layer + badge (rolling)"
+          body: |
+            Auto-opened by `.github/workflows/coverage.yml` because this
+            repository lands generated output via pull request
+            (`CONTENTOPS_LAND_VIA_PR=true`). Regenerated
+            `coverage/navigator-layer.json` and `coverage/badge.json` after a
+            push to `main` touched `detections/**` or `contentops/**`.
+
+            **Rolling PR:** the `coverage/refresh` branch is updated in place
+            on the next run, so nothing piles up. If the PR's checks show
+            *action required*, a user with write access must approve the held
+            workflow runs first (see the run's step summary).
+          labels: coverage,automated
+          add-paths: |
+            coverage/navigator-layer.json
+            coverage/badge.json
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
+
+      - name: Step summary (PR-landing mode)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        env:
+          CHANGED: ${{ steps.auto-pr.outputs.changed }}
+          PR_NUMBER: ${{ steps.auto-pr.outputs.pull-request-number }}
+          PR_OPERATION: ${{ steps.auto-pr.outputs.pull-request-operation }}
+          TOKEN_SOURCE: ${{ steps.auto-pr.outputs.token-source }}
+        run: |
+          set -euo pipefail
+          {
+            if [ "$CHANGED" != "true" ]; then
+              echo "## MITRE coverage -- no changes (landing mode: rolling PR)"
+            elif [ -n "$PR_NUMBER" ]; then
+              echo "## MITRE coverage -- rolling PR #${PR_NUMBER} ${PR_OPERATION:-touched} (landing mode: rolling PR)"
+            else
+              echo "## MITRE coverage -- changes detected but no PR number returned (landing mode: rolling PR); inspect the auto-pr step"
+            fi
+            echo ""
+            echo "Branch: \`coverage/refresh\` | Token source: \`${TOKEN_SOURCE:-n/a}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

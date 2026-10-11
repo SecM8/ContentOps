@@ -113,9 +113,37 @@ internal SOC adopters land here.
    gh secret delete TENANT_CONFIG_YAML
    ```
 
+4. Tell gitleaks the committed file is intentional. The upstream
+   `.gitleaks.toml` carries two rules that flag *any* content in
+   `config/tenant.yml` (upstream never commits it). Uncomment the
+   `config/tenant\.yml$` entry under `[allowlist] paths` in
+   `.gitleaks.toml`; without it `secret-scan.yml` fails on every
+   full-history scan and on every PR that touches the file.
+
+5. Commit the file with **LF line endings**. `.gitattributes` declares
+   `*.yml text eol=lf`; a `tenant.yml` first committed from Windows often
+   carries CRLF in the index, which git then reports as modified in every
+   fresh checkout — and `peter-evans/create-pull-request` (used by every
+   auto-PR workflow) aborts at `git stash pop` with `Your local changes
+   to the following files would be overwritten by merge:
+   config/tenant.yml`. Check the *index*, not just your editor setting,
+   and repair once in your private fork:
+
+   ```powershell
+   git ls-files --eol -- config\tenant.yml     # an "i/crlf" column = needs repair
+   git add --renormalize -- config\tenant.yml
+   git commit -s -m "config: normalise tenant.yml line endings"
+   ```
+
+   The diff is line endings only; the content does not change. Not
+   applicable to Mode B — upstream never commits the file. Do not run the
+   repair against the upstream Mode B configuration.
+
 The composite action already supports this path: when
 `config/tenant.yml` exists in the workspace and no secret is passed,
-the committed file is used as-is. **No code change is required.**
+the committed file is used as-is. **No code change is required**
+beyond the one-line gitleaks allowlist toggle in step 4 and the
+one-time line-ending check in step 5.
 
 **Safety reminder**: a private repo's "private" is only as good as
 the org's collaborator list and SSO posture. Treat the committed

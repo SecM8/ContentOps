@@ -12,6 +12,39 @@ from the commit history.
 
 ### Added
 
+- **Opt-in PR landing for generated output (`CONTENTOPS_LAND_VIA_PR`).**
+  `status-refresh.yml`, `coverage.yml` and `report.yml` used to `git push`
+  their regenerated status pages, Navigator layer / badge and reports
+  straight to `main`. On a deployment whose ruleset requires a pull
+  request or a required workflow, that push is rejected with `GH013`
+  whatever token is used. Setting the repo variable
+  `CONTENTOPS_LAND_VIA_PR=true` now switches the three workflows to the
+  shared `auto-pr` action on fixed rolling branches (`status/refresh`,
+  `coverage/refresh`, `report/refresh`): one PR each, updated in place on
+  every run, the same event restrictions as before (coverage / report
+  write back on push-to-main only), intended paths only, no empty PRs.
+  Unset keeps the direct push — the upstream default. `status-refresh.yml`
+  and `report.yml` gain `pull-requests: write` for that mode. Result: one
+  workflow definition serves unprotected and ruleset-protected `main`
+  branches without fork-local edits.
+- **The `auto-pr` token fallback is visible.** Every caller now passes a
+  non-secret `token-source` label alongside the token; when a PR is about
+  to be opened with `GITHUB_TOKEN` the action emits a `::warning::` and a
+  step-summary entry explaining that the PR's `pull_request` workflows are
+  held for manual approval (so under a required-workflow ruleset it cannot
+  merge) and how to recover — *Approve and run*, then code-owner review —
+  or make it automatic with an approved `AUTO_PR_TOKEN`. Informational
+  only: token selection is unchanged and an expired or unapproved PAT
+  still fails explicitly. `emergency-disable.yml` reports the same.
+- **Protected-fork validation runbook**
+  ([`protected-fork-validation.md`](docs/operations/protected-fork-validation.md)):
+  layered checks for a deployment fork under organization rulesets —
+  licence wiring, PR landing, automation token (approval, scopes, owner,
+  expiry), required workflows actually running on the PR, independent
+  code-owner approval, index line endings, schedule eligibility, and
+  Azure token exchange → Graph → RBAC — each with the evidence to capture
+  and a manual fallback. A green run is not treated as proof of
+  mergeability.
 - **Conformance warns when pull requests can use an identity
   unapproved.** Same-repository pull requests run `integration-deploy`
   in the `integration` environment, and `drift-pr` / the tuning preview
@@ -61,6 +94,21 @@ from the commit history.
 
 ### Changed
 
+- **`AUTO_PR_TOKEN` contract documented in full.** Resource owner = the
+  organization, this repository only, Contents + Pull requests RW,
+  Workflows RW only for branches that change workflow files, organization
+  approval, owner / expiry / rotation, and an owner who is not the sole
+  code owner of automation-written paths (authors cannot approve their
+  own PRs). Troubleshooting rows added for `GH013` on direct push, PRs
+  whose required workflows never start, `403 Write access to repository
+  not granted`, unapprovable automation PRs, the CRLF `git stash pop`
+  failure and the shared-identity conformance read leg. Mode A gains a
+  one-time LF normalisation step; `CODEOWNERS` explains team ownership for
+  automation-written paths. OIDC guidance now covers the ID-based subject
+  format repositories created after 2026-07-15 emit, with a
+  verify-the-emitted-claim checkpoint and a verified-on date. The
+  schedule reference explains how to tell a policy skip from a broken
+  cron.
 - **KQL schema refresh runs weekly, not daily.** `kql-schemas-refresh.yml`
   now fires Mondays at 03:30 UTC (`30 3 * * 1`) instead of every day.
   Table schemas change rarely, and daily PRs created more review than
@@ -131,6 +179,27 @@ from the commit history.
   [`github-actions-setup.md`](docs/operations/github-actions-setup.md).
 
 ### Fixed
+
+- **Stale workflow reference rows.** `workflows.md` described
+  `coverage.yml` as a weekly cron with `contents: read`; it runs on PR +
+  push to main + dispatch with `contents: write` and writes back on push.
+  `feature-catalog.md` named the workflow `mitre-attack-coverage` (it is
+  `MITRE ATT&CK coverage`) and lacked `report.yml` / `status-refresh.yml`
+  rows. `deployment-conformance.md` said the weekly check runs 07:00 UTC
+  (the cron is 05:00). `secret-scan.yml`'s comment dated the Node 20
+  removal 2026-09-16; GitHub removed it on 2026-09-23. The Actions setup
+  guide now lists the `reporting` environment that `coverage.yml` /
+  `report.yml` use.
+- **`secret-scan.yml` now actually passes the gitleaks licence.**
+  `gitleaks-action` refuses to scan an organization-owned repo without
+  a `GITLEAKS_LICENSE` key, and the workflow had the env line commented
+  out, so every org fork failed with "missing gitleaks license" even
+  with the secret set. The line is live (repo- or org-level secret),
+  with a commented alternative that also accepts a repo Variable. The
+  action is bumped to v3.0.0 (Node 24; v2 stops working on hosted
+  runners after 2026-09-16). `.gitleaks.toml` gains a commented Mode A
+  toggle that allowlists the deliberately committed `config/tenant.yml`;
+  the Mode A docs and the Actions troubleshooting table point to it.
 
 - **`silent-rules` left out the rules that never fired.** It printed the
   telemetry query's rows, and a rule with no alert and no incident has

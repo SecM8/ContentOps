@@ -33,3 +33,19 @@ config/**                                  @KustoKing
 docs/**                                    @KustoKing
 tests/**                                   @KustoKing
 SECURITY.md                                @KustoKing
+
+# --- Automation-written paths (adopter forks: read this) --------------------
+# status-refresh.yml, coverage.yml and report.yml write the paths below.
+# When they land as pull requests (repo variable CONTENTOPS_LAND_VIA_PR=true,
+# see docs/operations/github-actions-setup.md §1) the PR AUTHOR is the owner
+# of the AUTO_PR_TOKEN PAT (or github-actions[bot] on the GITHUB_TOKEN
+# fallback). GitHub never lets an author approve their own PR, and the LAST
+# matching pattern decides who the code owner is -- so if the PAT owner is
+# the only owner matched here, those PRs can never be approved. In your
+# fork, route these paths to a TEAM with at least one other eligible
+# reviewer (for example `@<org>/<detection-engineering>`), or open the PRs
+# with a machine-user PAT. Upstream keeps the repo owner here on purpose;
+# do not copy these handles verbatim into an adopter fork.
+docs/status/**                             @KustoKing
+coverage/**                                @KustoKing
+reports/**                                 @KustoKing

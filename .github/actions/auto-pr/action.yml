@@ -3,12 +3,29 @@
 
 # Detect working-tree changes and open a PR via peter-evans/create-
 # pull-request. Extracted from the tail pattern shared by collect,
-# drift, upstream-watchers, kql-schemas-refresh, and lock-unlock.
+# drift, upstream-watchers, kql-schemas-refresh, and lock-unlock. Also
+# the PR-landing path of status-refresh, coverage and report when the
+# repo variable CONTENTOPS_LAND_VIA_PR is 'true'.
 #
 # Callers run their CLI commands first, then hand off to this action
 # for the change-detect + PR-creation boilerplate. Anything specific
 # to the caller (supersede-close, per-asset labels, step summaries)
 # stays in the caller.
+#
+# Branch naming decides the PR cadence:
+#   * per-run name (collect/<run_id>)  -> one PR per run;
+#   * FIXED name  (status/refresh)     -> a ROLLING PR: create-pull-
+#     request updates that branch and its open PR in place on every
+#     run, so repeated runs never pile up PRs. Use fixed names for
+#     generated-output refreshes that land on a protected `main`.
+#
+# Token: callers resolve the secret and pass BOTH the token and a
+# non-secret label saying which one they picked (composite actions
+# have no `secrets` context). With GITHUB_TOKEN the opened PR's
+# pull_request workflows are not started automatically, which on a
+# repo whose ruleset requires a workflow to pass leaves the PR
+# unmergeable until a human intervenes -- so the action warns loudly
+# when that fallback is taken (see "Report token source" below).
 #
 # Usage:
 #
@@ -23,6 +40,7 @@
 #       labels: collect,automated
 #       add-paths: "detections/**"
 #       token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+#       token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
 
 name: auto-pr
 description: Detect working-tree changes and open a PR.
@@ -35,7 +53,10 @@ inputs:
     required: false
     default: '.'
   branch:
-    description: Branch name for the PR (e.g. collect/<run_id>)
+    description: >
+      Branch name for the PR. A per-run name (collect/<run_id>) gives
+      one PR per run; a fixed name (status/refresh) gives one rolling
+      PR that is updated in place on every run.
     required: true
   commit-message:
     description: Git commit message for the PR commit
@@ -66,17 +87,50 @@ inputs:
       org repos where "Allow GitHub Actions to create and approve pull
       requests" is disabled by policy, the default GITHUB_TOKEN cannot
       open the PR, so a fine-grained PAT (Contents + Pull requests, RW)
-      stored as AUTO_PR_TOKEN takes over. PAT-opened PRs also trigger
-      on:pull_request CI, which GITHUB_TOKEN-opened PRs never do.
+      stored as AUTO_PR_TOKEN takes over. PAT-opened PRs also start
+      their on:pull_request workflows automatically; GITHUB_TOKEN-
+      opened PRs do not (GitHub holds those runs for manual approval),
+      which matters wherever a ruleset requires a workflow to pass
+      before merging. The fallback is by EMPTINESS only: an expired,
+      revoked, wrongly scoped or not-yet-approved PAT is a non-empty
+      secret, so it is used as-is and the push/PR step fails explicitly
+      ("Write access to repository not granted" / 403, or "Bad
+      credentials"). That is intended -- the action never silently
+      retries with a different identity.
     required: true
+  token-source:
+    description: >
+      Non-secret label naming which secret the caller resolved into
+      `token`: 'AUTO_PR_TOKEN' (custom automation token) or
+      'GITHUB_TOKEN' (built-in fallback). Callers compute it from the
+      emptiness of the AUTO_PR_TOKEN secret (see the Usage block in
+      the header comment); the action never inspects the token value.
+      When a PR is about to be opened with 'GITHUB_TOKEN' the action
+      emits a warning annotation plus a step-summary entry that spells
+      out the mergeability risk under required-workflow rulesets and
+      the manual recovery. Informational only: it never changes which
+      token is used and never fails the step. Empty (default) means
+      the caller did not declare the source; the action then emits a
+      notice asking for it.
+    required: false
+    default: ''
 
 outputs:
   changed:
     description: "'true' if working-tree changes were detected"
     value: ${{ steps.tree.outputs.changed }}
   pull-request-number:
-    description: PR number if one was opened (empty otherwise)
+    description: PR number if one was opened or updated (empty otherwise)
     value: ${{ steps.cpr.outputs.pull-request-number }}
+  pull-request-operation:
+    description: "'created', 'updated', 'closed' or 'none' from create-pull-request (empty when no change was detected)"
+    value: ${{ steps.cpr.outputs.pull-request-operation }}
+  token-source:
+    description: >
+      'AUTO_PR_TOKEN', 'GITHUB_TOKEN' or 'undeclared' -- the label the
+      caller passed, normalised. Empty when no change was detected (no
+      PR attempted).
+    value: ${{ steps.token-source.outputs.token-source }}
 
 runs:
   using: composite
@@ -92,6 +146,47 @@ runs:
         else
           echo "changed=true" >> "$GITHUB_OUTPUT"
         fi
+
+    - name: Report token source
+      # Runs only when a PR is actually about to be opened/updated: that
+      # is the moment the fallback matters. Inputs reach the script via
+      # env (never interpolated into the shell), and the token itself
+      # is neither read nor echoed -- only the caller's label is.
+      if: steps.tree.outputs.changed == 'true'
+      id: token-source
+      shell: bash
+      env:
+        TOKEN_SOURCE: ${{ inputs.token-source }}
+        PR_BRANCH: ${{ inputs.branch }}
+      run: |
+        set -euo pipefail
+        case "$TOKEN_SOURCE" in
+          AUTO_PR_TOKEN)
+            echo "::notice::auto-pr: opening/updating the PR on '${PR_BRANCH}' with AUTO_PR_TOKEN (custom automation token); its pull_request workflows start automatically."
+            label="AUTO_PR_TOKEN"
+            ;;
+          GITHUB_TOKEN)
+            msg="auto-pr: AUTO_PR_TOKEN is not set -- falling back to GITHUB_TOKEN for the PR on '${PR_BRANCH}'. A GITHUB_TOKEN-opened PR does not start its pull_request workflows automatically (GitHub holds them for manual approval; older behaviour did not create them at all). On a repository whose ruleset requires a workflow to pass before merging, this PR cannot become mergeable until a user with write access opens the PR's Checks tab and clicks 'Approve and run' (or closes and reopens the PR), and then a code owner approves it. To make this automatic, store an approved fine-grained PAT as the AUTO_PR_TOKEN secret -- see docs/operations/github-actions-setup.md section 2."
+            echo "::warning::${msg}"
+            {
+              echo "## auto-pr -- token fallback: GITHUB_TOKEN"
+              echo ""
+              echo "${msg}"
+              echo ""
+              echo "Next action if \`main\` is governed by a required-workflow ruleset:"
+              echo ""
+              echo "1. Open the PR on branch \`${PR_BRANCH}\` -> Checks tab -> **Approve and run** (or close + reopen the PR)."
+              echo "2. Confirm the required workflow actually ran on the PR before requesting a code-owner review."
+              echo "3. To stop doing this by hand, set the \`AUTO_PR_TOKEN\` secret (approved, Contents + Pull requests RW, this repo only)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            label="GITHUB_TOKEN"
+            ;;
+          *)
+            echo "::notice::auto-pr: the caller did not declare token-source, so this run cannot tell whether AUTO_PR_TOKEN or GITHUB_TOKEN opens the PR. Pass token-source (see .github/actions/auto-pr/action.yml)."
+            label="undeclared"
+            ;;
+        esac
+        echo "token-source=${label}" >> "$GITHUB_OUTPUT"
 
     - name: Open PR (peter-evans/create-pull-request)
       if: steps.tree.outputs.changed == 'true'

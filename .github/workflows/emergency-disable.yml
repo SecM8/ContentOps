@@ -158,6 +158,24 @@ jobs:
       - name: Push branch
         run: git push --set-upstream origin "${{ steps.branch.outputs.name }}"
 
+      - name: Report token source
+        # Mirrors the auto-pr composite action: say which secret opens the
+        # PR without reading the token. With GITHUB_TOKEN the PR's
+        # pull_request workflows are held for manual approval, which on a
+        # ruleset-protected main blocks the merge until someone approves
+        # them -- the PAT path (AUTO_PR_TOKEN) avoids that.
+        env:
+          TOKEN_SOURCE: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
+        run: |
+          set -euo pipefail
+          if [ "$TOKEN_SOURCE" = "GITHUB_TOKEN" ]; then
+            echo "::warning::emergency-disable: AUTO_PR_TOKEN is not set -- opening the PR with GITHUB_TOKEN. Its pull_request workflows are held for manual approval; on a repository whose ruleset requires a workflow to pass, approve them in the PR's Checks tab (or close and reopen the PR) before requesting review. See docs/operations/github-actions-setup.md section 2."
+            echo "Token source: GITHUB_TOKEN (fallback) -- held workflow runs need manual approval on ruleset-protected repos." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::emergency-disable: opening the PR with AUTO_PR_TOKEN (custom automation token)."
+            echo "Token source: AUTO_PR_TOKEN." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Open PR (manual merge required)
         env:
           GH_TOKEN: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}

@@ -46,7 +46,13 @@ run Monday morning UTC):
   (`chore(kql-schemas)`), `collect.yml` (`chore(collect)`) and
   `upstream-watchers.yml` each keep exactly one open PR: a new run
   closes its predecessors automatically. Review and merge the one that
-  is there; there is nothing to clean up behind it.
+  is there; there is nothing to clean up behind it. With
+  `CONTENTOPS_LAND_VIA_PR=true` three more **rolling** PRs appear —
+  `status/refresh` (daily), `coverage/refresh` and `report/refresh`
+  (after pushes to `main`) — each updated in place; merge the current
+  one. If a bot PR's checks say *action required*, approve the held runs
+  (Checks tab → *Approve and run*) or set an approved `AUTO_PR_TOKEN` so
+  they start on their own.
 - **Merge the upstream-sync PR with "Create a merge commit".** Never
   squash or rebase it — see [Never do](#4-never-do) and
   [`upstream-sync.md` §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history).
@@ -61,7 +67,7 @@ run Monday morning UTC):
 | `version-bump check failed` on a drift PR | The drift PR imported portal edits under an unchanged `version`. | Recent tool versions bump the version automatically on re-import — sync the tool. Until then, bump `version` in the listed files on the PR branch. See [troubleshooting](../troubleshooting.md#version-bump-check-failed). |
 | `Extra inputs are not permitted` on a Defender `status` / `description` | Graph replaced `isEnabled` with `status` and added `description`; older tool versions reject both. | Sync the tool from upstream; no YAML change needed. See [troubleshooting](../troubleshooting.md#extra-inputs-are-not-permitted-on-a-defender-status--description). |
 | `could not add label: 'pipeline-alert' not found` | A job with an `upstream` remote sent `gh` to the public mirror instead of your repo (no `GH_REPO`). | Sync the tool from upstream; add `GH_REPO: ${{ github.repository }}` to any fork-local workflow that adds `upstream`. See [troubleshooting](../troubleshooting.md#could-not-add-label-pipeline-alert-not-found). |
-| `GitHub Actions is not permitted to create or approve pull requests` | The org disallows PR creation by the built-in `GITHUB_TOKEN`. | Allow it in the org settings, or set the `AUTO_PR_TOKEN` secret — the PR-opening workflows must use it when the setting stays off. See [`github-actions-setup.md`](github-actions-setup.md#common-failure-modes--fixes). |
+| `GitHub Actions is not permitted to create or approve pull requests` | The org disallows PR creation by the built-in `GITHUB_TOKEN`. | Allow it in the org settings, or set the `AUTO_PR_TOKEN` secret — the PR-opening workflows must use it when the setting stays off. Set it anyway when a ruleset on `main` requires a workflow to pass: `GITHUB_TOKEN`-opened PRs get their runs held for approval and stay unmergeable until someone approves them. See [`github-actions-setup.md`](github-actions-setup.md#common-failure-modes--fixes). |
 | `Could not locate all the workspaces in your query` when saving a rule | The rule's query (or a function it calls) reads another workspace by name, e.g. `workspace("law-other")`. The deploy identity cannot see that workspace, so Sentinel refuses the save. | Grant the deploy identity read on that workspace (Log Analytics Reader) **and** Reader on its subscription so the name resolves. If that is not possible, lock the rule (`contentops lock <id>`, i.e. `localCustomization: true`) so deploys leave it alone. |
 | Red deploy with `0 asset(s) selected` | An older tool version failed docs-only pushes to `main` that selected nothing to deploy. | Fixed in recent tool versions — sync the tool. Nothing was deployed and nothing needs re-running. |
 

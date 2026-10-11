@@ -183,7 +183,7 @@ Conformance: FAIL — 1 check(s) require action (12 PASS, 0 SKIP, 0 INFO)
 ## Scheduled in CI
 
 The `.github/workflows/conformance.yml` workflow runs the full check
-weekly (Mondays 07:00 UTC) via OIDC against the configured tenant
+weekly (Mondays 05:00 UTC) via OIDC against the configured tenant
 and opens / comments on a dedup'd pipeline-alert issue if anything
 goes red. Also dispatchable manually:
 
@@ -281,6 +281,30 @@ incident. Default is `split`; an unrecognised value falls back to
 > influence what it sees. Do not gate a deploy on a conformance leg whose
 > environment + federated credential don't yet exist, or that leg SKIPs
 > (read) / can't authenticate (write) silently.
+
+### Protected-fork notes (verified 2026-10-11)
+
+- **L4 subjects and the ID-based OIDC format.** The default expected
+  federated-credential subjects are the legacy `repo:<org>/<repo>:...`
+  strings. A repository created after 2026-07-15 emits
+  `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>` instead, so with the
+  defaults L4 reports *missing subjects* even when the App Registration
+  is configured correctly. Until the check accepts both forms, list the
+  ID-based subjects explicitly under `federated_credential_subjects` in
+  `.contentops-conformance.yml` (IDs via
+  `gh api repos/<org>/<repo> --jq '{owner_id: .owner.id, repo_id: .id}'`;
+  see [authentication-setup.md, step 3](authentication-setup.md#step-3-add-an-oidc-federated-credential-for-ci)).
+- **L7 and rulesets.** L7 reads the classic branch-protection API only.
+  On a `main` protected by a **ruleset** that endpoint answers *Branch not
+  protected*, so L7 cannot see the ruleset's pull-request / required-
+  workflow rules. Verify them manually
+  (`gh api repos/<org>/<repo>/rules/branches/main`) and record the result
+  in the [protected-fork validation runbook](protected-fork-validation.md);
+  do not read the L7 row as proof either way.
+- **Layers, not one green light.** A successful `azure/login` proves the
+  OIDC trust exchange (L3). Graph consent (L4), Azure RBAC (L5), functional
+  reach (L6) and repository policy (L7) are independent and can each fail
+  on their own.
 
 ## Per-fork expectations
 

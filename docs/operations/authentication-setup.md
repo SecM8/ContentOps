@@ -46,7 +46,9 @@ If you've done this before:
   `CustomDetection.ReadWrite.All` with admin consent.
 - Local dev: client secret in `.env`.
 - CI: OIDC federated credential with subject
-  `repo:<org>/<repo>:environment:<env>`.
+  `repo:<org>/<repo>:environment:<env>` — or, for repositories created
+  after 2026-07-15, the ID-based `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>`.
+  Always verify the emitted claim (step 3).
 - Put the App Reg's client ID + tenant ID into GitHub Actions
   **Variables** (not Secrets — they're public identifiers, not
   credentials).
@@ -324,12 +326,51 @@ In the App Registration:
 If you have an integration workspace, add a second federated
 credential with **GitHub environment name**: `integration`.
 
+Add one federated credential per GitHub environment the workflows you
+enable actually use — `production` (deploy, rollback), `integration`
+(PR-time smoke deploys, live tests), `automation` (unattended read-mostly
+cron: drift, status refresh, silent rules, schema refresh) and
+`conformance` (the write-identity conformance leg). Operational
+environments are not optional once a workflow job declares them: a
+missing `automation` or `conformance` credential fails that job with
+`AADSTS700213`. The `reporting` environment (coverage, report) requests
+no OIDC token and needs no credential. The full environment × workflow
+table is in [`github-actions-setup.md` §3](github-actions-setup.md#3-github-environments).
+
 What this does: when a workflow runs `environment: production`, GitHub
 issues an OIDC token whose `sub` claim equals
 `repo:<org>/<repo>:environment:production`. The federated credential
 tells Azure *"trust that exact subject from GitHub's issuer
 (token.actions.githubusercontent.com)"*. That's the entire chain of
 trust — no shared secret needed.
+
+**Verify the subject GitHub actually emits** (verified 2026-10-11; re-check
+after GitHub platform changes). Two default `sub` formats are in use:
+
+| Repository | Default `sub` for `environment: <env>` |
+|---|---|
+| Created before 2026-07-15 and not opted in | `repo:<org>/<repo>:environment:<env>` |
+| Created after 2026-07-15, renamed or transferred after that date, or opted in to immutable subject claims | `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>` |
+
+The portal wizard ("GitHub Actions deploying Azure resources") derives
+the legacy form from the org and repository *names*. For a repository
+on the ID-based format, pick **Other issuer** instead and paste the exact
+values: issuer `https://token.actions.githubusercontent.com`, audience
+`api://AzureADTokenExchange`, and the subject with the numeric IDs. Get
+the IDs without touching any token:
+
+```bash
+gh api repos/<org>/<repo> --jq '{created_at, owner_id: .owner.id, repo_id: .id}'
+```
+
+The first failing `azure/login` step also quotes the exact subject
+verbatim (`AADSTS700213 ... presented assertion subject '<sub>'`) — copy
+it from there. Never print or keep the OIDC token itself; the error text
+and the IDs are all you need. Repositories and organizations can also
+customise the claim (`include_claim_keys`), so treat both formats as
+examples and the emitted claim as the authority. A successful login
+proves only the trust exchange; Graph consent (L4) and Azure RBAC (L5)
+are validated separately by `contentops conformance`.
 
 ---
 
@@ -402,8 +443,14 @@ the `TENANT_CONFIG_YAML` secret — see
 **A single App Registration is perfectly fine** for a POC, a dev fork, or
 any deployment where one identity owning both read and write is an
 acceptable trust boundary. Everything above describes that single-identity
-setup, and the pipeline runs end-to-end on it. Skip this section unless you
-want the hardening below.
+setup, and the pipeline runs end-to-end on it. If you stay single,
+**declare it**: `identity_mode: single` in `.contentops-conformance.yml`
+makes the weekly conformance read leg verify the shared identity instead
+of failing its least-privilege checks, and records that you accept the
+trade-off (unattended automation authenticates as a write-capable
+identity) — see
+[`deployment-conformance.md`](deployment-conformance.md#single-app-registration-deployments-identity_mode-single).
+Skip the rest of this section unless you want the hardening below.
 
 For production separation of duties you can split into **two** App
 Registrations so the always-on automation (cron jobs, drift, reporting)
@@ -458,7 +505,10 @@ the App Registration. Common causes:
 
 Open the App Registration's federated credential and verify the
 **Subject identifier** field. It must match what GitHub sends:
-`repo:<org>/<repo>:environment:<env>`.
+`repo:<org>/<repo>:environment:<env>` — or the ID-based
+`repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>` for
+repositories created after 2026-07-15 (see step 3). The error message
+quotes the exact subject GitHub sent; copy it rather than deriving it.
 
 ### `403 Forbidden` on a Sentinel handler
 

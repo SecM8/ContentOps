@@ -87,8 +87,12 @@ compare the chain's head hash (`contentops audit head`) with the
 head attested for that run (below). HMAC-
 signing the chain with a tenant key was considered and explicitly
 declined: the threat model assumes write access to `main` is the
-high-trust boundary, enforced by branch protection + CODEOWNERS,
-not by cryptographic signing.
+high-trust boundary, enforced by branch protection (or rulesets) +
+CODEOWNERS, not by cryptographic signing. Automation that opens pull
+requests (the `auto-pr` action) authenticates as the `AUTO_PR_TOKEN`
+owner or as `github-actions[bot]`; keep that identity distinct from the
+code owners who approve its PRs so review stays independent (see the
+comments in [`.github/CODEOWNERS`](.github/CODEOWNERS)).
 
 ### Head-hash attestation (provenance, run-bound)
 
@@ -122,7 +126,7 @@ writer.
 
 Workflows triggered by `pull_request` run **the PR's own code**:
 `contentops/`, `requirements.txt` and the workflow file itself as they
-are on the PR branch. Branch protection and CODEOWNERS only gate the
+are on the PR branch. Branch protection (or rulesets) and CODEOWNERS only gate the
 *merge*; they do not stop a PR job from running. Consequences:
 
 - **Fork PRs** get no OIDC token and no secrets. Every job that can
@@ -186,9 +190,13 @@ and `tests/` trees (see `.github/workflows/sast.yml`). Findings at
 ## Secret scanning
 
 [`gitleaks`](https://github.com/gitleaks/gitleaks) runs on every push,
-every PR, and nightly. The full config lives at `.gitleaks.toml`.
-GitHub's built-in secret scanner is also enabled at the repository
-level.
+every PR, and nightly via `gitleaks/gitleaks-action` v3 (SHA-pinned
+like every other action). The full config lives at `.gitleaks.toml`.
+The action demands a licence key for organization-owned repos and
+reads it from the `GITLEAKS_LICENSE` env var, which `secret-scan.yml`
+fills from the secret of the same name (repo- or org-level; free keys
+at https://gitleaks.io/). GitHub's built-in secret scanner is also
+enabled at the repository level.
 
 ## Workflow-failure notifications
 

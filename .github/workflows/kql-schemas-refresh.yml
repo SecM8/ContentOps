@@ -98,6 +98,7 @@ jobs:
             tools/kql_strict/schemas_defender.json
             docs/whats-new/**
           token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
 
       - name: Close superseded kql-schemas PRs
         # Only after a fresh PR exists, so there is never a window with

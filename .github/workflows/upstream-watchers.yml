@@ -76,6 +76,7 @@ jobs:
             manifests/**
             docs/whats-new/**
           token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
 
       - name: Close superseded upstream-watch PRs
         # Only after a fresh PR exists, so there is never a window with

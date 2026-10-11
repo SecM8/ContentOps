@@ -85,13 +85,23 @@ token with subject `repo:<org>/<repo>:environment:<env-name>` (or
 `...:ref:refs/heads/main`, or `...:pull_request`); your App Reg
 must have a federated credential entry that exactly matches.
 
+Repositories created after 2026-07-15 (or renamed / transferred after
+that date, or opted in to immutable subject claims) emit the **ID-based**
+form instead: `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>`.
+The error message quotes the exact subject GitHub sent — treat that as
+the authority, not the pattern you expected (verified 2026-10-11).
+
 **Fix:**
 
 1. Azure Portal → App Registrations → your app → Certificates &
    secrets → **Federated credentials**.
 2. **Add credential** → "GitHub Actions deploying Azure resources".
 3. Fill in: org, repo, "Environment" (or "Branch" / "Pull request"
-   depending on which workflow triggered the failure).
+   depending on which workflow triggered the failure). For a repository
+   on the ID-based subject format the wizard derives the wrong subject —
+   choose **Other issuer** and paste the subject quoted in the error
+   (issuer `https://token.actions.githubusercontent.com`, audience
+   `api://AzureADTokenExchange`).
 4. Save. The subject is auto-derived from your inputs — it should
    match the error message verbatim.
 5. Re-run the workflow.
@@ -595,6 +605,68 @@ Check what the branch holds with `contentops state sync status` and
 ---
 
 ## CI gate failures
+
+### `GH013: Repository rule violations found for refs/heads/main` on a workflow push
+
+**Looks like (in `status-refresh` / `coverage` / `report` logs):**
+
+```
+remote: error: GH013: Repository rule violations found for refs/heads/main.
+remote: - Required workflow '<name>' is not satisfied
+```
+
+**Why:** a ruleset on `main` requires a pull request and/or a required
+workflow. Rulesets reject direct pushes whatever token is used; no
+permission change fixes this.
+
+**Fix:** set the repo variable `CONTENTOPS_LAND_VIA_PR=true` so the three
+generated-output workflows open rolling PRs via `auto-pr`
+([`github-actions-setup.md` §1](operations/github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers)).
+Then set an approved `AUTO_PR_TOKEN` so those PRs' required workflows run
+without a manual *Approve and run*.
+
+### Automation PR is open but its checks never start
+
+**Looks like:** a `collect/…`, `drift/…` or `status/refresh` PR with no
+workflow runs, or runs marked *action required*; the merge button says
+required checks are missing. The run's step summary shows
+`auto-pr -- token fallback: GITHUB_TOKEN`.
+
+**Why:** PRs opened with the built-in `GITHUB_TOKEN` do not start their
+`pull_request` workflows automatically — GitHub holds them for approval
+by someone with write access (older behaviour: did not create them at
+all). Under a required-workflow ruleset the PR cannot merge until that
+happens.
+
+**Fix:** one-off — open the PR → Checks → *Approve and run* (or close and
+reopen it), then request code-owner review. Permanent — store an approved
+fine-grained PAT as `AUTO_PR_TOKEN`
+([`github-actions-setup.md` §2](operations/github-actions-setup.md#2-secrets)).
+
+### `Write access to repository not granted` (403) from an auto-PR push
+
+**Why:** `AUTO_PR_TOKEN` is set but unusable — pending organization
+approval, wrong resource owner / repository access, missing
+`Contents: Read and write`, or expired. A 403 alone does not say which.
+
+**Fix:** check the approval state and scopes on the token's settings
+page; until it works, **delete the secret** (an empty secret falls back
+to `GITHUB_TOKEN` with a visible warning) rather than leave a broken one
+in place.
+
+### `git stash pop` fails in `auto-pr`: `Your local changes ... would be overwritten by merge: config/tenant.yml`
+
+**Why:** a tracked file (typically a Mode A `config/tenant.yml`) is
+committed with CRLF while `.gitattributes` requires LF, so git treats it
+as permanently modified and `create-pull-request`'s stash / reset / pop
+aborts.
+
+**Fix (private fork only):** `git ls-files --eol -- config/tenant.yml`,
+then `git add --renormalize -- config/tenant.yml` and commit
+([`tenant-config-modes.md`, Mode A step 5](operations/tenant-config-modes.md#mode-a--committed-tenantyml-private-corp-fork)).
+
+The end-to-end checklist for ruleset-protected forks is
+[`operations/protected-fork-validation.md`](operations/protected-fork-validation.md).
 
 ### `codespell` failed on a domain term
 

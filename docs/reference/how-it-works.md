@@ -117,8 +117,8 @@ flowchart LR
 
 - `alerts-report.yml` (daily): alert volume, detection health, and trend (no PII).
 - `portfolio.yml` (daily): per-detection inventory summary.
-- `report.yml` (weekly and on merge): detection inventory and posture report.
-- `status-refresh.yml` (daily): regenerates the status pages.
+- `report.yml` (weekly and on merge): detection inventory and posture report; on merge it lands the refreshed `reports/` on `main` — directly, or as a rolling PR when the repo variable `CONTENTOPS_LAND_VIA_PR=true`.
+- `status-refresh.yml` (daily): regenerates the status pages and lands them on `main` the same way.
 
 ### Upstream refresh (open PRs, never deploy)
 

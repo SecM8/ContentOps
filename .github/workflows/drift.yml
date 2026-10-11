@@ -251,6 +251,7 @@ jobs:
           labels: drift,automated
           add-paths: "detections/**"
           token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
 
       - name: Apply per-asset-kind labels
         if: steps.auto-pr.outputs.pull-request-number != ''

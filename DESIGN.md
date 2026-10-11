@@ -564,7 +564,9 @@ public). Auth flows:
 * **CI** — `azure/login@v2` uses OIDC federated credentials (no
   client secret in CI). The federated credential subject is bound to
   `repo:<org>/<repo>:environment:<production|integration>` on the
-  App Registration.
+  App Registration (repositories created after 2026-07-15 emit the
+  ID-based form `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>`;
+  see `docs/operations/authentication-setup.md`, step 3).
 
 GitHub Variables (not Secrets) hold `AZURE_CLIENT_ID` and
 `AZURE_TENANT_ID`. No `AZURE_SUBSCRIPTION_ID` variable is needed at
@@ -685,8 +687,9 @@ implications:
   self-hosted-runner if OIDC isn't viable.
 - **Federated credential subject limit**: an Azure App Registration accepts
   at most 20 federated credentials. With multiple environments × branches ×
-  workflows you can hit this. Mitigation: use the `repo:org/repo:environment:<env>`
-  subject pattern (one credential per environment, not per workflow).
+  workflows you can hit this. Mitigation: use one subject per environment
+  (`repo:org/repo:environment:<env>`, or its ID-based form on newer
+  repositories) — one credential per environment, not per workflow.
 - **GitHub Environments**: required for reviewer-gated deploys. One per
   Azure environment (`dev`, `test`, `prod`); secrets/variables scoped per
   environment.

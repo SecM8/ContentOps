@@ -18,6 +18,15 @@ step commits the regenerated reports back to `main`, and your deployment
 gets a **durable, diffable posture history out of the box** — "show me the
 inventory + coverage as it stood each week, in git." No setup required.
 
+On a `main` governed by a ruleset that rejects direct pushes (pull
+request required, required workflows), set the repo variable
+`CONTENTOPS_LAND_VIA_PR=true`: the same step then opens **one rolling
+PR** on the fixed branch `report/refresh` — updated in place on every
+push-to-main run, never one PR per run — instead of pushing. Review and
+merge it when convenient; nothing piles up. Scheduled and manual runs
+still only upload the artifact in either mode. See
+[`github-actions-setup.md` §1](github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers).
+
 ## The public mirror stays clean — via the allowlist, not gitignore
 
 The detailed report carries live per-detection telemetry (display names,

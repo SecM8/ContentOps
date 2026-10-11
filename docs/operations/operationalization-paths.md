@@ -34,7 +34,7 @@ on-ramp / lab mode.
 | Option | What it is | Pick when |
 |---|---|---|
 | **Private fork, public mirror as `upstream`** (recommended) | Import the mirror into your GitHub / GitHub Enterprise org; `origin` = your repo, `upstream` = `SecM8/ContentOps`. Weekly `git pull --ff-only upstream main`. | You will deploy to a real tenant. CI, secrets, branch protection, and detection content live under your org's control. |
-| **Direct clone of the public mirror** | Work straight off `SecM8/ContentOps` with no fork. | Evaluation only. You cannot configure secrets or branch protection on a repo you don't own, so Paths B/C are unavailable. |
+| **Direct clone of the public mirror** | Work straight off `SecM8/ContentOps` with no fork. | Evaluation only. You cannot configure secrets, branch protection or rulesets on a repo you don't own, so Paths B/C are unavailable. |
 | **Operator source repo** | The private repo the mirror is rebuilt from nightly. | You are the upstream operator. Adopters never need this. |
 
 Import procedure, remote re-wiring, and the routine/full-reset update
@@ -58,7 +58,7 @@ Registration client secret in `.env`. No GitHub Actions involved.
   RBAC.
 - **Good for**: a lab tenant, a one-person evaluation, authoring
   against `detections/samples/`, incident-time forensics on a laptop.
-- **What you give up**: no branch protection, no PR review gate, no
+- **What you give up**: no branch protection or rulesets, no PR review gate, no
   scheduled drift / alert-health / audit-verify, and the audit chain
   is only as durable as the workstation that wrote it. Apply
   failures are recovered by whoever remembers to run
@@ -83,7 +83,9 @@ Setup sequence, in order:
    RBAC, federated credentials:
    [`authentication-setup.md`](authentication-setup.md).
 2. **GitHub side** — variables, secrets, environments
-   (`production` / `integration` / `automation`), branch protection:
+   (`production` / `integration` / `automation` / `conformance` /
+   `reporting`), branch protection or rulesets (a ruleset that rejects
+   direct pushes also needs `CONTENTOPS_LAND_VIA_PR=true`, §1 there):
    [`github-actions-setup.md`](github-actions-setup.md).
 3. **Tenant config sourcing** — Decision 4 below.
 4. **Verify** — `contentops conformance` end-to-end (L1–L7), then
@@ -124,7 +126,7 @@ only writer to prod.
 | Audit chain custody | laptop | CI + git | CI + git |
 | Drift / alert-health / conformance crons | manual | automated | automated |
 | Pre-merge live API smoke test | no | no | **yes** (integration workspace) |
-| Blast-radius controls | `tenant.yml` safeguards only | + branch protection, environments, reviewer gates | same as B |
+| Blast-radius controls | `tenant.yml` safeguards only | + branch protection or rulesets, environments, reviewer gates | same as B |
 | Team size sweet spot | 1 | 2+ | 2+ with a second workspace |
 | Suited for | lab / evaluation | production | production with high rule churn |
 
@@ -207,7 +209,14 @@ buys you nothing. Workflow triggers + permissions:
 > `GitHub Actions is not permitted to create or approve pull requests`.
 > Either flip the toggle or set the `AUTO_PR_TOKEN` secret — see the
 > [secrets table](github-actions-setup.md#2-secrets) and the
-> troubleshooting row in `github-actions-setup.md`.
+> troubleshooting row in `github-actions-setup.md`. Set the token anyway
+> when a ruleset on `main` requires a workflow to pass: PRs opened with
+> `GITHUB_TOKEN` get their runs held for manual approval and cannot merge
+> unattended. The generated-output workflows (`status-refresh`,
+> `coverage`, `report`) additionally need `CONTENTOPS_LAND_VIA_PR=true`
+> on such a `main` — their direct pushes are rejected with `GH013`
+> ([§1](github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers);
+> checklist: [`protected-fork-validation.md`](protected-fork-validation.md)).
 
 Break-glass drills are rehearsable without an incident:
 [`emergency-disable-workflow.md`](../emergency-disable-workflow.md)

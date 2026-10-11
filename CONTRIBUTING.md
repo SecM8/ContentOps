@@ -36,7 +36,7 @@ copy config\tenant.yml.example config\tenant.yml
 # NOTE: gitleaks 8.21+ requires a free org license for organizational
 # repos. If your repo is org-owned, skip `pre-commit install` for now,
 # request the license at https://gitleaks.io/, and wire it as the
-# `GITLEAKS_LICENSE` org secret when ready. CI's secret-scan.yml runs
+# `GITLEAKS_LICENSE` org (or repo) secret when ready. CI's secret-scan.yml runs
 # gitleaks regardless of local hooks.
 python -m pip install pre-commit
 pre-commit install
@@ -79,6 +79,13 @@ request and will block merge until fixed.
 Branch protection on `main` MUST be configured manually in repository settings
 — GitHub does not allow protected-branch rules to be modified through a PR.
 See [Managing a branch protection rule](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule).
+
+Organizations may enforce the same policy through **rulesets** (repository
+or organization level); the pipeline treats them as equivalent. A ruleset
+that requires a pull request or a required workflow also rejects the
+pipeline's own direct pushes of generated output to `main` — set the repo
+variable `CONTENTOPS_LAND_VIA_PR=true` so it lands as rolling pull
+requests instead ([github-actions-setup.md §5](docs/operations/github-actions-setup.md#5-branch-protection-on-main)).
 
 Recommended settings:
 

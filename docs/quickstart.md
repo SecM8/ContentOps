@@ -439,11 +439,21 @@ Short version of what you'll wire:
 | Variable | `AZURE_CLIENT_ID` | Always |
 | Variable | `AZURE_TENANT_ID` | Always |
 | Secret | `TENANT_CONFIG_YAML` | Always (`gh secret set` stdin form) |
-| Secret | `GITLEAKS_LICENSE` | When org-owned + license email arrives |
+| Secret | `GITLEAKS_LICENSE` | When org-owned + license email arrives (repo- or org-level secret) |
+| Secret | `AUTO_PR_TOKEN` | When your org blocks `GITHUB_TOKEN` from opening PRs, or a ruleset on `main` requires a workflow to pass (without it automation PRs need a manual *Approve and run*) |
+| Variable | `CONTENTOPS_SCHEDULES` = `true` | Deployment forks that want the cron workflows to run (schedules are inactive until set) |
+| Variable | `CONTENTOPS_LAND_VIA_PR` = `true` | When a ruleset on `main` rejects direct pushes: status / coverage / report land as rolling PRs |
 | Environment | `production` | For deploy + live tests |
 | Environment | `integration` | If you have a second workspace |
 | Environment | `automation` | For cron workflows (drift, silent-rules, defender-graph-probe) |
-| Federated credential | one per environment | OIDC subject `repo:<org>/<repo>:environment:<env>` |
+| Environment | `conformance` | For the write-identity conformance leg (dual-identity setups) |
+| Environment | `reporting` | For `coverage.yml` + `report.yml` (no OIDC; create it unprotected) |
+| Federated credential | one per environment | OIDC subject `repo:<org>/<repo>:environment:<env>` — or `repo:<org>@<org-id>/<repo>@<repo-id>:environment:<env>` for repositories created after 2026-07-15; verify the emitted claim ([authentication-setup.md, step 3](operations/authentication-setup.md#step-3-add-an-oidc-federated-credential-for-ci)) |
+
+Running under organization rulesets (pull request + code-owner review +
+required workflows on `main`)? Finish with
+[`operations/protected-fork-validation.md`](operations/protected-fork-validation.md)
+before relying on scheduled automation.
 
 ## Next steps
 

@@ -48,6 +48,11 @@ path = '''config/tenant.*\.ya?ml'''
 description = "Null-GUID example file + historical leaked GUIDs (2026-05)"
 paths = [
   '''config/tenant\.yml\.example$''',
+  # Mode A forks only (config/tenant.yml committed on purpose in a
+  # private repo -- see docs/operations/tenant-config-modes.md):
+  # uncomment the next line so the two tenant.yml rules below stop
+  # flagging the committed file. Leave it commented in Mode B.
+  # '''config/tenant\.yml$''',
 ]
 commits = [
   "52d5b136ff7571def22eb62c877d48ab25b60170",  # Multi-workspace tenant schema

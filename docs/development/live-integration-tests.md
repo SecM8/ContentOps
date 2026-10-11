@@ -210,7 +210,7 @@ availability changes over time.
 | ARM `403 Forbidden` on a Sentinel handler | App reg missing Sentinel Contributor on the workspace RG | See the RBAC matrix in [`local-testing.md`](local-testing.md) and re-run `az role assignment create` |
 | Graph `403 Forbidden` on Defender custom detection | `CustomDetection.ReadWrite.All` app permission missing admin consent | App Registration → API permissions → grant admin consent |
 | `Could not import 'pipeline'` / `ModuleNotFoundError: No module named 'pipeline'` | Stale `detection-pipeline` editable install metadata from before the rebrand | See [Clearing stale editable-install metadata](#clearing-stale-editable-install-metadata) below |
-| Tests pass locally but fail in CI | OIDC federated credential subject mismatch | Verify the federated credential subject matches the workflow's `repo:org/repo:environment:<env>` claim |
+| Tests pass locally but fail in CI | OIDC federated credential subject mismatch | Verify the federated credential subject matches the workflow's `repo:org/repo:environment:<env>` claim — ID-based `repo:org@<org-id>/repo@<repo-id>:environment:<env>` for repositories created after 2026-07-15; copy the subject quoted in the `AADSTS700213` error |
 
 ### Clearing stale editable-install metadata
 

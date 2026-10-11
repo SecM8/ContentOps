@@ -57,6 +57,11 @@ This workflow is **not** for:
   Deployment happens via the existing `deploy.yml` on push-to-main.
 * It does **not** modify anything outside `detections/`.
 * It does **not** require `id-token: write` — there is no OIDC step.
+* It reports which token opens the PR (`AUTO_PR_TOKEN`, or the
+  `GITHUB_TOKEN` fallback) in the run log and step summary. On the
+  fallback, a ruleset-protected `main` needs a human to approve the PR's
+  held workflow runs (Checks tab → *Approve and run*) before review —
+  see `docs/operations/github-actions-setup.md` §2.
 
 ## Permissions
 

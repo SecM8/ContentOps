@@ -520,6 +520,47 @@ prune handle it.
 
 ---
 
+## Deployment forks under organization rulesets
+
+If your fork's `main` is governed by a ruleset (pull request required,
+code-owner review, a required workflow such as a secret scan), three
+things decide whether the pipeline's own pull requests can ever merge:
+
+1. **Landing mode.** Set the repo variable `CONTENTOPS_LAND_VIA_PR=true`
+   so `status-refresh.yml`, `coverage.yml` and `report.yml` open rolling
+   PRs instead of pushing to `main` — the ruleset rejects that push with
+   `GH013` whatever token is used
+   ([`github-actions-setup.md` §1](operations/github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers)).
+2. **Automation identity ≠ sole reviewer.** The PR author is whoever owns
+   the `AUTO_PR_TOKEN` PAT (or `github-actions[bot]` on the fallback).
+   Authors cannot approve their own PRs, and `CODEOWNERS` uses the
+   **last** matching pattern. Keep the automation-written paths owned by
+   a team with at least one other eligible reviewer:
+
+   ```text
+   # fork-local CODEOWNERS excerpt — order matters, the last match wins
+   *                 @<org>/<platform-team>
+   docs/**           @<org>/<docs-owners>
+   docs/status/**    @<org>/<detection-engineering>   # overrides docs/** for the status pages
+   coverage/**       @<org>/<detection-engineering>
+   reports/**        @<org>/<detection-engineering>
+   ```
+
+   Prefer a machine-user PAT for `AUTO_PR_TOKEN` so no human owner is
+   ever the author of an automation PR.
+3. **Required workflows must actually run on the PR.** A PR opened with
+   `GITHUB_TOKEN` gets its workflow runs held for manual approval; an
+   approved PAT starts them automatically. The `auto-pr` step summary
+   tells you which token was used.
+
+Work through
+[`operations/protected-fork-validation.md`](operations/protected-fork-validation.md)
+once per fork before relying on scheduled automation. It checks each of
+these layers separately and does not treat a green run as proof of
+mergeability.
+
+---
+
 ## Contributing from a fork
 
 Some CI checks fall back to a degraded mode on PRs opened from

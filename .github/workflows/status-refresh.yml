@@ -3,7 +3,19 @@ name: Status refresh
 # Regenerates docs/status/configuration.md and docs/status/deployments.md
 # from the current repo state (full L1-L7 conformance, the durable
 # per-env state pulled from refs/heads/state/<env>, audit/*.jsonl,
-# detections/) and commits any diff directly to main.
+# detections/) and lands any diff on main.
+#
+# Landing mode -- repo variable CONTENTOPS_LAND_VIA_PR:
+#   * unset / anything but 'true' (default): commit and push directly
+#     to main, exactly as before.
+#   * 'true': hand the diff to the auto-pr composite action, which
+#     opens or updates ONE rolling PR on the fixed branch
+#     `status/refresh`. Pick this on a deployment whose rulesets reject
+#     direct pushes to main (PR + review required, required workflows).
+#     The variable lives in repo settings, so an upstream sync never
+#     overwrites it. The two landing steps below are mutually exclusive
+#     on that variable. See docs/operations/github-actions-setup.md §1
+#     and docs/operations/protected-fork-validation.md.
 #
 # L3-L7 conformance hits real Azure: OIDC tokens (L3), Graph permissions
 # (L4), RBAC + Sentinel onboarding (L5), functional reach (L6), GitHub
@@ -24,8 +36,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # commit the refreshed status pages directly to main
-  id-token: write   # OIDC token exchange for azure/login (L3-L7)
+  contents: write        # direct-push mode: commit to main; PR mode: push the status/refresh branch (+ state fetch)
+  pull-requests: write   # PR mode (CONTENTOPS_LAND_VIA_PR=true): open / update the rolling status PR
+  id-token: write        # OIDC token exchange for azure/login (L3-L7)
 
 concurrency:
   group: status-refresh
@@ -36,7 +49,10 @@ jobs:
     # Public-mirror gate: scheduled runs only fire on the operator repo,
     # or on a deployment that opts in with the repo variable
     # CONTENTOPS_SCHEDULES=true (docs/operations/github-actions-setup.md §6).
-    # See drift.yml for the full rationale.
+    # A scheduled run that shows as "skipped" here is this policy, not a
+    # broken cron; a manual dispatch bypasses the gate and therefore
+    # proves nothing about cron eligibility. See drift.yml for the full
+    # rationale.
     if: github.event_name != 'schedule' || github.repository == 'KustoKing/SIEMContent' || vars.CONTENTOPS_SCHEDULES == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -86,26 +102,95 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -m contentops status all --scope all
 
-      - name: Commit and push (skip when no diff)
+      - name: Commit and push to main (direct-push mode)
+        # Default landing mode. Skipped when CONTENTOPS_LAND_VIA_PR is
+        # 'true' (the rolling-PR steps below run instead).
+        if: vars.CONTENTOPS_LAND_VIA_PR != 'true'
         run: |
           set -euo pipefail
+          echo "Landing mode: direct push to main (CONTENTOPS_LAND_VIA_PR is not 'true')."
           git config user.name 'contentops-bot[bot]'
           git config user.email 'noreply@kustoking.com'
           git add docs/status/
           if git diff --cached --quiet; then
             echo "No changes -- status pages already current."
-            echo "## Status refresh -- no changes" >> "$GITHUB_STEP_SUMMARY"
+            echo "## Status refresh -- no changes (landing mode: direct push)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           today=$(date -u +%Y-%m-%d)
           git commit -s -m "chore(status): refresh ${today}"
           git push origin HEAD:main
           {
-            echo "## Status refresh -- pushed"
+            echo "## Status refresh -- pushed to main (landing mode: direct push)"
             echo ""
             echo "Date: \`${today}\`"
             echo ""
             echo '```'
             git show --stat HEAD
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare rolling PR body (PR-landing mode)
+        if: vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        id: meta
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "Landing mode: rolling PR on branch status/refresh (CONTENTOPS_LAND_VIA_PR=true)."
+          today=$(date -u +%Y-%m-%d)
+          echo "today=${today}" >> "$GITHUB_OUTPUT"
+          {
+            echo "Auto-opened by \`.github/workflows/status-refresh.yml\` because this repository"
+            echo "lands generated output via pull request (\`CONTENTOPS_LAND_VIA_PR=true\`)."
+            echo ""
+            echo "Regenerated \`docs/status/configuration.md\` and \`docs/status/deployments.md\`"
+            echo "on ${today} from live L1-L7 conformance, the durable per-env state and the"
+            echo "audit trail. Every detail cell passed through the redactor before commit."
+            echo ""
+            echo "**Rolling PR:** the \`status/refresh\` branch is updated in place on the next"
+            echo "run, so nothing piles up -- review and merge when convenient. If the PR's"
+            echo "checks show *action required*, a user with write access must approve the"
+            echo "held workflow runs first (see the run's step summary)."
+            echo ""
+            echo "Run: ${RUN_URL}"
+          } > status_body.md
+
+      - name: Open / update rolling PR (PR-landing mode)
+        if: vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        id: auto-pr
+        uses: ./.github/actions/auto-pr
+        with:
+          detect-paths: docs/status
+          # Fixed branch name = rolling PR: create-pull-request updates the
+          # existing open PR instead of opening a new one per run.
+          branch: status/refresh
+          commit-message: "chore(status): refresh ${{ steps.meta.outputs.today }}"
+          title: "chore(status): refresh status pages (rolling)"
+          body-path: status_body.md
+          labels: status,automated
+          add-paths: "docs/status/**"
+          token: ${{ secrets.AUTO_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
+
+      - name: Step summary (PR-landing mode)
+        if: vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        env:
+          CHANGED: ${{ steps.auto-pr.outputs.changed }}
+          PR_NUMBER: ${{ steps.auto-pr.outputs.pull-request-number }}
+          PR_OPERATION: ${{ steps.auto-pr.outputs.pull-request-operation }}
+          TOKEN_SOURCE: ${{ steps.auto-pr.outputs.token-source }}
+          TODAY: ${{ steps.meta.outputs.today }}
+        run: |
+          set -euo pipefail
+          {
+            if [ "$CHANGED" != "true" ]; then
+              echo "## Status refresh -- no changes (landing mode: rolling PR)"
+            elif [ -n "$PR_NUMBER" ]; then
+              echo "## Status refresh -- rolling PR #${PR_NUMBER} ${PR_OPERATION:-touched} (landing mode: rolling PR)"
+            else
+              echo "## Status refresh -- changes detected but no PR number returned (landing mode: rolling PR); inspect the auto-pr step"
+            fi
+            echo ""
+            echo "Date: \`${TODAY}\` | Branch: \`status/refresh\` | Token source: \`${TOKEN_SOURCE:-n/a}\`"
           } >> "$GITHUB_STEP_SUMMARY"

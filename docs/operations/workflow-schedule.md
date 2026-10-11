@@ -49,3 +49,14 @@ exchange contention against Azure Entra ID.
   opt in by setting the repo variable `CONTENTOPS_SCHEDULES=true`,
   with no workflow edits; see
   [`github-actions-setup.md` §6](github-actions-setup.md#6-scheduled-workflows--opt-in-with-contentops_schedules).
+- A gated scheduled run still appears in the Actions tab, with every
+  job marked **skipped** — that is policy, not a failure. A cron slot that
+  produces **no run at all** points elsewhere: GitHub disables schedules
+  after 60 days without repository activity, Actions is disabled, or the
+  workflow file on the default branch has no `schedule:` trigger. A
+  manual `workflow_dispatch` bypasses the gate and does not prove cron
+  eligibility; watch for the next slot above and confirm it executed.
+- Scheduled `status-refresh.yml` runs write generated pages back to
+  `main`. On a ruleset-protected `main` set the repo variable
+  `CONTENTOPS_LAND_VIA_PR=true` so they land as a rolling PR instead
+  ([`github-actions-setup.md` §1](github-actions-setup.md#1-variables-not-secrets--theyre-public-identifiers)).
