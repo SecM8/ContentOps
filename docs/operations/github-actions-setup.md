@@ -11,6 +11,10 @@ federated credential goes where." If a workflow fails with a
 `secret … not set` error, search this doc for the secret name and it
 will tell you where it belongs.
 
+Setting up a private deployment fork from scratch? The settings below
+are step 2 of the ordered path in
+[`deployment-fork-walkthrough.md`](deployment-fork-walkthrough.md).
+
 ## The four pieces, in order
 
 1. **GitHub Actions Variables** — public identifiers (App Reg client

@@ -254,6 +254,10 @@ Four workflows, fully documented in
   git push origin main
   ```
 
+- **Deployment fork under a ruleset** — `main` cannot fast-forward, so
+  sync by a merge-commit pull request: how to see what is new, the
+  conflict rules, and what to do with open collect/drift PRs afterwards,
+  in [`upstream-sync.md` §2b](docs/operations/upstream-sync.md#2b-deployment-fork-under-a-ruleset--sync-by-pull-request).
 - **Full reset (pristine)** — force `main` to match the mirror exactly,
   discarding fork-local changes: `git reset --hard upstream/main` then
   `git push --force-with-lease origin main`.
@@ -282,6 +286,7 @@ Once you're past Day-1, these are the docs to bookmark.
 - [`docs/glossary.md`](docs/glossary.md) — pipeline vocabulary on one page.
 - [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — daily flow, when-things-break decision tree.
 - [`docs/operations/operationalization-paths.md`](docs/operations/operationalization-paths.md) — choose your operating model (local-only / GitOps / hybrid), the workflow maturity ladder, and how to validate each path.
+- [`docs/operations/deployment-fork-walkthrough.md`](docs/operations/deployment-fork-walkthrough.md) — a team's first day with a private deployment fork, in order: settings, identity, first collect, the rolling pull requests, state adoption, status pages, steady state, and the pitfalls seen in the field.
 - [`docs/operations/protected-fork-validation.md`](docs/operations/protected-fork-validation.md) — running the pipeline under organization rulesets (PR landing, automation token, required workflows, reviewability, line endings, schedules, identity), with a layered validation checklist.
 - [`docs/operations/authentication-setup.md`](docs/operations/authentication-setup.md) — App Registration + OIDC first-timer primer.
 - [`docs/operations/tenant-config-modes.md`](docs/operations/tenant-config-modes.md) — three tenant-config layouts (committed, secret, vars+secrets).

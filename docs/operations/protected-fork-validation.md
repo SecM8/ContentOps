@@ -17,6 +17,11 @@ check **not verified** when you cannot run it rather than assuming. A
 missing prerequisite or a skipped check is not proof that the deployment
 is ready.
 
+This page is the evidence checklist. The ordered first-day path that
+produces that evidence — settings, identity, first collect, rolling
+pull requests, state adoption, status pages — is
+[`deployment-fork-walkthrough.md`](deployment-fork-walkthrough.md).
+
 Settings these checks rely on (all in repo configuration, never in
 workflow files, so an upstream sync cannot undo them):
 

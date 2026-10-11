@@ -21,6 +21,12 @@ Sentinel ARM templates, Graph beta, or this repo's internals.
 > forks, secret-driven for public OSS, vars+secrets split) lives in
 > [`operations/tenant-config-modes.md`](operations/tenant-config-modes.md).
 
+> Setting up the **repository** for a whole team, from a private fork
+> under organization rulesets through the first collect to state
+> adoption? That is a different, longer path:
+> [`operations/deployment-fork-walkthrough.md`](operations/deployment-fork-walkthrough.md).
+> This page is the analyst's Day 1 once that repository exists.
+
 ---
 
 ## Day 1 — setup

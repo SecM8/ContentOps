@@ -90,8 +90,13 @@ first detection, and CI wiring.
 
 ## 2. Updating user — routine sync
 
-The mirror is rebuilt **nightly**, so a **weekly** pull is plenty. This is
-the safe, everyday path:
+The mirror is rebuilt **nightly**, so a **weekly** pull is plenty. Two
+shapes of fork, two routines: a fork whose `main` mirrors upstream
+fast-forwards (this section); a **deployment fork** that carries its
+own tenant config and sits under a ruleset syncs by pull request
+([§2b](#2b-deployment-fork-under-a-ruleset--sync-by-pull-request)).
+
+The safe, everyday path for the first shape:
 
 ```powershell
 git fetch upstream
@@ -118,6 +123,94 @@ lose local commits. If it refuses, you committed directly on `main`:
 Your own detections under `detections/<kind>/` are unaffected by an
 update — the mirror doesn't carry them, so a fast-forward never overwrites
 them.
+
+---
+
+## 2b. Deployment fork under a ruleset — sync by pull request
+
+A deployment fork cannot fast-forward `main`: the ruleset requires a
+pull request, and the fork carries files the mirror never has
+(`config/tenant.yml` in Mode A, the uncommented allowlist line in
+`.gitleaks.toml`, `.contentops-conformance.yml`, a CODEOWNERS default
+line that names your team, `docs/status/`, `reports/`). Sync by merge
+commit through a PR instead. The whole routine is fifteen minutes and
+fits the Monday slot in [`team-routine.md`](team-routine.md#2-weekly--housekeeping-prs-and-upstream-sync).
+
+### Is there anything new?
+
+The mirror is rebuilt nightly as one commit, `chore(mirror): daily public
+sync <date>`, and only when upstream changed. Check from your clone:
+
+```bash
+git fetch upstream
+git log --oneline main..upstream/main               # commits your fork does not have
+git diff --stat main...upstream/main                # which files they touch
+git diff main...upstream/main -- CHANGELOG.md       # what changed, in words
+```
+
+Nothing listed means nothing to do. The CHANGELOG diff is the part to
+read: an entry under **Changed** that names a workflow or a repo
+variable may need a setting on your side (the settings table in the
+[walkthrough §2](deployment-fork-walkthrough.md#2-repository-settings-20-min)),
+and an entry under **Fixed** often explains a red check you have been
+seeing.
+
+Sync **weekly**, and immediately when the CHANGELOG lists a fix you are
+waiting for.
+
+### Merge procedure
+
+```bash
+git fetch origin upstream
+git switch -c chore/upstream-sync-$(date +%F) origin/main
+git merge --no-ff --signoff upstream/main
+```
+
+Conflicts are rare and always in a file both sides touched. Resolve by
+rule, not by judgement:
+
+| File | Keep |
+|---|---|
+| anything under `contentops/`, `tests/`, `scripts/`, `.github/workflows/`, `.github/actions/`, `docs/` (except `docs/status/`), `CHANGELOG.md` | **upstream** — if your fork hand-edited a workflow, take upstream's and reproduce the behaviour with a repo variable instead |
+| `config/tenant.yml`, `.contentops-conformance.yml`, `catalog-info.yaml`, `docs/status/*`, `reports/*` | **fork** |
+| `.gitleaks.toml` | upstream's content, with your uncommented `config/tenant\.yml$` allowlist line kept |
+| `.github/CODEOWNERS` | your default line, upstream's block appended |
+
+Then:
+
+```bash
+git push -u origin chore/upstream-sync-$(date +%F)
+gh pr create --base main --title "chore(sync): upstream $(date +%F)" --body-file sync-body.md
+```
+
+Put the CHANGELOG entries you are pulling in, the conflict resolution
+and any setting the entries ask for in the PR body. The sync PR runs the
+full CI on the merged tree, so every check should be green before
+review. Merge it as a **merge commit**; squash or rebase loses the
+shared ancestor and the next sync conflicts on everything.
+
+### After the merge
+
+- **Open `collect/*` or `drift/*` pull requests** are now behind `main`.
+  Rebase them, never *Update branch*: the button adds a merge commit
+  whose subject defeats the gates that recognise bot content
+  ([walkthrough §4](deployment-fork-walkthrough.md#4-first-collect-30-min)).
+
+  ```bash
+  git fetch origin
+  git switch collect/<run-id>
+  git rebase origin/main
+  git push --force-with-lease origin collect/<run-id>
+  ```
+
+  Anyone with a local copy of that branch resets it:
+  `git fetch origin && git reset --hard origin/collect/<run-id>`.
+- **Rolling pull requests** (`status/refresh`, `coverage/refresh`,
+  `report/refresh`) refresh themselves on their next run; nothing to do.
+- **Settings** survive the merge untouched. Only act if the CHANGELOG
+  entry you pulled asked for a new variable or secret.
+- Walk the [validation runbook](protected-fork-validation.md) again only
+  when the sync changed a landing workflow, the token or the ruleset.
 
 ---
 

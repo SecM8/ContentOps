@@ -19,6 +19,13 @@ GitHub Actions does every Azure call via OIDC federation. The rest of
 this guide is structured so you can stop at Step 4 (lint + push) if
 that's your path.
 
+A fourth shape is the **team deployment fork**: a private repository
+under organization rulesets where CI does every Azure call and the
+tenant's existing rules are collected and adopted before anyone
+authors anything. That setup has its own ordered page,
+[`operations/deployment-fork-walkthrough.md`](operations/deployment-fork-walkthrough.md);
+come back here for the local install it links to.
+
 ## Prerequisites
 
 - Python 3.12+

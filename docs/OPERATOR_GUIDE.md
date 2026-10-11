@@ -397,6 +397,11 @@ already match the tenant. Prefer it over a full redeploy, which
 re-saves every rule — restarting schedules (duplicate incidents) and
 risking template links. In CI, dispatch `state-adopt.yml` (dry-run by
 default). Long-form: [`operations/adopt.md`](operations/adopt.md).
+The dry run's summary line should read `would adopt: N, already
+managed: 0, not adopted (differs): 0, errors: 0` where `N` is the
+number of collected files; the real run then pushes `state/<env>`.
+Where this sits in a fork's first day:
+[`operations/deployment-fork-walkthrough.md` §6](operations/deployment-fork-walkthrough.md#6-adopt-the-state-10-min).
 
 ---
 

@@ -53,9 +53,16 @@ run Monday morning UTC):
   one. If a bot PR's checks say *action required*, approve the held runs
   (Checks tab → *Approve and run*) or set an approved `AUTO_PR_TOKEN` so
   they start on their own.
+- **Check for upstream changes and open the sync PR.** Three commands
+  tell you whether there is anything new and what it is; the merge
+  procedure and conflict rules are in
+  [`upstream-sync.md` §2b](upstream-sync.md#2b-deployment-fork-under-a-ruleset--sync-by-pull-request).
 - **Merge the upstream-sync PR with "Create a merge commit".** Never
   squash or rebase it — see [Never do](#4-never-do) and
   [`upstream-sync.md` §4](upstream-sync.md#4-one-time-stitch--fork-with-unrelated-history).
+  Afterwards **rebase** any open `collect/*` or `drift/*` PR onto the
+  new `main`; GitHub's *Update branch* button adds a merge commit that
+  the promotion and deploy gates do not recognise as bot content.
 - **Glance at [`docs/status/deployments.md`](../status/deployments.md)**
   for failed or unverified deploys since last week. Anything red there
   goes through the table below.

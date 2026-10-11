@@ -12,6 +12,23 @@ from the commit history.
 
 ### Added
 
+- **`docs/operations/deployment-fork-walkthrough.md`.** One ordered page
+  for a team's first day with a private deployment fork under
+  organization rulesets: decisions, fork and clone, repository settings,
+  Azure identity, the first collect (held checks, scanner false
+  positives, rebase instead of *Update branch*, merge commit), the
+  rolling pull requests, state adoption with the summary line to
+  expect, status pages, the steady-state schedule, an evidence table
+  and the pitfalls seen in the field. Linked from the README, quickstart,
+  onboarding, operator guide, the validation runbook, the adoption page
+  and the GitHub Actions setup page.
+- **`upstream-sync.md` §2b — deployment fork sync by pull request.** How
+  to see whether the mirror moved (three git commands, read the
+  CHANGELOG diff), the merge-commit procedure with conflict rules per
+  file, and what to do afterwards: rebase open collect/drift PRs rather
+  than *Update branch*, rolling PRs refresh themselves, settings
+  survive. The weekly team routine points at it.
+
 - **Lint rule KQL009: query-length advisory (warning).** Fires when a
   Sentinel `query` or Defender `queryText` exceeds 10,000 characters,
   the figure Microsoft documents for a Sentinel analytics rule. The

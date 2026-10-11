@@ -88,6 +88,21 @@ Dispatch once with `dry_run: true`, read the summary, then dispatch
 again with `dry_run: false`. The next `status-refresh.yml` run shows
 the adopted rules as `in-sync (adopted)`.
 
+The summary line to look for, in both runs:
+
+```
+Adopt summary (env=production) - would adopt: N, already managed: 0, not adopted (differs): 0 (changed: 0, new: 0), errors: 0
+```
+
+`N` should equal the number of files collected into `detections/`.
+The real run prints `adopted: N` instead and ends with
+`[state push] ... pushed_remote=True`; the `state/<env>` branch then
+exists with a single `[state] <env> sync from pipeline` commit. A
+non-zero *differs* count means the tenant moved since the collect
+snapshot: collect again, or settle each item per the list below. In a
+fork's first day this is step 6 of
+[`deployment-fork-walkthrough.md`](deployment-fork-walkthrough.md#6-adopt-the-state-10-min).
+
 Avoid running it while a deploy is in progress: both pull, modify and
 force-push the same state branch, and `state sync` does not lock.
 
