@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time  # noqa: F401 — kept so tests that monkeypatch `sentinel_arm.time.sleep` to no-op still find the attribute; the actual retry sleep is shared via contentops.utils.http_retry which references the same `time` module.
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -222,9 +223,12 @@ class SentinelArmProvider:
             f"/resourceGroups/{safe_path_segment(resource_group, kind='resource group')}"
             f"/resources"
         )
-        url = f"{path}?api-version={api_version}"
+        # ARM parses OData filters literally: a space encoded as ``+``
+        # (what httpx's ``params=`` does) is rejected with 400, so the
+        # filter is percent-encoded by hand (spaces as ``%20``).
+        url = f"{path}?api-version={api_version}&$filter={quote(filter_expr, safe='')}"
         items = paginate(
-            lambda u: self.request("GET", u, params={"$filter": filter_expr} if u == url else None),
+            lambda u: self.request("GET", u),
             url,
             next_link_key="nextLink",
             base_url=ARM_BASE_URL,
