@@ -365,11 +365,15 @@ def test_collected_rule_shows_its_payload_attack_tags(tmp_path: Path) -> None:
 
 
 def test_attack_notes_name_bad_ids_inertly(tmp_path: Path) -> None:
+    # The notes quote the bundled matrix release; read it rather than
+    # pin it so the scheduled ATT&CK matrix refresh cannot break this test.
+    from contentops.coverage.matrix import load_matrix
+    version = load_matrix().attack_version
     e = _explain_collected(tmp_path)
     assert e.attack_notes[:3] == [
         "`T1086` was revoked by MITRE; counted as `T1059.001`. Update the tag.",
-        "`T1026` is deprecated in ATT&CK v19.2; not counted.",
-        "`T9999` is not in ATT&CK v19.2; not counted.",
+        f"`T1026` is deprecated in ATT&CK v{version}; not counted.",
+        f"`T9999` is not in ATT&CK v{version}; not counted.",
     ]
     malformed = e.attack_notes[3]
     # Backticks, pipes and the line break can't escape the code span.
