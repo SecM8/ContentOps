@@ -17,6 +17,12 @@ on:
         required: true
         default: "false"
         type: boolean
+      environment:
+        description: "GitHub environment (federated-credential subject) to log in with. Pick `production` on a fork that has no `integration` credential."
+        required: false
+        default: integration
+        type: choice
+        options: [integration, production]
   pull_request:
     types: [labeled]
 
@@ -38,8 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # See deploy.yml for the rationale: matches the federated credential
-    # subject on the App Registration.
-    environment: integration
+    # subject on the App Registration. Dispatch may pick `production`
+    # instead (forks that only wired a production credential); the
+    # label-triggered PR path keeps `integration`.
+    environment: ${{ inputs.environment || 'integration' }}
     env:
       RUN_LIVE_TESTS: "1"
       INTEGRATION_SUBSCRIPTION_ID: ${{ secrets.INTEGRATION_SUBSCRIPTION_ID }}
