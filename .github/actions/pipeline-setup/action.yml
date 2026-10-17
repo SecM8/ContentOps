@@ -45,6 +45,15 @@ inputs:
       leaves this empty.
     required: false
     default: ''
+  disabled-kinds:
+    description: >
+      Comma-separated asset kinds to switch off for this job
+      (exported as ``CONTENTOPS_DISABLED_KINDS``). Callers pass the
+      repository variable ``vars.CONTENTOPS_DISABLED_KINDS`` — the
+      ``vars`` context is not available inside a composite action.
+      Empty (the default) is a no-op.
+    required: false
+    default: ''
   fetch-depth:
     description: >
       Git fetch depth for ``actions/checkout``. Default ``1`` is
@@ -155,9 +164,13 @@ runs:
       # unregisters those kinds for every contentops command in this job
       # without touching the tenant secret. Empty / unset = no-op. See
       # docs/operations/upgrading-to-support-assets.md.
+      #
+      # The `vars` context is NOT available inside a composite action,
+      # so the calling workflow passes it through the optional
+      # `disabled-kinds` input (every tenant-facing workflow does).
       shell: bash
       env:
-        DISABLED_KINDS: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
+        DISABLED_KINDS: ${{ inputs.disabled-kinds }}
       run: |
         if [ -n "${DISABLED_KINDS:-}" ]; then
           echo "CONTENTOPS_DISABLED_KINDS=${DISABLED_KINDS}" >> "$GITHUB_ENV"

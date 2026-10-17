@@ -95,6 +95,7 @@ jobs:
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          disabled-kinds: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
           tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
           tenant-config-env-yaml: ${{ secrets.TENANT_CONFIG_ENV_YAML }}
           role: ${{ inputs.env }}
