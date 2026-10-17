@@ -333,15 +333,22 @@ def _resources_handler(request: httpx.Request) -> httpx.Response:
     flt = request.url.params.get("$filter", "")
     type_m = _TYPE_FILTER_RE.search(flt)
     tag_m = _TAG_FILTER_RE.search(flt)
-    key = type_m.group(1) if type_m else ""
+    if type_m and tag_m:
+        # Real ARM rejects resourceType combined with a tag filter.
+        return httpx.Response(400, json={"error": {
+            "code": "InvalidFilter",
+            "message": "Tag filters cannot be combined with other filters",
+        }})
+    keys = [type_m.group(1)] if type_m else ["Microsoft.Logic/workflows", "Microsoft.Web/connections"]
     out: list[dict[str, Any]] = []
-    for body in ARM_STORE.list(key):
-        if tag_m:
-            tags = body.get("tags") or {}
-            if str(tags.get(tag_m.group(1), "")) != tag_m.group(2):
-                continue
-        out.append({"name": body.get("name"), "id": body.get("id"), "type": key,
-                    "tags": body.get("tags") or {}})
+    for key in keys:
+        for body in ARM_STORE.list(key):
+            if tag_m:
+                tags = body.get("tags") or {}
+                if str(tags.get(tag_m.group(1), "")) != tag_m.group(2):
+                    continue
+            out.append({"name": body.get("name"), "id": body.get("id"), "type": key,
+                        "tags": body.get("tags") or {}})
     return httpx.Response(200, json={"value": out})
 
 

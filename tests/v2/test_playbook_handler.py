@@ -123,9 +123,16 @@ class _Tenant:
             return httpx.Response(200, json={"value": value})
         if path.endswith("/resources"):
             flt = request.url.params.get("$filter", "")
-            if "Microsoft.Web/connections" in flt:
-                return httpx.Response(200, json={"value": self.tagged_connections})
-            return httpx.Response(200, json={"value": self.managed_workflows})
+            # Real ARM rejects a tag filter combined with resourceType.
+            if "resourceType eq" in flt and "tagName eq" in flt:
+                return httpx.Response(400, json={"error": {"code": "InvalidFilter"}})
+            if "contentops-playbook" in flt:
+                return httpx.Response(200, json={"value": [
+                    {**c, "type": "Microsoft.Web/connections"} for c in self.tagged_connections
+                ]})
+            return httpx.Response(200, json={"value": [
+                {**w, "type": "Microsoft.Logic/workflows"} for w in self.managed_workflows
+            ]})
         is_workflow = "/Microsoft.Logic/workflows/" in path
         if method == "GET":
             body = self.store.get(path)
@@ -404,3 +411,32 @@ def test_to_envelope_skips_without_definition_or_with_malformed_connection() -> 
 
 def test_handler_satisfies_drift_protocol() -> None:
     assert isinstance(SentinelPlaybookHandler(lambda: None), DriftCapable)
+
+
+def test_list_remote_uses_tag_only_server_filter_and_type_client_side() -> None:
+    """ARM returns 400 for `resourceType eq ... and tagName eq ...` in one
+    $filter (seen live). The handler sends the tag filter only and drops
+    non-workflow summaries itself."""
+    tenant = _Tenant()
+    tenant.managed_workflows = [{"name": "pb-one"}]
+    tenant.store["/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/pb-one"] = {
+        "name": "pb-one", "tags": {MANAGED_TAG: "true"}, "properties": {"definition": _definition()},
+    }
+    original = tenant.__call__
+    seen: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/resources"):
+            seen["filter"] = request.url.params.get("$filter", "")
+            flt = seen["filter"]
+            return httpx.Response(200, json={"value": [
+                {"name": "pb-one", "type": "Microsoft.Logic/workflows", "tags": {MANAGED_TAG: "true"}},
+                {"name": "pb-one-azuresentinel", "type": "Microsoft.Web/connections", "tags": {MANAGED_TAG: "true"}},
+            ]}) if "resourceType" not in flt else httpx.Response(400, text="InvalidFilter")
+        return original(request)
+
+    h = SentinelPlaybookHandler(lambda: _provider_with(httpx.MockTransport(capture)))
+    items = h.list_remote()
+    assert "resourceType" not in seen["filter"]
+    assert f"tagName eq '{MANAGED_TAG}'" in seen["filter"]
+    assert [i["name"] for i in items] == ["pb-one"]

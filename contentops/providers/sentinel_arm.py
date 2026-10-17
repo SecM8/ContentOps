@@ -203,15 +203,19 @@ class SentinelArmProvider:
 
     def list_resource_group_resources(
         self, resource_group: str, *, filter_expr: str,
+        resource_type: str | None = None,
         api_version: str = "2021-04-01",
     ) -> list[dict]:
         """GET ``/resourceGroups/{rg}/resources?$filter=...`` with paging.
 
-        The generic ARM resources list supports server-side filtering on
-        ``resourceType`` and a single tag (``tagName eq '...' and
-        tagValue eq '...'``), which is how the playbook handler finds
-        only the Logic Apps this pipeline manages without a GET per
-        workflow. Returns the ARM resource summaries (no ``properties``).
+        The generic ARM resources list supports a server-side tag filter
+        (``tagName eq '...' and tagValue eq '...'``), which is how the
+        playbook handler finds only the Logic Apps this pipeline manages
+        without a GET per workflow. ARM rejects a tag filter combined
+        with ``resourceType`` in the same ``$filter`` (HTTP 400), so
+        ``resource_type`` is applied client-side on the summaries'
+        ``type`` (case-insensitive). Returns ARM resource summaries (no
+        ``properties``).
         """
         path = (
             f"/subscriptions/{self._config.subscriptionId}"
@@ -219,12 +223,16 @@ class SentinelArmProvider:
             f"/resources"
         )
         url = f"{path}?api-version={api_version}"
-        return paginate(
+        items = paginate(
             lambda u: self.request("GET", u, params={"$filter": filter_expr} if u == url else None),
             url,
             next_link_key="nextLink",
             base_url=ARM_BASE_URL,
         )
+        if resource_type is None:
+            return items
+        wanted = resource_type.lower()
+        return [i for i in items if str(i.get("type") or "").lower() == wanted]
 
     def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
         """Issue a request, retrying transient 429/5xx up to 3 times.

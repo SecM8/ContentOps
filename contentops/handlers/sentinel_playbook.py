@@ -451,10 +451,8 @@ class SentinelPlaybookHandler:
         try:
             tagged = provider.list_resource_group_resources(
                 self._rg(provider),
-                filter_expr=(
-                    f"resourceType eq '{WEB_NAMESPACE}/{CONNECTIONS}' and "
-                    f"tagName eq '{PLAYBOOK_TAG}' and tagValue eq '{remote_id}'"
-                ),
+                filter_expr=f"tagName eq '{PLAYBOOK_TAG}' and tagValue eq '{remote_id}'",
+                resource_type=f"{WEB_NAMESPACE}/{CONNECTIONS}",
                 api_version=RESOURCES_API_VERSION,
             )
         except Exception as exc:  # noqa: BLE001
@@ -504,12 +502,12 @@ class SentinelPlaybookHandler:
         provider = self._provider_or_create()
         if provider is None:
             return []
+        # Tag filter server-side; resource type client-side — ARM rejects
+        # the two combined in one $filter (400).
         summaries = provider.list_resource_group_resources(
             self._rg(provider),
-            filter_expr=(
-                f"resourceType eq '{LOGIC_NAMESPACE}/{WORKFLOWS}' and "
-                f"tagName eq '{MANAGED_TAG}' and tagValue eq '{MANAGED_TAG_VALUE}'"
-            ),
+            filter_expr=f"tagName eq '{MANAGED_TAG}' and tagValue eq '{MANAGED_TAG_VALUE}'",
+            resource_type=f"{LOGIC_NAMESPACE}/{WORKFLOWS}",
             api_version=RESOURCES_API_VERSION,
         )
         out: list[dict] = []
