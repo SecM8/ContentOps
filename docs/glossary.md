@@ -11,13 +11,38 @@ use anywhere else.
 Azure's control-plane REST API (`management.azure.com`). Sentinel analytic / hunting / watchlist / parser / data-connector resources are created and updated via ARM PUTs under `Microsoft.SecurityInsights` + `Microsoft.OperationalInsights` (API version `2025-07-01-preview`). Defender custom detections use Microsoft Graph instead (see *Graph*). See [`architecture.md`](reference/architecture.md).
 
 ### Asset kind
-One of the six supported detection-content categories
+One of the eight supported content categories
 (see [`docs/reference/asset-coverage.md`](reference/asset-coverage.md)):
-`sentinel_analytic`, `sentinel_hunting`, `sentinel_watchlist`,
-`sentinel_parser`, `sentinel_data_connector`,
-`defender_custom_detection`. Each kind has one handler in
-`contentops/handlers/` implementing the
+six detection kinds — `sentinel_analytic`, `sentinel_hunting`,
+`sentinel_watchlist`, `sentinel_parser`, `sentinel_data_connector`,
+`defender_custom_detection` — and two *support kinds* —
+`sentinel_automation_rule`, `sentinel_playbook`. Each kind has one
+handler in `contentops/handlers/` implementing the
 `validate → plan → apply → delete` protocol.
+
+### Asset mode
+Per-kind management mode in `config/tenant.yml` (`assetModes`):
+`managed` (apply writes, prune deletes behind the gates) or `monitor`
+(collect / drift / lint only; apply skips, prune refuses). Detection
+kinds default to `managed`, support kinds to `monitor` — in code, so an
+upgraded fork starts by watching. See
+[`operations/upgrading-to-support-assets.md`](operations/upgrading-to-support-assets.md).
+
+### Automation rule
+A Sentinel `Microsoft.SecurityInsights/automationRules` resource:
+trigger + conditions + actions (modify incident properties, add a
+task, run a playbook). *Incident suppression* — auto-closing matching
+incidents with a classification — is an automation rule with a close
+action, managed as `sentinel_automation_rule`. Distinct from **Drift
+suppressions** (a repo-side list that hides expected portal-vs-git
+drift from `contentops drift`) and from **Tuning preview** (the PR-time
+blast-radius query for those drift suppressions).
+
+### Playbook
+A Consumption Logic App that automation rules call, managed as
+`sentinel_playbook`: an envelope plus a `<id>.workflow.json` sidecar
+(the designer export), managed-identity API connections, and declared
+role assignments the pipeline verifies but never grants.
 
 ### Audit chain
 Append-only JSONL files under `audit/<date>.jsonl`. Each record

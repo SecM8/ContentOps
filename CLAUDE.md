@@ -51,11 +51,17 @@ Defender XDR. Single tenant. Apache-2.0 with reserved trademarks
    lint rule, run `contentops catalog regenerate` so
    `docs/reference/generated-catalog.md` matches code. CI gates
    this via `tests/v2/test_catalog.py`.
-8. **Asset taxonomy is six kinds** (`contentops/core/asset.py`):
-   `sentinel_analytic`, `sentinel_hunting`, `sentinel_watchlist`,
-   `sentinel_parser`, `sentinel_data_connector`,
-   `defender_custom_detection`. The historical 21 are in git
-   history — recoverable but not currently supported. Do not
+8. **Asset taxonomy is eight kinds** (`contentops/core/asset.py`):
+   six detection kinds — `sentinel_analytic`, `sentinel_hunting`,
+   `sentinel_watchlist`, `sentinel_parser`, `sentinel_data_connector`,
+   `defender_custom_detection` — plus two support kinds —
+   `sentinel_automation_rule` and `sentinel_playbook` (deployable,
+   drift-capable, `NON_DETECTION_ASSETS`: no KQL, no MITRE, reduced
+   META lint, excluded from coverage/report; default
+   `assetModes` = `monitor`). A ninth, `defender_alert_tuning_rule`,
+   is planned as inventory-only (no public API). The remaining
+   historical kinds (workbooks, bookmarks, hunts, content packages,
+   TI indicators, workspace manager, …) are in git history — do not
    propose handlers for them without an explicit ask.
 9. **Audit trail is hash-chained + monotonic.** Never edit
    `audit/*.jsonl` by hand. Use `contentops` CLI commands which

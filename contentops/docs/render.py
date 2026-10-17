@@ -257,13 +257,19 @@ def render_all(
     falls back to the bare filename, which preserves determinism but
     drops the directory context.
     """
+    from contentops.core.asset import NON_DETECTION_ASSETS
+
+    # Detection docs are for detection content; automation rules and
+    # playbooks (support assets) have no severity / ATT&CK story to tell
+    # and are documented by their own asset pages instead.
+    detections = [la for la in loaded_assets if la.envelope.asset not in NON_DETECTION_ASSETS]
     out: dict[str, str] = {}
     for la in sorted(
-        loaded_assets,
+        detections,
         key=lambda x: (x.envelope.asset.value, x.envelope.id),
     ):
         out[_doc_path(la)] = render_detection(la, repo_root=repo_root)
-    out[INDEX_FILE] = render_index(loaded_assets, repo_root=repo_root)
+    out[INDEX_FILE] = render_index(detections, repo_root=repo_root)
     return out
 
 

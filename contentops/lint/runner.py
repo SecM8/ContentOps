@@ -12,13 +12,17 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from contentops.core.asset import KQL_FIELDS_BY_ASSET, Asset
+from contentops.core.asset import KQL_FIELDS_BY_ASSET, NON_DETECTION_ASSETS, Asset
 from contentops.core.discovery import iter_loaded_assets
 from contentops.core.handler import LoadedAsset
 from contentops.core.metadata import RuleMetadata
 from contentops.lint.kql import LintFinding, lint_kql
-from contentops.lint.metadata_rules import lint_metadata
+from contentops.lint.metadata_rules import _SUPPORT_ASSET_META_RULES, lint_metadata
 from contentops.lint.payload import lint_payload
+from contentops.lint.support_assets import (
+    lint_support_asset_payload,
+    lint_support_assets_repo,
+)
 from contentops.lint.snippets import (
     lint_kql_placeholders,
     lint_overrides_directory,
@@ -139,7 +143,7 @@ def _load_error_finding(exc: Exception) -> LintFinding:
         errors = exc.errors()
         first = errors[0] if errors else {}
         # RuleMetadata validates the ``metadata:`` block, EnvelopeV2 the top level.
-        block = "metadata" if exc.title == "RuleMetadata" else ""
+        block = "metadata" if exc.title in ("RuleMetadata", "SupportAssetMetadata") else ""
         field_path = ".".join(str(part) for part in first.get("loc", ()))
         loc = ".".join(part for part in (block, field_path) if part)
         msg = first.get("msg", "invalid")
@@ -191,6 +195,10 @@ def lint_assets(
     ENVELOPE001 error in discovery order, not skipped.
     """
     results: list[LintedFile] = []
+    # Support-asset envelopes, collected for the repo-wide pass
+    # (PAYLOAD007 dangling references, PAYLOAD009 duplicate order).
+    support_loaded: list[LoadedAsset] = []
+    all_loaded: list[LoadedAsset] = []
 
     def _load_error(path: Path, exc: Exception) -> None:
         if asset_filter is not None and _is_other_kind(path, asset_filter):
@@ -203,6 +211,7 @@ def lint_assets(
 
         kind = loaded.envelope.asset.value
         findings: list[LintFinding] = []
+        all_loaded.append(loaded)
 
         findings.extend(lint_payload(
             loaded.payload, asset=loaded.envelope.asset,
@@ -219,7 +228,19 @@ def lint_assets(
         # the tenant policy is lenient. Forces partially-authored rules
         # to finish; leaves collected envelopes alone.
         effective_strict = strict_policy or _has_partial_authoring(loaded.envelope.metadata)
-        findings.extend(lint_metadata(loaded, strict_policy=effective_strict))
+        meta_findings = lint_metadata(loaded, strict_policy=effective_strict)
+        if loaded.envelope.asset in NON_DETECTION_ASSETS:
+            # Support assets (automation rules, playbooks) keep only the
+            # freshness / description / placeholder rules; the attack
+            # narrative + FP catalogue rules are detection-only.
+            meta_findings = (
+                f for f in meta_findings if f.rule_id in _SUPPORT_ASSET_META_RULES
+            )
+            findings.extend(lint_support_asset_payload(
+                loaded.payload, asset=loaded.envelope.asset,
+            ))
+            support_loaded.append(loaded)
+        findings.extend(meta_findings)
 
         query = _query_for(loaded)
         if query is not None:
@@ -242,6 +263,24 @@ def lint_assets(
             results.append(LintedFile(
                 path=loaded.path, asset=loaded.envelope.asset, findings=findings,
             ))
+
+    # Repo-wide support-asset rules (need every envelope: an automation
+    # rule's `playbook:` / `analytic:` references resolve against the
+    # other kinds, and duplicate `order` is a cross-rule property).
+    if support_loaded:
+        repo_findings = lint_support_assets_repo(all_loaded)
+        by_path = {lf.path: lf for lf in results}
+        for path, extra in repo_findings.items():
+            existing = by_path.get(path)
+            if existing is not None:
+                existing.findings.extend(extra)
+            else:
+                asset = next(
+                    (la.envelope.asset for la in support_loaded if la.path == path), None,
+                )
+                lf = LintedFile(path=path, asset=asset, findings=list(extra))
+                results.append(lf)
+                by_path[path] = lf
 
     # KQLOVERRIDE004 - validate snippet files in overrides/. Snippet
     # files have no Asset kind, so ``LintedFile.asset`` is ``None``

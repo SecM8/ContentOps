@@ -30,11 +30,40 @@ from contentops.core.registry import default_registry
 from contentops.defender.client import DefenderClient
 from contentops.handlers.defender_custom_detection import DefenderCustomDetectionHandler
 from contentops.handlers.sentinel_analytic import SentinelAnalyticHandler
+from contentops.handlers.sentinel_automation_rule import SentinelAutomationRuleHandler
 from contentops.handlers.sentinel_data_connector import SentinelDataConnectorHandler
 from contentops.handlers.sentinel_hunting import SentinelHuntingHandler
 from contentops.handlers.sentinel_parser import SentinelParserHandler
+from contentops.handlers.sentinel_playbook import SentinelPlaybookHandler
 from contentops.handlers.sentinel_watchlist import SentinelWatchlistHandler
 from contentops.providers.sentinel_arm import SentinelArmProvider
+
+# Kill switch: a comma-separated list of Asset values that must NOT be
+# registered, regardless of tenant.yml. Set as a GitHub Actions
+# repository variable (exported to the job env by the pipeline-setup
+# action) or in the local shell. Listed kinds are invisible to
+# collect / drift / apply / prune; `lint` still checks their local
+# files. Lets an operator switch a misbehaving kind off in CI without
+# rotating the tenant secret.
+DISABLED_KINDS_ENV = "CONTENTOPS_DISABLED_KINDS"
+
+
+def disabled_kinds() -> frozenset[Asset]:
+    """Kinds listed in ``CONTENTOPS_DISABLED_KINDS``; unknown values fail loud."""
+    raw = os.environ.get(DISABLED_KINDS_ENV, "")
+    out: set[Asset] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            out.add(Asset(token))
+        except ValueError as exc:
+            raise ValueError(
+                f"{DISABLED_KINDS_ENV} contains unknown asset kind {token!r}; "
+                f"valid: {sorted(a.value for a in Asset)}"
+            ) from exc
+    return frozenset(out)
 
 
 def _active_workspace() -> SentinelWorkspaceConfig:
@@ -98,13 +127,17 @@ def register_default_handlers() -> None:
     # schema bug should fail loud at startup with a clear parse error,
     # not silently fall through to "both engines enabled" and surface
     # later as an obscure ARM 400.
+    tenant_id: str | None = None
     try:
         cfg = load_tenant_config()
         sentinel_enabled = bool(cfg.sentinelWorkspaces)
         defender_enabled = cfg.defender is not None and cfg.defender.enabled
+        tenant_id = cfg.tenantId
     except FileNotFoundError:
         sentinel_enabled = True
         defender_enabled = True
+
+    disabled = disabled_kinds()
 
     if sentinel_enabled and not default_registry.has(Asset.SENTINEL_ANALYTIC):
         default_registry.register(
@@ -135,4 +168,26 @@ def register_default_handlers() -> None:
         default_registry.register(
             Asset.SENTINEL_DATA_CONNECTOR,
             lambda: SentinelDataConnectorHandler(_sentinel_arm_provider),
+        )
+    # Support-asset kinds. ``tenant_id`` feeds the RunPlaybook action's
+    # ``tenantId`` and the collect-time reverse mapping.
+    if (
+        sentinel_enabled
+        and Asset.SENTINEL_PLAYBOOK not in disabled
+        and not default_registry.has(Asset.SENTINEL_PLAYBOOK)
+    ):
+        default_registry.register(
+            Asset.SENTINEL_PLAYBOOK,
+            lambda: SentinelPlaybookHandler(_sentinel_arm_provider, tenant_id=tenant_id),
+        )
+    if (
+        sentinel_enabled
+        and Asset.SENTINEL_AUTOMATION_RULE not in disabled
+        and not default_registry.has(Asset.SENTINEL_AUTOMATION_RULE)
+    ):
+        default_registry.register(
+            Asset.SENTINEL_AUTOMATION_RULE,
+            lambda: SentinelAutomationRuleHandler(
+                _sentinel_arm_provider, tenant_id=tenant_id,
+            ),
         )

@@ -58,6 +58,45 @@ def _engine_summary(cfg: TenantConfig) -> str:
     return f"tenant={cfg.name}, {ws_str}, defender={defender_state}"
 
 
+def _asset_mode_lines(cfg: TenantConfig) -> list[str]:
+    """Per-kind management modes per workspace / Defender block, plus the
+    kill switch, so an operator always sees what apply / prune will
+    touch. Only kinds that are not ``managed`` are listed (the default
+    is quiet); the support kinds are always listed because their
+    default is ``monitor``."""
+    from contentops.cli.handler_factories import DISABLED_KINDS_ENV, disabled_kinds
+    from contentops.core.asset import ASSET_MODE_MANAGED, NON_DETECTION_ASSETS, Asset
+
+    lines: list[str] = []
+    try:
+        disabled = disabled_kinds()
+    except ValueError as exc:
+        lines.append(f"ERROR: {exc}")
+        disabled = frozenset()
+    if disabled:
+        lines.append(
+            f"KILL SWITCH: {DISABLED_KINDS_ENV}={','.join(sorted(a.value for a in disabled))} "
+            "— these kinds are not registered at all in this run."
+        )
+
+    def _row(label: str, block: object, prefix: str) -> None:
+        parts = []
+        for a in sorted(Asset, key=lambda x: x.value):
+            if not a.value.startswith(prefix):
+                continue
+            mode = block.asset_mode(a)  # type: ignore[attr-defined]
+            if mode != ASSET_MODE_MANAGED or a in NON_DETECTION_ASSETS:
+                parts.append(f"{a.value}={mode}")
+        if parts:
+            lines.append(f"asset modes [{label}]: " + ", ".join(parts))
+
+    for ws in cfg.sentinelWorkspaces:
+        _row(f"{ws.role}:{ws.workspaceName}", ws, "sentinel_")
+    if cfg.defender is not None:
+        _row("defender", cfg.defender, "defender_")
+    return lines
+
+
 def _has_deployment_targets(cfg: TenantConfig) -> bool:
     """True if at least one engine is deployable.
 
@@ -100,6 +139,8 @@ def config_validate_cmd(config_path: Path | None, strict: bool) -> None:
         sys.exit(1)
 
     click.echo(_engine_summary(cfg))
+    for line in _asset_mode_lines(cfg):
+        click.echo(line)
 
     strict_failed = False
 

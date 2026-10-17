@@ -306,6 +306,7 @@ def sentinel_roundtrip_diff_cmd(
     SENTINEL_KINDS = {
         Asset.SENTINEL_ANALYTIC, Asset.SENTINEL_HUNTING,
         Asset.SENTINEL_PARSER, Asset.SENTINEL_WATCHLIST,
+        Asset.SENTINEL_AUTOMATION_RULE,
     }
 
     # Resolve --role / --workspace BEFORE _active_workspace() so a
@@ -342,7 +343,7 @@ def sentinel_roundtrip_diff_cmd(
     # in metadata for collected GUID-named rules; for hunting /
     # parser / watchlist the envelope id IS the ARM resource name
     # (those handlers don't use arm_name in their apply path).
-    if local.envelope.asset == Asset.SENTINEL_ANALYTIC:
+    if local.envelope.asset in (Asset.SENTINEL_ANALYTIC, Asset.SENTINEL_AUTOMATION_RULE):
         remote_id = local.envelope.arm_name or local.envelope.id
     else:
         remote_id = local.envelope.id

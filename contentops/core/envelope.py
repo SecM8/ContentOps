@@ -32,9 +32,13 @@ from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
-from contentops.core.asset import Asset
+from contentops.core.asset import NON_DETECTION_ASSETS, Asset
 from contentops.core.lifecycle_stage import LifecycleStage
-from contentops.core.metadata import RuleMetadata
+from contentops.core.metadata import (
+    AnyMetadata,
+    RuleMetadata,
+    SupportAssetMetadata,
+)
 
 
 # CLI telemetry: ids of envelopes that fell back to loose metadata parse
@@ -70,7 +74,10 @@ class EnvelopeV2(BaseModel):
     version: str
     asset: Asset
     status: str
-    metadata: RuleMetadata | None = None
+    # ``RuleMetadata`` for detection kinds, ``SupportAssetMetadata``
+    # for ``NON_DETECTION_ASSETS`` (automation rules / playbooks).
+    # Both expose the same attribute surface; see contentops/core/metadata.py.
+    metadata: AnyMetadata | None = None
     # Mirrors metadata.arm_name in-memory so apply / prune can resolve
     # the original ARM resource name without re-parsing metadata.
     arm_name: str | None = None
@@ -111,18 +118,32 @@ def parse_envelope(raw: dict[str, Any]) -> tuple[EnvelopeV2, dict[str, Any]]:
     asset = Asset(raw["asset"])
     payload = raw.get("payload", {})
 
-    metadata: RuleMetadata | None = None
+    metadata: AnyMetadata | None = None
     arm_name: str | None = None
+
+    # Support-asset kinds (automation rules, playbooks) carry no
+    # severity / tactics / alert-volume fields, so they validate
+    # against the lighter ``SupportAssetMetadata`` model. Routing by
+    # kind here (rather than making the four fields optional on
+    # ``RuleMetadata``) keeps the parse contract for every detection
+    # kind exactly as it was.
+    model_cls: type[RuleMetadata] | type[SupportAssetMetadata] = (
+        SupportAssetMetadata if asset in NON_DETECTION_ASSETS else RuleMetadata
+    )
 
     metadata_raw = raw.get("metadata")
     if isinstance(metadata_raw, dict) and metadata_raw:
         recognised_loose = {"arm_name"}
-        full_keys = {
-            "owner", "runbookUrl", "severity", "tactics", "techniques",
-            "expectedAlertsPerDay", "fpHandling",
-        }
+        full_keys = (
+            {"owner", "runbookUrl"}
+            if asset in NON_DETECTION_ASSETS
+            else {
+                "owner", "runbookUrl", "severity", "tactics", "techniques",
+                "expectedAlertsPerDay", "fpHandling",
+            }
+        )
         if full_keys.issubset(metadata_raw.keys()):
-            metadata = RuleMetadata(**metadata_raw)
+            metadata = model_cls(**metadata_raw)
             arm_name = metadata.arm_name
         elif set(metadata_raw.keys()).issubset(recognised_loose):
             arm_name = metadata_raw.get("arm_name")
@@ -137,7 +158,7 @@ def parse_envelope(raw: dict[str, Any]) -> tuple[EnvelopeV2, dict[str, Any]]:
             # the entire metadata block to arm_name only, hiding the
             # mistake from both lint and drift.
             try:
-                metadata = RuleMetadata(**metadata_raw)
+                metadata = model_cls(**metadata_raw)
                 arm_name = metadata.arm_name
             except (ValidationError, TypeError, ValueError) as exc:
                 _record_loose_parse_fallback(raw.get("id"))

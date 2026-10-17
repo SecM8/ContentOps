@@ -45,6 +45,10 @@ class AssetDependencies(BaseModel):
     watchlists: list[str] = Field(default_factory=list)
     parsers: list[str] = Field(default_factory=list)
     detections: list[str] = Field(default_factory=list)
+    # ``sentinel_playbook`` envelope ids this asset needs deployed first.
+    # Automation rules get an implicit edge for every ``playbook:``
+    # reference in their actions; this list is for explicit extras.
+    playbooks: list[str] = Field(default_factory=list)
     external: list[str] = Field(default_factory=list)
 
 
@@ -59,7 +63,7 @@ class DependencyGraph(BaseModel):
 @dataclass(frozen=True)
 class DependencyViolation:
     asset_id: str
-    missing_kind: str  # "watchlist" | "parser" | "detection"
+    missing_kind: str  # "watchlist" | "parser" | "detection" | "playbook" | "analytic"
     missing_name: str
 
     def as_row(self) -> str:
@@ -91,13 +95,16 @@ def load_graph(path: Path | None = None) -> DependencyGraph:
 
 def _index_by_asset(
     loaded: Iterable[LoadedAsset],
-) -> tuple[set[str], set[str], set[str]]:
+) -> tuple[set[str], set[str], set[str], set[str], set[str]]:
     """Single O(n) pass over ``loaded`` that builds:
 
     1. ``watchlists`` — every envelope.id where ``asset == SENTINEL_WATCHLIST``.
     2. ``parsers``   — every envelope.id where ``asset == SENTINEL_PARSER``.
     3. ``all_ids``   — every envelope.id in the load set (used for the
        cross-detection prerequisite check).
+    4. ``playbooks`` — every envelope.id where ``asset == SENTINEL_PLAYBOOK``.
+    5. ``analytics`` — every envelope.id where ``asset == SENTINEL_ANALYTIC``
+       (automation rules reference them with ``analytic:<id>``).
 
     Previously each of these three views was computed by its own
     ``for la in loaded`` loop, and ``validate`` walked the load set a
@@ -118,6 +125,8 @@ def _index_by_asset(
     watchlists: set[str] = set()
     parsers: set[str] = set()
     all_ids: set[str] = set()
+    playbooks: set[str] = set()
+    analytics: set[str] = set()
     for la in loaded:
         env_id = la.envelope.id
         all_ids.add(env_id)
@@ -126,7 +135,11 @@ def _index_by_asset(
             watchlists.add(env_id)
         elif kind == Asset.SENTINEL_PARSER:
             parsers.add(env_id)
-    return watchlists, parsers, all_ids
+        elif kind == Asset.SENTINEL_PLAYBOOK:
+            playbooks.add(env_id)
+        elif kind == Asset.SENTINEL_ANALYTIC:
+            analytics.add(env_id)
+    return watchlists, parsers, all_ids, playbooks, analytics
 
 
 def validate(
@@ -142,8 +155,13 @@ def validate(
     run (single O(n) pass over ``loaded``), then reused for every
     rule's lookups — see Q4.
     """
+    from contentops.core.asset import Asset
+    from contentops.handlers.sentinel_automation_rule_models import (
+        analytic_refs, playbook_refs,
+    )
+
     g = graph if graph is not None else load_graph()
-    watchlists, parsers, asset_ids = _index_by_asset(loaded)
+    watchlists, parsers, asset_ids, playbooks, analytics = _index_by_asset(loaded)
 
     violations: list[DependencyViolation] = []
     info_tables: dict[str, tuple[str, ...]] = {}
@@ -160,6 +178,19 @@ def validate(
         for d in deps.detections:
             if d not in asset_ids:
                 violations.append(DependencyViolation(la.envelope.id, "detection", d))
+        for pb in deps.playbooks:
+            if pb not in playbooks:
+                violations.append(DependencyViolation(la.envelope.id, "playbook", pb))
+        # Implicit edges: an automation rule's `playbook:` actions and
+        # `analytic:` scope conditions must resolve to local envelopes,
+        # or apply would fail against ARM with a 400 (or scope nothing).
+        if la.envelope.asset is Asset.SENTINEL_AUTOMATION_RULE:
+            for pb in playbook_refs(la.payload):
+                if pb not in playbooks:
+                    violations.append(DependencyViolation(la.envelope.id, "playbook", pb))
+            for an in analytic_refs(la.payload):
+                if an not in analytics:
+                    violations.append(DependencyViolation(la.envelope.id, "analytic", an))
         if deps.tables:
             info_tables[la.envelope.id] = tuple(deps.tables)
         if deps.external:

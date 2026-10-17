@@ -75,6 +75,17 @@ _STRICT_ESCALATABLE: frozenset[str] = frozenset({
     "META002", "META003", "META004", "META005",
 })
 
+# The subset of META rules that apply to support-asset kinds
+# (``contentops.core.asset.NON_DETECTION_ASSETS``: automation rules,
+# playbooks). They have an owner, a runbook, a description and a
+# freshness date, but no attack narrative, false-positive catalogue,
+# blind spots, response steps or severity to cross-check — so
+# META003-007 and META009 would only ever be noise for them. The lint
+# runner filters by this set.
+_SUPPORT_ASSET_META_RULES: frozenset[str] = frozenset({
+    "META001", "META002", "META008",
+})
+
 
 def lint_metadata(
     loaded: LoadedAsset,

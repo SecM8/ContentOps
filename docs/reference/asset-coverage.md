@@ -10,15 +10,19 @@ The handler protocol is documented in
 authoring details on individual asset kinds beyond what fits in this
 table, see [`docs/assets/`](../assets/).
 
-The kind enum has **6 values today** — the focused detection-engineering
-surface (two strategic detection kinds, four supporting kinds). The
-broader Sentinel everything-management surface that earlier versions
-of this document described (workbooks, automation, playbooks, hunts,
-content packages, TI indicators, workspace-manager kinds, source
-control, incidents, settings, onboarding, metadata, summary rules)
-was deleted in the asset-taxonomy reduction (PR #122 / #129). See the
-"Historical kinds" section at the bottom for what was removed and how
-to recover the handlers from git history if you need them.
+The kind enum has **8 values today** — the focused detection-engineering
+surface (two strategic detection kinds, four supporting kinds) plus two
+**support kinds** for the response layer next to detections
+(`sentinel_automation_rule`, `sentinel_playbook`; `NON_DETECTION_ASSETS`,
+default `assetModes: monitor`). The broader Sentinel
+everything-management surface that earlier versions of this document
+described (workbooks, hunts, content packages, TI indicators,
+workspace-manager kinds, source control, incidents, settings,
+onboarding, metadata, summary rules) was deleted in the asset-taxonomy
+reduction (PR #122 / #129); automation rules and playbooks were later
+re-introduced on the current handler contract. See the "Historical
+kinds" section at the bottom for what was removed and how to recover
+the handlers from git history if you need them.
 
 ---
 
@@ -47,6 +51,13 @@ to recover the handlers from git history if you need them.
 | 4 | `sentinel_parser` | `SentinelParserHandler` | LA `savedSearches` (category=`Function`) | Sentinel + LA Contributor | yes | Field hash: `displayName,query,category,functionAlias,functionParameters,tags` | ✓ `tests/v2/test_sentinel_extras.py` (apply-verify, no live CRUD) | Same resource family as hunting queries; `category=Function` discriminates. |
 | 5 | `sentinel_data_connector` | `SentinelDataConnectorHandler` | `Microsoft.SecurityInsights/dataConnectors` (legacy) + `dataConnectorDefinitions` (CCP) | Sentinel Contributor | yes | Projection hash: `kind,tenantId,enabledDataTypes(sorted-by-name where state=enabled),dataTypeCount` | ✗ deferred — many connector kinds require interactive portal consent | Manual-consent connectors PUT succeeds but reports "disconnected" until a human clicks Connect ([`sentinel_data_connector.py:216`](../../contentops/handlers/sentinel_data_connector.py)). Pydantic model uses `extra='allow'` so new kinds don't break PRs. |
 
+## Sentinel — support kinds (write-capable, drift-capable, default `monitor`)
+
+| # | Asset kind | Class | API | RBAC | ETag | Hash projection | CRUD test | Notes / quirks |
+|---|---|---|---|---|---|---|---|---|
+| 7 | `sentinel_automation_rule` | `SentinelAutomationRuleHandler` | `Microsoft.SecurityInsights/automationRules` (ARM 2025-09-01, stable) | Microsoft Sentinel Contributor on workspace; *Microsoft Sentinel Automation Contributor* for the Azure Security Insights SP on the playbook RG so rules can run playbooks (reported by conformance, never assigned) | yes (If-Match) | Projection hash: `displayName,order,isEnabled,triggersOn,triggersWhen,hasExpiration,actionCount,actionTypes(sorted),playbookIds(sorted,lower),conditionCount,conditionKeys(sorted)` — action *parameters* not detected | ✗ unit + mocked e2e only (live dev-fork round-trip is the PR merge gate) | ARM name = `metadata.arm_name` or `uuid5(envelope id)`. `playbook:` / `analytic:` envelope-id sugar resolved at apply, reversed on collect; gitleaks blocks raw GUIDs. Close action with no conditions refused (PAYLOAD014). Expired rules import as `deprecated`, apply skips them. Applies **last**. [Doc](../assets/sentinel_automation_rules.md). |
+| 8 | `sentinel_playbook` | `SentinelPlaybookHandler` | `Microsoft.Logic/workflows` (2019-05-01) + `Microsoft.Web/connections` (2016-06-01) in `playbooksResourceGroup` | Logic App Contributor on the playbook RG; playbook MI roles declared in `roleAssignments`, verified + reported, never assigned | opportunistic | Structural projection: `location,state,identityType,triggerNames,actionNames,actionTypes,connectionApis` (all sorted) — action *inputs* not detected | ✗ unit + mocked e2e only | `<id>.yml` + `<id>.workflow.json` sidecar. Connections deploy first, abort before the workflow PUT on failure. Managed-tag-only discovery; `collect --adopt <name>` to bring a portal-built Logic App under management. Consumption only. Applies **first**. [Doc](../assets/sentinel_playbooks.md). |
+
 ## Defender — write-capable, drift-capable
 
 | # | Asset kind | Class | API | RBAC | ETag | Hash projection | CRUD test | Notes / quirks |
@@ -57,7 +68,7 @@ to recover the handlers from git history if you need them.
 
 ## Preview / beta API risk
 
-One of the six write-capable handlers uses a Microsoft API surface
+One of the eight write-capable handlers uses a Microsoft API surface
 that is **not generally available** at the time of writing:
 
 - **`defender_custom_detection`** writes to Microsoft Graph
@@ -150,7 +161,7 @@ git show <sha>:contentops/handlers/sentinel_workbook.py > contentops/handlers/se
 The removed kinds were:
 
 **Sentinel (write-capable, drift-capable)** — `sentinel_workbook`,
-`sentinel_automation`, `sentinel_playbook`, `sentinel_content_package`,
+`sentinel_content_package`,
 `sentinel_hunt`, `sentinel_bookmark`, `sentinel_metadata`,
 `sentinel_summary_rule`, `sentinel_ti_indicator`
 
@@ -168,12 +179,18 @@ The removed kinds were:
 `sentinel_incident_task`, `sentinel_watchlist_item`
 
 Plus the deprecated `sentinel_solution` (folded into
-`sentinel_content_package` before both were removed).
+`sentinel_content_package` before both were removed). The legacy
+`sentinel_automation` / `sentinel_playbook` handlers were superseded by
+the re-introduced support kinds `sentinel_automation_rule` /
+`sentinel_playbook` (rows 7–8 above), which were rebuilt on the current
+handler contract rather than restored.
 
 If you re-introduce one of these handlers, register it in
-`contentops/core/asset.py`, the handler factory under
-`contentops/cli/handler_factories.py`, and the lint coverage check in
-`contentops/lint/coverage.py`. Tests must cover both
+`contentops/core/asset.py` (enum, `DEFAULT_ASSET_MODES`, and
+`NON_DETECTION_ASSETS` if it is not detection content), the handler
+factory under `contentops/cli/handler_factories.py`, the lint coverage
+pins in `tests/v2/test_lint_coverage.py`, and run `contentops catalog
+regenerate`. Tests must cover both
 `tests/v2/` (handler unit tests) and `tests/integration/` (live
 tenant CRUD). Add a row to this table in the same PR.
 

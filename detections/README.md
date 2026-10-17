@@ -31,7 +31,7 @@ separately; see [`.gitignore`](../.gitignore).
 ## Workflow for a new operator
 
 1. **Clone this repo.** You'll see this `detections/` directory with
-   six asset-kind sub-directories, each carrying a `README.md`.
+   eight asset-kind sub-directories, each carrying a `README.md`.
 2. **Add and track your detection envelopes** as
    `detections/<asset_kind>/<rule-id>.yml` in your private deployment
    repository. Do not commit tenant detections to a public repository.
@@ -53,9 +53,11 @@ gitignored.
 contentops collect --role prod
 ```
 
-## Six supported asset kinds
+## Eight supported asset kinds
 
 The current taxonomy (see [`contentops/core/asset.py`](../contentops/core/asset.py)):
+
+Detection kinds:
 
 - **`sentinel_analytic`** — Scheduled / NRT / Fusion / MLBA / TI alert rules.
 - **`sentinel_hunting`** — Hunting queries (savedSearches, category=Hunting).
@@ -64,6 +66,13 @@ The current taxonomy (see [`contentops/core/asset.py`](../contentops/core/asset.
 - **`sentinel_data_connector`** — Data ingest bindings.
 - **`defender_custom_detection`** — Microsoft Defender XDR custom rules
   (Graph beta API).
+
+Support kinds (no KQL, no MITRE, default `assetModes: monitor`):
+
+- **`sentinel_automation_rule`** — Automation rules, including
+  incident suppression (close) rules.
+- **`sentinel_playbook`** — Consumption Logic App playbooks
+  (`<id>.yml` + `<id>.workflow.json` sidecar).
 
 See [`docs/reference/asset-coverage.md`](../docs/reference/asset-coverage.md)
 for endpoint + RBAC + hash-projection detail per kind.

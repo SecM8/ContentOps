@@ -45,7 +45,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # PRODUCTION as a shared-lower-env pattern. The semantic distinction
 # is enforced by `contentops.core.env_status.allowed_statuses_for_env`.
 WorkspaceRole = Literal["prod", "integration", "dev", "test"]
+
+# Per-kind management mode (see ``WorkspaceSafeguards.assetModes``).
+AssetModeName = Literal["managed", "monitor"]
+
+if TYPE_CHECKING:  # pragma: no cover
+    from contentops.core.asset import Asset
 
 
 class WorkspaceSafeguards(BaseModel):
@@ -102,6 +108,46 @@ class WorkspaceSafeguards(BaseModel):
     purgeAllowed: bool = False
     maxDelete: int = Field(default=25, ge=0, le=9999)
 
+    # Per-kind management mode. ``managed`` = apply writes and prune
+    # deletes (behind the gates above); ``monitor`` = collect / drift /
+    # lint only — apply reports the kind as skipped and prune refuses
+    # it. A kind absent from this map falls back to
+    # ``contentops.core.asset.DEFAULT_ASSET_MODES`` (existing detection
+    # kinds: managed; automation rules and playbooks: monitor), so an
+    # upgraded fork whose tenant secret pre-dates a kind starts by
+    # watching it, never by writing or deleting. Keys must be Asset
+    # values of the engine this block belongs to (validated by the
+    # subclasses).
+    assetModes: dict[str, AssetModeName] = Field(default_factory=dict)
+
+    def asset_mode(self, asset: "Asset | str") -> AssetModeName:
+        """Effective mode for ``asset``: explicit entry, else the code default."""
+        from contentops.core.asset import ASSET_MODE_MANAGED, DEFAULT_ASSET_MODES, Asset
+        kind = asset if isinstance(asset, Asset) else Asset(asset)
+        explicit = self.assetModes.get(kind.value)
+        if explicit is not None:
+            return explicit
+        return DEFAULT_ASSET_MODES.get(kind, ASSET_MODE_MANAGED)  # type: ignore[return-value]
+
+    @staticmethod
+    def _validate_asset_modes_prefix(
+        modes: dict[str, str], prefix: str, block: str,
+    ) -> None:
+        from contentops.core.asset import Asset
+        valid = {a.value for a in Asset}
+        for key in modes:
+            if key not in valid:
+                raise ValueError(
+                    f"{block}.assetModes: unknown asset kind {key!r}. "
+                    f"Valid kinds: {sorted(valid)}"
+                )
+            if not key.startswith(prefix):
+                raise ValueError(
+                    f"{block}.assetModes: {key!r} belongs to a different "
+                    f"engine; this block only accepts kinds starting with "
+                    f"{prefix!r}."
+                )
+
 
 class SentinelWorkspaceConfig(WorkspaceSafeguards):
     """One Sentinel (Log Analytics) workspace within a tenant.
@@ -130,6 +176,24 @@ class SentinelWorkspaceConfig(WorkspaceSafeguards):
     resourceGroup: str
     workspaceName: str
     location: str = "westeurope"
+    # Resource group that holds this workspace's Logic App playbooks
+    # (``Microsoft.Logic/workflows`` + ``Microsoft.Web/connections``).
+    # Optional; defaults to ``resourceGroup``. Playbooks commonly live in
+    # a separate RG with its own RBAC (Logic App Contributor for the
+    # pipeline identity, Microsoft Sentinel Automation Contributor for
+    # the Azure Security Insights service principal).
+    playbooksResourceGroup: str | None = None
+
+    @property
+    def effective_playbooks_resource_group(self) -> str:
+        return self.playbooksResourceGroup or self.resourceGroup
+
+    @model_validator(mode="after")
+    def _validate_sentinel_asset_modes(self) -> "SentinelWorkspaceConfig":
+        self._validate_asset_modes_prefix(
+            self.assetModes, "sentinel_", f"sentinelWorkspaces[{self.workspaceName}]",
+        )
+        return self
 
 
 # Backward-compat alias. Sentinel client / provider code still references
@@ -154,6 +218,11 @@ class DefenderConfig(WorkspaceSafeguards):
 
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
+
+    @model_validator(mode="after")
+    def _validate_defender_asset_modes(self) -> "DefenderConfig":
+        self._validate_asset_modes_prefix(self.assetModes, "defender_", "defender")
+        return self
 
 
 class TenantPolicy(BaseModel):

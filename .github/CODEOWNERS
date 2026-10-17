@@ -16,7 +16,7 @@
 *                                          @KustoKing
 
 # --- Detection content (per-asset routing) ----------------------------------
-# The six supported asset kinds (contentops/core/asset.py). Historical kinds
+# The eight supported asset kinds (contentops/core/asset.py). Historical kinds
 # live in git history and are deliberately not routed here.
 detections/sentinel_analytic/**            @KustoKing
 detections/sentinel_hunting/**             @KustoKing
@@ -24,6 +24,11 @@ detections/sentinel_watchlist/**           @KustoKing
 detections/sentinel_parser/**              @KustoKing
 detections/sentinel_data_connector/**      @KustoKing
 detections/defender_custom_detection/**    @KustoKing
+# Support kinds: an automation rule can auto-close incidents and a playbook
+# runs code in the tenant as a managed identity — route these to the people
+# who own response, not only detection content.
+detections/sentinel_automation_rule/**     @KustoKing
+detections/sentinel_playbook/**            @KustoKing
 
 # --- Pipeline + workflows (platform) ----------------------------------------
 contentops/**                              @KustoKing

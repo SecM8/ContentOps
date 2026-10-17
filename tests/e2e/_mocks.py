@@ -261,6 +261,101 @@ def arm_sentinel(router: respx.MockRouter) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Bundle: Logic Apps playbooks (Microsoft.Logic / Microsoft.Web at RG scope)
+# ---------------------------------------------------------------------------
+
+
+# Workflow / connection items and collections in any resource group.
+_RG_RP_RE = re.compile(
+    r"^https://management\.azure\.com"
+    r"/subscriptions/[^/]+"
+    r"/resourceGroups/[^/]+"
+    r"/providers/(?P<rp>Microsoft\.Logic|Microsoft\.Web)"
+    r"/(?P<resource>workflows|connections)"
+    r"(?:/(?P<name>[^/?]+))?"
+    r"(?:\?.*)?$"
+)
+# Generic ARM resources list (used by the playbook handler's managed-tag
+# discovery and by delete's tagged-connection lookup).
+_RG_RESOURCES_RE = re.compile(
+    r"^https://management\.azure\.com"
+    r"/subscriptions/[^/]+/resourceGroups/[^/]+/resources(?:\?.*)?$"
+)
+# Role-assignment reads at any scope (playbook managed-identity checks).
+_ROLE_ASSIGNMENTS_RE = re.compile(
+    r"^https://management\.azure\.com/.+/providers/Microsoft\.Authorization"
+    r"/roleAssignments(?:\?.*)?$"
+)
+_TAG_FILTER_RE = re.compile(r"tagName eq '([^']+)' and tagValue eq '([^']+)'")
+_TYPE_FILTER_RE = re.compile(r"resourceType eq '([^']+)'")
+
+
+def _logic_handler(request: httpx.Request) -> httpx.Response:
+    m = _RG_RP_RE.match(str(request.url))
+    if m is None:
+        return httpx.Response(404, json={"error": {"code": "NotFound"}})
+    key = f"{m.group('rp')}/{m.group('resource')}"
+    name = m.group("name")
+    method = request.method.upper()
+    if name is None:
+        if method == "GET":
+            return httpx.Response(200, json={"value": ARM_STORE.list(key)})
+        return httpx.Response(405)
+    if method == "GET":
+        body = ARM_STORE.get(key, name)
+        if body is None:
+            return httpx.Response(404, json={"error": {"code": "ResourceNotFound"}})
+        return httpx.Response(200, json=body)
+    if method in ("PUT", "PATCH"):
+        try:
+            body = json.loads(request.content) if request.content else {}
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        if method == "PATCH":
+            current = ARM_STORE.get(key, name) or {}
+            body = {**current, **body}
+        if key == "Microsoft.Logic/workflows":
+            identity = dict(body.get("identity") or {})
+            identity.setdefault("principalId", "00000000-0000-0000-0000-00000000e2e1")
+            body["identity"] = identity
+        stored = ARM_STORE.put(key, name, body)
+        stored.setdefault("type", key)
+        return httpx.Response(201 if method == "PUT" else 200, json=stored)
+    if method == "DELETE":
+        existed = ARM_STORE.delete(key, name)
+        return httpx.Response(200 if existed else 404)
+    return httpx.Response(405)
+
+
+def _resources_handler(request: httpx.Request) -> httpx.Response:
+    flt = request.url.params.get("$filter", "")
+    type_m = _TYPE_FILTER_RE.search(flt)
+    tag_m = _TAG_FILTER_RE.search(flt)
+    key = type_m.group(1) if type_m else ""
+    out: list[dict[str, Any]] = []
+    for body in ARM_STORE.list(key):
+        if tag_m:
+            tags = body.get("tags") or {}
+            if str(tags.get(tag_m.group(1), "")) != tag_m.group(2):
+                continue
+        out.append({"name": body.get("name"), "id": body.get("id"), "type": key,
+                    "tags": body.get("tags") or {}})
+    return httpx.Response(200, json={"value": out})
+
+
+def arm_logic_apps(router: respx.MockRouter) -> None:
+    """ARM CRUD for Logic App playbooks + API connections at RG scope,
+    the generic resources list, and role-assignment reads."""
+    router.route(url__regex=_RG_RP_RE).mock(side_effect=_logic_handler)
+    router.get(url__regex=_RG_RESOURCES_RE).mock(side_effect=_resources_handler)
+    router.get(url__regex=_ROLE_ASSIGNMENTS_RE).mock(
+        return_value=httpx.Response(200, json={"value": []}),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Bundle: Defender Graph
 # ---------------------------------------------------------------------------
 
@@ -373,6 +468,7 @@ def kql_query(router: respx.MockRouter) -> None:
 BUNDLES: dict[str, callable] = {
     "oidc_token": oidc_token,
     "arm_sentinel": arm_sentinel,
+    "arm_logic_apps": arm_logic_apps,
     "graph_defender": graph_defender,
     "kql_query": kql_query,
 }
@@ -391,6 +487,7 @@ __all__ = [
     "ARM_STORE",
     "BUNDLES",
     "GRAPH_STORE",
+    "arm_logic_apps",
     "arm_sentinel",
     "graph_defender",
     "kql_query",

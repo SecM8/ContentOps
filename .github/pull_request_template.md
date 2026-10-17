@@ -19,6 +19,8 @@
 - [ ] sentinel_data_connector
 - [ ] sentinel_parser
 - [ ] defender_custom_detection
+- [ ] sentinel_automation_rule (suppression / response — see the blast-radius note in `docs/assets/sentinel_automation_rules.md`)
+- [ ] sentinel_playbook (`.yml` + `.workflow.json` sidecar — bump `version` for either)
 - [ ] pipeline / workflow / docs only
 
 ## Plan output

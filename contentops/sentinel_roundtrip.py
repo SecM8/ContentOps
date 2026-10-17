@@ -113,12 +113,19 @@ def dispatch_for_asset(asset: Asset) -> _SentinelDispatch:
             "sentinel-roundtrip-diff does not handle Defender envelopes. "
             "Use `contentops defender-roundtrip-diff <envelope_id>` instead."
         )
+    if asset == Asset.SENTINEL_PLAYBOOK:
+        raise ValueError(
+            "sentinel-roundtrip-diff does not handle playbooks: they are "
+            "Microsoft.Logic resources at resource-group scope with a structural "
+            "projection, not a Microsoft.SecurityInsights sub-resource. Use "
+            "`contentops drift --asset sentinel_playbook` instead."
+        )
     raise ValueError(
         f"sentinel-roundtrip-diff does not support asset kind {asset.value!r}. "
         "Supported: sentinel_analytic, sentinel_hunting, sentinel_parser, "
-        "sentinel_watchlist. (sentinel_data_connector uses a _projection() "
-        "helper instead of _HASHED_FIELDS; for connector mismatches read the "
-        "apply summary directly.)"
+        "sentinel_watchlist. (sentinel_data_connector and "
+        "sentinel_automation_rule use a _projection() helper instead of "
+        "_HASHED_FIELDS; for their mismatches read the apply summary directly.)"
     )
 
 

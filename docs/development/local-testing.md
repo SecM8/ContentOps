@@ -67,13 +67,15 @@ in [Live integration tests → Authentication](live-integration-tests.md#authent
 
 ## Minimum app-registration permissions
 
-The pipeline manages **six asset kinds** today (see
+The pipeline manages **eight asset kinds** today (see
 [`reference/asset-coverage.md`](../reference/asset-coverage.md)).
-The roles below cover all six. The historical 21-kind taxonomy
-required additional roles (`Logic App Contributor` for playbooks,
-`Monitoring Contributor` for workbooks, `ThreatIndicators.ReadWrite.OwnedBy`
-for TI indicators); those handlers were removed in the v2 hard-cut
-and the corresponding roles are no longer required.
+The roles below cover the six detection kinds and automation rules.
+Playbooks (`sentinel_playbook`, default `monitor` mode) additionally
+need **Logic App Contributor** on the playbook resource group once you
+set the kind to `managed` — see
+[`operations/authentication-setup.md`](../operations/authentication-setup.md#playbooks-and-automation-rules).
+The remaining historical kinds (workbooks, TI indicators, …) were
+removed in the v2 hard-cut and their roles are no longer required.
 
 | Surface | Permission | Why |
 |---|---|---|

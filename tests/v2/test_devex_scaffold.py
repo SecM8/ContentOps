@@ -28,6 +28,8 @@ SUPPORTED_ASSETS = (
     "sentinel_watchlist",
     "sentinel_parser",
     "defender_custom_detection",
+    "sentinel_automation_rule",
+    "sentinel_playbook",
 )
 
 
@@ -60,6 +62,18 @@ def test_each_template_validates_and_lints_clean(tmp_path: Path, asset: str) -> 
     elif asset == "defender_custom_detection":
         from contentops.models import validate_defender_payload
         validate_defender_payload(payload)
+    elif asset == "sentinel_automation_rule":
+        from contentops.handlers.sentinel_automation_rule_models import (
+            SentinelAutomationRulePayload,
+        )
+        SentinelAutomationRulePayload(**payload)
+    elif asset == "sentinel_playbook":
+        # The scaffold writes the definition sidecar next to the envelope;
+        # the loader inlines it, and the handler model needs it inlined.
+        from contentops.core.discovery import load_asset
+        from contentops.handlers.sentinel_playbook_models import SentinelPlaybookPayload
+        assert (out.parent / "scaffold-example.workflow.json").is_file()
+        SentinelPlaybookPayload(**load_asset(out).payload)
 
     # Lint clean (no error-severity findings).
     linted = lint_assets(tmp_path)

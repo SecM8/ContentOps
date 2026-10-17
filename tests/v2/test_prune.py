@@ -232,7 +232,7 @@ def test_prune_dry_run_does_not_delete(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections), "--asset", "sentinel_analytic"],
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections), "--asset", "sentinel_analytic"],
     )
     assert result.exit_code == 0, result.output
     assert "ORPHAN" in result.output
@@ -248,7 +248,7 @@ def test_prune_yes_no_dry_run_actually_deletes(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -264,7 +264,7 @@ def test_prune_max_deletes_fails_closed(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes", "--max-deletes", "3"],
     )
@@ -290,7 +290,7 @@ def test_prune_fails_closed_when_list_remote_errors(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -325,7 +325,7 @@ def test_prune_partial_list_failure_proceeds(tmp_path: Path) -> None:
     default_registry.register(Asset.SENTINEL_WATCHLIST, lambda: bad)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections), "--no-dry-run", "--yes"],
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections), "--no-dry-run", "--yes"],
     )
     assert result.exit_code == 0, result.output        # proceeds, not exit 2
     assert good.deleted == ["orphan-1"]                # visible orphan handled
@@ -346,7 +346,7 @@ def test_prune_locked_assets_skipped_by_default(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -365,7 +365,7 @@ def test_prune_locked_orphans_skipped(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -387,7 +387,7 @@ def test_prune_handles_not_supported_error_as_skip(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -403,7 +403,7 @@ def test_prune_json_output(tmp_path: Path) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--json"],
     )
@@ -512,7 +512,7 @@ def test_prune_refuses_when_purge_not_allowed(tmp_path: Path, monkeypatch) -> No
     )
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -537,7 +537,7 @@ def test_prune_dry_run_bypasses_purge_gate(tmp_path: Path, monkeypatch) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic"],
         # default --dry-run (no --no-dry-run, no --yes)
     )
@@ -562,7 +562,7 @@ def test_prune_passes_when_purge_allowed(tmp_path: Path, monkeypatch) -> None:
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic"],
     )
     assert result.exit_code == 0, result.output
@@ -586,7 +586,7 @@ def test_prune_max_delete_clamps_cli_value_down(tmp_path: Path, monkeypatch) -> 
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes", "--max-deletes", "10"],
     )
@@ -615,7 +615,7 @@ def test_prune_defender_safeguard_blocks_when_only_defender_targeted(
     )
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "defender_custom_detection",
               "--no-dry-run", "--yes"],
     )
@@ -641,7 +641,7 @@ def test_prune_role_integration_absent_skips_gracefully(
     _register_only(Asset.SENTINEL_ANALYTIC, fake)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--role", "integration", "--no-dry-run", "--yes"],
     )

@@ -95,6 +95,10 @@ For each Sentinel workspace in `tenant.yml`:
 |---|---|
 | `workspace[role:name]` | Subscription + RG + Log Analytics workspace exist and the SP can read them |
 | `sentinel_onboarded[role:name]` | Microsoft Sentinel is onboarded onto the workspace (`onboardingStates/default` returns 200) |
+| `asset_modes[role:name]` | INFO: effective `managed` / `monitor` mode of the support kinds for this workspace |
+| `rbac_automation_write[role:name]` | effective permissions include `Microsoft.SecurityInsights/automationRules/write` (FAIL only when `sentinel_automation_rule` is `managed`, INFO otherwise) |
+| `rbac_playbook_write[role:name]` | effective permissions on the playbook RG include `Microsoft.Logic/workflows/write` + `Microsoft.Web/connections/write` (Logic App Contributor; FAIL only when `sentinel_playbook` is `managed`) |
+| `sentinel_automation_contributor[role:name]` | INFO: whether any Microsoft Sentinel Automation Contributor assignment exists on the playbook RG, with the Owner-level `az` command to grant it to the *Azure Security Insights* service principal |
 
 A `403` on the workspace probe usually means the SP lacks
 `Microsoft Sentinel Reader` (or higher) on the workspace scope. A

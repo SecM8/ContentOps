@@ -29,6 +29,7 @@ _SLUG_DRIVEN_ASSETS: frozenset[Asset] = frozenset({
     Asset.SENTINEL_ANALYTIC,
     Asset.SENTINEL_HUNTING,
     Asset.DEFENDER_CUSTOM_DETECTION,
+    Asset.SENTINEL_AUTOMATION_RULE,
 })
 
 # Mirror the production slug rules from contentops.utils.slug — kept in

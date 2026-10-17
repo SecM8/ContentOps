@@ -231,6 +231,33 @@ az role assignment create \
   --scope /subscriptions/<sub-id>/resourceGroups/<rg-name>
 ```
 
+### Playbooks and automation rules
+
+The two support kinds start in `monitor` mode and need nothing extra
+until you set them to `managed` in `config/tenant.yml`. Then:
+
+| Grant | To | Scope | Why |
+|---|---|---|---|
+| **Logic App Contributor** | your App Registration | the playbook resource group (`playbooksResourceGroup`, default = workspace RG) | `apply` PUTs `Microsoft.Logic/workflows` and `Microsoft.Web/connections`; `prune` deletes them |
+| **Microsoft Sentinel Contributor** (already granted above) | your App Registration | workspace RG | `Microsoft.SecurityInsights/automationRules/write` |
+| **Microsoft Sentinel Automation Contributor** (`f4c81013-99ee-4d62-a7ee-b3f1f648599a`) | the **Azure Security Insights** service principal (Microsoft's, not yours) | the playbook resource group | lets automation rules *run* playbooks there. Requires **Owner / User Access Administrator**; the pipeline reports it in `contentops conformance` (`sentinel_automation_contributor[...]`) and never assigns it |
+| Roles each playbook's managed identity needs (e.g. **Microsoft Sentinel Responder** on the workspace) | the Logic App's system-assigned identity | as declared in the envelope's `roleAssignments` | `apply` and `conformance` print the exact `az role assignment create` command for anything missing; assignment is a human step |
+
+```bash
+az role assignment create \
+  --assignee-object-id "$APP_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Logic App Contributor" \
+  --scope /subscriptions/<sub-id>/resourceGroups/<playbook-rg>
+
+SENTINEL_SP=$(az ad sp list --display-name "Azure Security Insights" --query "[0].id" -o tsv)
+az role assignment create \
+  --assignee-object-id "$SENTINEL_SP" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Microsoft Sentinel Automation Contributor" \
+  --scope /subscriptions/<sub-id>/resourceGroups/<playbook-rg>
+```
+
 ### Defender XDR — Microsoft Graph permission
 
 The App Reg needs to manage custom detection rules on Defender XDR.

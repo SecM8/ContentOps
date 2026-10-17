@@ -22,8 +22,9 @@ from contentops.core.drift import DriftCapable
 from contentops.core.registry import default_registry
 
 
-# Handlers we expect to expose drift capability. All six in the
-# current taxonomy implement it; if a future kind genuinely cannot
+# Handlers we expect to expose drift capability. Every kind in the
+# current taxonomy implements it (the support-asset kinds — automation
+# rules, playbooks — included); if a future kind genuinely cannot
 # (e.g. a write-only API), explicitly exclude it here AND document
 # why next to the exclusion.
 _DRIFT_CAPABLE_ASSETS: frozenset[Asset] = frozenset(Asset)

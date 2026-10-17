@@ -149,6 +149,21 @@ runs:
         python scripts/materialise_tenant_config.py \
           --target config/tenant.yml --env-var TENANT_CONFIG_YAML
 
+    - name: Export asset-kind kill switch
+      # Repository variable CONTENTOPS_DISABLED_KINDS (comma-separated
+      # Asset values, e.g. "sentinel_playbook,sentinel_automation_rule")
+      # unregisters those kinds for every contentops command in this job
+      # without touching the tenant secret. Empty / unset = no-op. See
+      # docs/operations/upgrading-to-support-assets.md.
+      shell: bash
+      env:
+        DISABLED_KINDS: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
+      run: |
+        if [ -n "${DISABLED_KINDS:-}" ]; then
+          echo "CONTENTOPS_DISABLED_KINDS=${DISABLED_KINDS}" >> "$GITHUB_ENV"
+          echo "::notice::CONTENTOPS_DISABLED_KINDS=${DISABLED_KINDS} — those asset kinds are switched off for this run"
+        fi
+
     - name: Resolve subscription from tenant.yml
       id: cfg
       shell: bash

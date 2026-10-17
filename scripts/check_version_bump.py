@@ -46,9 +46,21 @@ def _run(*args: str) -> str:
     return result.stdout
 
 
+SIDECAR_SUFFIX = ".workflow.json"
+
+
 def _changed_files(base_ref: str) -> list[str]:
+    """Changed envelope paths. A changed playbook sidecar
+    (``<id>.workflow.json``) counts as a change to its ``<id>.yml``
+    envelope, so editing the Logic App definition also demands a bump."""
     out = _run("diff", "--name-only", f"{base_ref}...HEAD", "--", DETECTIONS_ROOT)
-    return [line for line in out.splitlines() if line.endswith((".yml", ".yaml"))]
+    files: list[str] = []
+    for line in out.splitlines():
+        if line.endswith((".yml", ".yaml")):
+            files.append(line)
+        elif line.endswith(SIDECAR_SUFFIX):
+            files.append(line[: -len(SIDECAR_SUFFIX)] + ".yml")
+    return sorted(set(files))
 
 
 def _parse_doc(text: str) -> dict | None:
@@ -57,6 +69,18 @@ def _parse_doc(text: str) -> dict | None:
     except yaml.YAMLError:
         return None
     return doc if isinstance(doc, dict) else None
+
+
+def _sidecar_text(ref: str | None, yml_path: str) -> str | None:
+    """Content of the playbook sidecar next to ``yml_path`` at ``ref``
+    (None = working tree), or None when there is no sidecar."""
+    sidecar = yml_path[: -len(".yml")] + SIDECAR_SUFFIX if yml_path.endswith(".yml") else None
+    if sidecar is None:
+        return None
+    if ref is None:
+        p = Path(sidecar)
+        return p.read_text(encoding="utf-8") if p.exists() else None
+    return _file_at_ref(ref, sidecar)
 
 
 def _requires_bump(head_text: str, base_text: str) -> str | None:
@@ -109,6 +133,21 @@ def main(base_ref: str) -> int:
         if base_text is None:
             continue  # New file.
         msg = _requires_bump(head_text, base_text)
+        if msg is None:
+            # Unchanged envelope body: a changed sidecar still needs a bump.
+            head_sidecar = _sidecar_text(None, path)
+            base_sidecar = _sidecar_text(base_ref, path)
+            if head_sidecar is not None and base_sidecar is not None and head_sidecar != base_sidecar:
+                head_doc = _parse_doc(head_text)
+                base_doc = _parse_doc(base_text)
+                if (
+                    head_doc is not None and base_doc is not None
+                    and str(head_doc.get("version")) == str(base_doc.get("version"))
+                ):
+                    msg = (
+                        f"version unchanged ({head_doc.get('version')}) but the "
+                        f"{SIDECAR_SUFFIX} sidecar changed"
+                    )
         if msg:
             failures.append(f"{path}: {msg}")
 

@@ -10,14 +10,18 @@
 >
 > - **Implemented**: §1, §2 rows 1 (sentinel_analytic), 3
 >   (defender_custom_detection), 4 (sentinel_hunting), 5
->   (sentinel_watchlist), 9 (sentinel_data_connector), plus
->   sentinel_parser. §4, §6 (single-workspace today, multi-workspace
->   iteration partial), §7 plan/apply, §8 drift + prune, §10 identity,
->   §13 state, §16 observability (basic), §20 partial linter set.
+>   (sentinel_watchlist), 7 (automation rules, as
+>   `sentinel_automation_rule`), 8 (playbooks, as `sentinel_playbook`,
+>   Consumption only, `<id>.yml` + `<id>.workflow.json` sidecar), 9
+>   (sentinel_data_connector), plus sentinel_parser. §4, §6
+>   (single-workspace today, multi-workspace iteration partial), §7
+>   plan/apply, §8 drift + prune, §10 identity, §13 state, §16
+>   observability (basic), §20 partial linter set.
 > - **Roadmap (in the contract, not yet built)**: §2 rows 2 (NRT), 6
->   (workbooks), 7 (automation rules), 8 (playbooks), 10 (Content Hub
->   solutions), §11 lifecycle gating, §12 promotion-tier workflows,
->   §19 upstream-sync workflows, §21 full CI matrix.
+>   (workbooks), 10 (Content Hub solutions), §11 lifecycle gating, §12
+>   promotion-tier workflows, §19 upstream-sync workflows, §21 full CI
+>   matrix. Defender alert tuning rules (§4-b) are planned as an
+>   inventory-only kind until Microsoft ships a public API.
 > - **Authoritative on what's actually shipped**: see
 >   [`docs/reference/gap-assessment.md`](docs/reference/gap-assessment.md)
 >   and [`docs/reference/generated-catalog.md`](docs/reference/generated-catalog.md).
@@ -92,8 +96,8 @@ The rest of this document assumes you are building the custom platform.
 | 4 | Hunting queries             | Sentinel   | `savedSearches` on the LA workspace (`Microsoft.OperationalInsights`)        | YAML                  | Cheap to manage; pure KQL.                                                                     |
 | 5 | Watchlists                  | Sentinel   | `Microsoft.SecurityInsights/watchlists` + `watchlistItems`                   | YAML metadata + CSV   | Bulk path: PUT watchlist with `rawContent` (small) or SAS-URI to CSV blob (large >3.8 MB).     |
 | 6 | Workbooks                   | Sentinel   | `Microsoft.Insights/workbooks` (ARM `2023-06-01`, `kind: shared`)            | JSON file (`serializedData`) + small YAML manifest | Authored in UI, exported as ARM. Not human-diffable.                                           |
-| 7 | Automation rules            | Sentinel   | `Microsoft.SecurityInsights/automationRules`                                 | YAML                  | Order matters (`order` field).                                                                 |
-| 8 | Playbooks (Logic Apps)      | Sentinel   | `Microsoft.Logic/workflows` (Consumption) or `Microsoft.Web/sites` (Standard) | ARM JSON              | Often in a separate RG with separate RBAC. Authored in Designer.                                |
+| 7 | Automation rules            | Sentinel   | `Microsoft.SecurityInsights/automationRules` (ARM `2025-09-01`)              | YAML                  | Shipped as `sentinel_automation_rule`. Order matters (`order` field, git-owned). References other resources by envelope id (`playbook:`, `analytic:`), never by GUID. Default mode `monitor`. |
+| 8 | Playbooks (Logic Apps)      | Sentinel   | `Microsoft.Logic/workflows` (Consumption, `2019-05-01`) + `Microsoft.Web/connections` (`2016-06-01`) | YAML envelope + `<id>.workflow.json` sidecar (Designer export) | Shipped as `sentinel_playbook`. Lives in `playbooksResourceGroup` (defaults to the workspace RG). Managed-identity connections only; roles declared + verified, never assigned. Standard (`Microsoft.Web/sites`) out of scope. Default mode `monitor`. |
 | 9 | Data connectors             | Sentinel   | `Microsoft.SecurityInsights/dataConnectors` (legacy) and `dataConnectorDefinitions` (CCP) | YAML state file       | Many connectors require manual UI consent — **partial automation only**.                       |
 | 10 | Content Hub solutions       | Sentinel   | `Microsoft.SecurityInsights/contentPackages` (ARM `2025-09-01`)              | YAML state file       | Lists which solutions+versions are installed in each workspace.                                |
 | 11 | Threat intel indicators     | Sentinel/Defender | Graph `/security/threatIntelligence/...` or Sentinel TI ingest API     | (out of scope v2)     | Recommend dedicated TI platform (MISP/Sentinel TI), not Git.                                   |
@@ -130,12 +134,11 @@ SIEMContent/                          # GitHub Enterprise repo
 │   │   │   ├── workbook.yml          # metadata (displayName, category, etc.)
 │   │   │   └── workbook.json         # exported serializedData
 │   │   └── ...
-│   ├── automation/                   # (7) automation rules
+│   ├── sentinel_automation_rule/     # (7) automation rules (shipped)
 │   │   └── *.yml
-│   ├── playbooks/                    # (8) ARM templates
-│   │   ├── isolate-device/
-│   │   │   ├── playbook.yml          # metadata + parameter values
-│   │   │   └── azuredeploy.json      # ARM template (from Designer export)
+│   ├── sentinel_playbook/            # (8) playbooks (shipped)
+│   │   ├── isolate-device.yml           # envelope: metadata, connections, roleAssignments
+│   │   ├── isolate-device.workflow.json # Logic App definition (Designer code-view export)
 │   │   └── ...
 │   ├── connectors/                   # (9) declarative state
 │   │   └── connectors.yml            # one file lists desired enabled/disabled

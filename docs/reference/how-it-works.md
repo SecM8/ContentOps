@@ -17,8 +17,8 @@ Sentinel workspace and Microsoft Defender XDR tenant.
 
 ## What it manages
 
-Six kinds of detection content, nothing else
-([`asset-coverage.md`](asset-coverage.md)):
+Six kinds of detection content plus the two response-layer kinds next
+to them, nothing else ([`asset-coverage.md`](asset-coverage.md)):
 
 - Sentinel analytic rules
 - Sentinel hunting queries
@@ -26,6 +26,11 @@ Six kinds of detection content, nothing else
 - Sentinel parsers (KQL functions)
 - Sentinel data-connector configuration
 - Defender XDR custom detection rules
+- Sentinel automation rules (including incident suppression)
+- Sentinel playbooks (Consumption Logic Apps + their API connections)
+
+The two support kinds start in `monitor` mode (observed, never written
+or deleted) until a tenant opts in per kind.
 
 ## What it does NOT do
 

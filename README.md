@@ -297,7 +297,7 @@ Once you're past Day-1, these are the docs to bookmark.
 - [`docs/reference/workflows.md`](docs/reference/workflows.md) — index of every GitHub Actions workflow with triggers and runtimes.
 - [`docs/reference/generated-catalog.md`](docs/reference/generated-catalog.md) — **code-derived** inventory (drift-gated in CI): every command, the Action→Function→Script→Workflow traceability matrix, lint rules, handlers, workflows, and tests.
 - [`docs/reference/feature-catalog.md`](docs/reference/feature-catalog.md) — curated narrative for every CLI command, workflow, and lint rule.
-- [`docs/reference/asset-coverage.md`](docs/reference/asset-coverage.md) — six implemented asset kinds.
+- [`docs/reference/asset-coverage.md`](docs/reference/asset-coverage.md) — eight implemented asset kinds (six detection kinds, two support kinds).
 - [`docs/reference/audit-trail.md`](docs/reference/audit-trail.md) — JSONL schema, query examples, retention.
 - [`docs/reference/gap-assessment.md`](docs/reference/gap-assessment.md) — what isn't built yet. Honest.
 - [`docs/reference/roadmap.md`](docs/reference/roadmap.md) — proposed features.

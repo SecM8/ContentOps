@@ -86,7 +86,7 @@ def _render_assets(inv: Inventory) -> str:
     lines = [
         "## Asset taxonomy",
         "",
-        f"Total: **{len(inv.assets)}** asset kinds (six-kind detection-engineering taxonomy).",
+        f"Total: **{len(inv.assets)}** asset kinds (detection-engineering taxonomy plus support assets).",
         "",
         "| Asset kind | Handler module | KQL field declared |",
         "|---|---|---|",

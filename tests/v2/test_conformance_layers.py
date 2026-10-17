@@ -843,3 +843,62 @@ def test_l7_no_rulesets_still_fails_as_unprotected(monkeypatch) -> None:
     row = _row(report, "branch_protection")
     assert row.status == "FAIL"
     assert "no rulesets in effect" in row.detail
+
+
+# ---------------------------------------------------------------------------
+# L5 — support-asset RBAC (automation rules write, playbook RG write,
+# Microsoft Sentinel Automation Contributor presence)
+# ---------------------------------------------------------------------------
+
+
+def _mock_l5_role_assignments(role_ids: list[str]) -> None:
+    respx.get(url__regex=r".*/Microsoft\.Authorization/roleAssignments").mock(
+        return_value=Response(200, json={"value": [
+            {"properties": {"roleDefinitionId": f"/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/{rid}"}}
+            for rid in role_ids
+        ]}),
+    )
+
+
+@respx.mock
+def test_l5_support_asset_checks_pass_when_everything_is_granted(monkeypatch) -> None:
+    from contentops.handlers.sentinel_playbook_models import (
+        SENTINEL_AUTOMATION_CONTRIBUTOR_ROLE_ID,
+    )
+    monkeypatch.setattr("contentops.config.load_tenant_config", lambda: _fake_cfg())
+    _mock_l5_workspace_ok()
+    _mock_l5_permissions([
+        "Microsoft.SecurityInsights/*",
+        "Microsoft.Logic/workflows/write",
+        "Microsoft.Web/connections/write",
+    ])
+    _mock_l5_role_assignments([SENTINEL_AUTOMATION_CONTRIBUTOR_ROLE_ID])
+    report = C.ConformanceReport()
+    C.check_l5_azure_rbac(report, "arm-tok", C.ConformanceConfig())
+    statuses = {c.name.split("[")[0]: c.status for c in report.checks}
+    assert statuses["rbac_automation_write"] == "PASS"
+    assert statuses["rbac_playbook_write"] == "PASS"
+    assert statuses["sentinel_automation_contributor"] == "INFO"
+    assert statuses["asset_modes"] == "INFO"
+    sac = _with_prefix(report, "sentinel_automation_contributor[")[0]
+    assert "assignment exists" in sac.detail
+
+
+@respx.mock
+def test_l5_support_asset_checks_are_info_in_monitor_mode_and_report_the_ask(monkeypatch) -> None:
+    # The fake workspace has no assetModes → code defaults → monitor, so a
+    # missing grant is INFO (not FAIL) and the remediation names the role.
+    monkeypatch.setattr("contentops.config.load_tenant_config", lambda: _fake_cfg())
+    _mock_l5_workspace_ok()
+    _mock_l5_permissions(["Microsoft.SecurityInsights/alertRules/write"])
+    _mock_l5_role_assignments([])
+    report = C.ConformanceReport()
+    C.check_l5_azure_rbac(report, "arm-tok", C.ConformanceConfig())
+    auto = _with_prefix(report, "rbac_automation_write[")[0]
+    pb = _with_prefix(report, "rbac_playbook_write[")[0]
+    sac = _with_prefix(report, "sentinel_automation_contributor[")[0]
+    assert auto.status == "INFO" and "do NOT include" in auto.detail
+    assert pb.status == "INFO" and "Microsoft.Logic/workflows/write" in pb.detail
+    assert "Logic App Contributor" in pb.remediation
+    assert sac.status == "INFO" and "no Microsoft Sentinel Automation Contributor" in sac.detail
+    assert "az role assignment create" in sac.remediation

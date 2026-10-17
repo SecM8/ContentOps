@@ -260,6 +260,8 @@ class WorkspaceRunContext:
     results: list[ActionResult] = field(default_factory=list)
     dry_run: bool = False
     audit_pairs: list[ApplyAuditPair] | None = None
+    # (workspace name, asset) -> "managed" | "monitor"; filled lazily.
+    asset_modes: dict = field(default_factory=dict)
 
 
 def _print_multi_workspace_banner(
@@ -305,7 +307,8 @@ def _process_plan_asset(
 
     try:
         handler.validate(la_resolved)
-        ctx.results.append(handler.plan(la_resolved))
+        monitor = _monitor_mode_result(la, ws_name, ctx)
+        ctx.results.append(monitor if monitor is not None else handler.plan(la_resolved))
     except Exception as exc:
         ctx.results.append(ActionResult(
             asset_id=la.envelope.id,
@@ -362,7 +365,12 @@ def _process_apply_asset(
 
     try:
         handler.validate(la_resolved)
-        result = handler.apply(la_resolved, dry_run=ctx.dry_run)
+        monitor = _monitor_mode_result(la, ws_name, ctx)
+        if monitor is not None:
+            click.echo(f"  skipped (monitor mode): {la.envelope.id}")
+            result = monitor
+        else:
+            result = handler.apply(la_resolved, dry_run=ctx.dry_run)
     except Exception as exc:
         result = ActionResult(
             asset_id=la.envelope.id,
@@ -376,6 +384,43 @@ def _process_apply_asset(
 
     ctx.results.append(result)
     ctx.audit_pairs.append((la_resolved, result, ws_name, snippet_digest))
+
+
+def _monitor_mode_result(
+    la: LoadedAsset, ws_name: str | None, ctx: WorkspaceRunContext,
+) -> ActionResult | None:
+    """SKIP result when the kind is in ``monitor`` mode for this
+    workspace, else None. Looked up once per (workspace, kind) per run
+    and cached on the context."""
+    from contentops.cli.commands._shared import asset_mode_for, monitor_mode_detail
+    from contentops.core.asset import ASSET_MODE_MONITOR
+
+    cache = ctx.asset_modes
+    key = (ws_name, la.envelope.asset)
+    if key not in cache:
+        cache[key] = asset_mode_for(la.envelope.asset, ws_name)
+    if cache[key] != ASSET_MODE_MONITOR:
+        return None
+    return ActionResult(
+        asset_id=la.envelope.id,
+        asset_kind=la.envelope.asset.value,
+        action=PlanAction.SKIP,
+        status="monitor" if ctx.command == "apply" else "planned",
+        detail=monitor_mode_detail(la.envelope.asset),
+    )
+
+
+def ordered_for_apply(loaded: list[LoadedAsset]) -> list[LoadedAsset]:
+    """Deploy order: playbooks, then every existing kind in path order,
+    then automation rules (see ``APPLY_ORDER_BY_ASSET``). Stable."""
+    from contentops.core.asset import APPLY_ORDER_BY_ASSET, APPLY_ORDER_DEFAULT
+    return sorted(
+        loaded,
+        key=lambda la: (
+            APPLY_ORDER_BY_ASSET.get(la.envelope.asset, APPLY_ORDER_DEFAULT),
+            str(la.path),
+        ),
+    )
 
 
 def _run_workspace_iteration(
@@ -423,7 +468,7 @@ def _run_workspace_iteration(
             workspace_name = (
                 workspace.workspaceName if workspace is not None else None
             )
-            for la in workspace_loaded:
+            for la in ordered_for_apply(workspace_loaded):
                 process(la, workspace_name, ctx)
     finally:
         default_registry.close_all()

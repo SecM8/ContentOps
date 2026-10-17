@@ -322,6 +322,16 @@ _RULE_REGISTRY: tuple[tuple[str, str, str], ...] = (
     ("PAYLOAD004", "warning", "contentops.lint.payload"),
     ("PAYLOAD005", "warning", "contentops.lint.payload"),
     ("PAYLOAD006", "warning", "contentops.lint.payload"),
+    # Support-asset rules (automation rules / playbooks) in
+    # contentops.lint.support_assets. PAYLOAD014 is error for an
+    # unconditioned close rule and warning for an unscoped one; the
+    # catalog records the gating severity.
+    ("PAYLOAD007", "error",   "contentops.lint.support_assets"),  # dangling playbook/analytic ref
+    ("PAYLOAD008", "warning", "contentops.lint.support_assets"),  # expired automation rule
+    ("PAYLOAD009", "warning", "contentops.lint.support_assets"),  # duplicate order per trigger
+    ("PAYLOAD010", "warning", "contentops.lint.support_assets"),  # connector outside MI table
+    ("PAYLOAD012", "warning", "contentops.lint.support_assets"),  # Sentinel connector, no roleAssignments
+    ("PAYLOAD014", "error",   "contentops.lint.support_assets"),  # close rule with no conditions
 )
 
 

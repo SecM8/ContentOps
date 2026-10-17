@@ -95,6 +95,12 @@ class SentinelArmProvider:
         )
 
     @property
+    def config(self) -> SentinelConfig:
+        """The workspace config this provider targets (subscription, RG,
+        workspace, location, playbooks RG). Read-only."""
+        return self._config
+
+    @property
     def workspace_path(self) -> str:
         return self._workspace_path
 
@@ -159,14 +165,66 @@ class SentinelArmProvider:
                 api_version="2019-05-01",
             )
         """
+        return self.resource_group_resource_url(
+            self._config.resourceGroup, rp_namespace, resource_type, name,
+            api_version=api_version,
+        )
+
+    def resource_group_resource_url(
+        self,
+        resource_group: str,
+        rp_namespace: str,
+        resource_type: str,
+        name: str | None = None,
+        *,
+        api_version: str,
+    ) -> str:
+        """Build a URL for a resource in ``resource_group`` (same subscription)
+        under any resource-provider namespace.
+
+        Playbooks use this with the workspace's
+        ``effective_playbooks_resource_group`` so Logic Apps can live in
+        a different RG than the Sentinel workspace.
+
+        Example:
+            resource_group_resource_url(
+                "rg-playbooks", "Microsoft.Logic", "workflows", "notify-soc",
+                api_version="2019-05-01",
+            )
+        """
         path = (
             f"/subscriptions/{self._config.subscriptionId}"
-            f"/resourceGroups/{self._config.resourceGroup}"
+            f"/resourceGroups/{safe_path_segment(resource_group, kind='resource group')}"
             f"/providers/{rp_namespace}/{resource_type}"
         )
         if name:
             path = f"{path}/{safe_path_segment(name, kind=f'{resource_type} name')}"
         return f"{path}?api-version={api_version}"
+
+    def list_resource_group_resources(
+        self, resource_group: str, *, filter_expr: str,
+        api_version: str = "2021-04-01",
+    ) -> list[dict]:
+        """GET ``/resourceGroups/{rg}/resources?$filter=...`` with paging.
+
+        The generic ARM resources list supports server-side filtering on
+        ``resourceType`` and a single tag (``tagName eq '...' and
+        tagValue eq '...'``), which is how the playbook handler finds
+        only the Logic Apps this pipeline manages without a GET per
+        workflow. Returns the ARM resource summaries (no ``properties``).
+        """
+        path = (
+            f"/subscriptions/{self._config.subscriptionId}"
+            f"/resourceGroups/{safe_path_segment(resource_group, kind='resource group')}"
+            f"/resources"
+        )
+        url = f"{path}?api-version={api_version}"
+        return paginate(
+            lambda u: self.request("GET", u, params={"$filter": filter_expr} if u == url else None),
+            url,
+            next_link_key="nextLink",
+            base_url=ARM_BASE_URL,
+        )
 
     def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
         """Issue a request, retrying transient 429/5xx up to 3 times.
@@ -182,7 +240,9 @@ class SentinelArmProvider:
             label=f"ARM {method} {url}",
         )
 
-    def list_resource(self, resource_type: str) -> list[dict]:
+    def list_resource(
+        self, resource_type: str, *, api_version: str = API_VERSION,
+    ) -> list[dict]:
         """GET a collection sub-resource, following ARM ``nextLink`` pagination.
 
         ARM caps page size (typically ~500). Callers iterating over
@@ -197,13 +257,17 @@ class SentinelArmProvider:
         """
         return paginate(
             lambda u: self.request("GET", u),
-            self.resource_url(resource_type),
+            self.resource_url(resource_type, api_version=api_version),
             next_link_key="nextLink",
             base_url=ARM_BASE_URL,
         )
 
-    def get_resource(self, resource_type: str, name: str) -> dict | None:
-        response = self.request("GET", self.resource_url(resource_type, name))
+    def get_resource(
+        self, resource_type: str, name: str, *, api_version: str = API_VERSION,
+    ) -> dict | None:
+        response = self.request(
+            "GET", self.resource_url(resource_type, name, api_version=api_version),
+        )
         if response.status_code == 404:
             return None
         response.raise_for_status()
@@ -228,8 +292,12 @@ class SentinelArmProvider:
             json=body, headers=headers,
         )
 
-    def delete_resource(self, resource_type: str, name: str) -> httpx.Response:
-        return self.request("DELETE", self.resource_url(resource_type, name))
+    def delete_resource(
+        self, resource_type: str, name: str, *, api_version: str = API_VERSION,
+    ) -> httpx.Response:
+        return self.request(
+            "DELETE", self.resource_url(resource_type, name, api_version=api_version),
+        )
 
     @classmethod
     def from_env(cls, *, timeout: float = 30.0) -> SentinelArmProvider:

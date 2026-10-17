@@ -1,0 +1,34 @@
+id: ${id}
+version: 0.1.0
+asset: ${asset}
+status: experimental
+# Authoring lifecycle stage (T.2). See contentops/core/lifecycle_stage.py.
+lifecycleStage: concept
+legacy: false
+metadata:
+  owner: detection-engineering@example.com
+  runbookUrl: https://example.com/runbooks/${id}
+  # Support-asset metadata: playbooks carry no severity / tactics /
+  # expected alert volume. META001 (lastValidatedAt), META002
+  # (description) and META008 still apply.
+  description: |
+    TODO (META002): what this playbook does when an automation rule
+    runs it, and what it touches outside Sentinel.
+  references: []
+payload:
+  state: Enabled                 # Enabled | Disabled
+  # location: westeurope         # optional; defaults to the workspace location
+  # API connections the workflow uses. Every connection is
+  # managed-identity authenticated; no secrets or consent tokens on disk.
+  connections:
+    - name: azuresentinel        # apiName defaults to name; authMode from the known table
+  # Azure roles the playbook's managed identity needs. The pipeline
+  # verifies and reports these after apply (with the `az` command to
+  # run); it never assigns them.
+  roleAssignments:
+    - role: Microsoft Sentinel Responder
+      scope: workspace           # workspace | playbookResourceGroup | <full ARM scope id>
+  # The Logic App definition lives next to this file as a designer
+  # export, verbatim. Edit it in the designer's code view and paste.
+  definitionFile: ${id}.workflow.json
+  parameters: {}

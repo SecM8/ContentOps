@@ -10,7 +10,56 @@ from the commit history.
 
 ## [Unreleased]
 
+> Ships as a `-beta.1` pre-release: two new asset kinds, a metadata
+> model split and new config fields. See **Upgrading** below.
+
+### Upgrading
+
+- **New support kinds default to `monitor`.** With an untouched tenant
+  secret the next scheduled `drift.yml` / `collect.yml` run proposes
+  every portal automation rule as a new file; `apply` skips the new
+  kinds and `prune` refuses them. Opt in per kind with
+  `assetModes: {sentinel_automation_rule: managed, sentinel_playbook: managed}`
+  after reviewing the first import. Full ladder, kill switch
+  (`CONTENTOPS_DISABLED_KINDS` repository variable) and the test pins a
+  fork may need to re-sync:
+  [`docs/operations/upgrading-to-support-assets.md`](docs/operations/upgrading-to-support-assets.md).
+- **`prune` refuses a kind with zero local envelopes** but remote
+  items unless `--allow-empty-kind` (all kinds, not only the new ones).
+
 ### Added
+
+- **`sentinel_automation_rule` asset kind.** Sentinel automation rules —
+  including incident-suppression (close) rules — as code:
+  `Microsoft.SecurityInsights/automationRules` (api `2025-09-01`), ETag
+  PUT, projection-hash verification, drift and prune. Envelopes
+  reference playbooks and analytics by envelope id (`playbook:`,
+  `analytic:`) which the handler resolves at apply time and `collect`
+  reverses, so no subscription / tenant GUIDs live in `detections/`
+  (new gitleaks rule). A close action with no conditions is refused
+  (PAYLOAD014); expired rules import as `deprecated`. Playbooks apply
+  first and automation rules last. Doc:
+  [`docs/assets/sentinel_automation_rules.md`](docs/assets/sentinel_automation_rules.md).
+- **`sentinel_playbook` asset kind.** Consumption Logic App playbooks as
+  code: `<id>.yml` envelope plus `<id>.workflow.json` sidecar (designer
+  export, inlined by the loader), declared managed-identity API
+  connections deployed before the workflow, declared `roleAssignments`
+  verified and reported with the exact `az` command but never assigned,
+  managed-tag-only discovery with `collect --asset sentinel_playbook
+  --adopt <name>`, optional `playbooksResourceGroup` per workspace. Doc:
+  [`docs/assets/sentinel_playbooks.md`](docs/assets/sentinel_playbooks.md).
+- **Per-kind management modes** (`assetModes` on each workspace and on
+  `defender:`): `managed` or `monitor`; `config validate` prints the
+  effective table; `conformance` L5 gains `rbac_automation_write`,
+  `rbac_playbook_write` and `sentinel_automation_contributor` checks.
+- **`SupportAssetMetadata`**: the lighter metadata model for the
+  support kinds (`severity` / `tactics` / `expectedAlertsPerDay` /
+  `fpHandling` optional); `RuleMetadata` is unchanged for detection
+  kinds. Support kinds get only META001 / META002 / META008.
+- **Lint rules PAYLOAD007–010, 012, 014** for the support kinds.
+- `contentops new sentinel_automation_rule` / `sentinel_playbook`
+  scaffolds; `scripts/check_version_bump.py` treats a changed
+  `.workflow.json` as a change to its envelope.
 
 - **Docs: why collected watchlists carry no rows.** `rawContent` is
   input-only on the ARM watchlist resource and collect does not read

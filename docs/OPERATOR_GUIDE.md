@@ -745,6 +745,9 @@ governance evidence can grep for missing or stale runbook URLs.
 ### Per-asset
 
 - [`assets/README.md`](assets/README.md) — index of per-asset deep-dives.
+- [`assets/sentinel_automation_rules.md`](assets/sentinel_automation_rules.md) — automation rules incl. incident suppression; envelope-id references; blast-radius guard.
+- [`assets/sentinel_playbooks.md`](assets/sentinel_playbooks.md) — Logic App playbooks: `.yml` + `.workflow.json` sidecar, managed-identity connections, verified-not-assigned roles, `--adopt`.
+- [`operations/upgrading-to-support-assets.md`](operations/upgrading-to-support-assets.md) — `assetModes` opt-in ladder, kill switch, what changes on upgrade.
 - [`assets/sentinel_alert_rules.md`](assets/sentinel_alert_rules.md), [`assets/sentinel_extras.md`](assets/sentinel_extras.md), [`assets/sentinel_watchlist_sas.md`](assets/sentinel_watchlist_sas.md) — Sentinel kinds.
 - [`assets/defender_graph_extensions_deferred.md`](assets/defender_graph_extensions_deferred.md) — Defender Graph endpoints not yet GA.
 

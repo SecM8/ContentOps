@@ -133,6 +133,14 @@ from contentops.core.drift import write_drift
          "references, falsePositives). The forker walks those down as "
          "they enrich each rule and promotes status back to production.",
 )
+@click.option(
+    "--adopt", "adopt_names", multiple=True, metavar="WORKFLOW_NAME",
+    help="sentinel_playbook only: stamp the `contentops-managed` tag on "
+         "the named Logic App in the playbook resource group so it becomes "
+         "visible to collect / drift / prune, then import it. Repeatable. "
+         "An explicit, audited write permitted even in monitor mode "
+         "(still gated by writeAllowed). Requires --asset sentinel_playbook.",
+)
 def collect_cmd(
     detections_path: Path,
     asset: str | None,
@@ -144,6 +152,7 @@ def collect_cmd(
     workspace_name: str | None,
     clear: bool,
     enrich: bool,
+    adopt_names: tuple[str, ...] = (),
 ) -> None:
     """Collect every asset from the live tenant into local YAML.
 
@@ -175,6 +184,9 @@ def collect_cmd(
 
     register_default_handlers()
     target_asset = Asset(asset) if asset else None
+
+    if adopt_names:
+        _adopt_playbooks_or_exit(target_asset, adopt_names)
 
     detections_path.mkdir(parents=True, exist_ok=True)
 
@@ -262,6 +274,35 @@ def collect_cmd(
             err=True,
         )
         sys.exit(2)
+
+
+def _adopt_playbooks_or_exit(target_asset: Asset | None, names: tuple[str, ...]) -> None:
+    """``--adopt``: tag the named Logic Apps as managed before listing."""
+    from contentops.core.registry import default_registry
+
+    if target_asset is not Asset.SENTINEL_PLAYBOOK:
+        click.echo(
+            "error: --adopt only applies to `--asset sentinel_playbook`",
+            err=True,
+        )
+        sys.exit(2)
+    if not default_registry.has(Asset.SENTINEL_PLAYBOOK):
+        click.echo(
+            "error: sentinel_playbook handler is not registered (no Sentinel "
+            "workspace, or CONTENTOPS_DISABLED_KINDS lists it)",
+            err=True,
+        )
+        sys.exit(2)
+    handler = default_registry.get(Asset.SENTINEL_PLAYBOOK)
+    for name in names:
+        try:
+            remote = handler.adopt(name)  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — surfaced to the operator
+            click.echo(f"error: adopt {name!r} failed: {exc}", err=True)
+            sys.exit(2)
+        click.echo(
+            f"  [--adopt] tagged Logic App {remote.get('name', name)!r} as contentops-managed"
+        )
 
 
 @click.command("clean")

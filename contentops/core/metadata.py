@@ -45,14 +45,22 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _D3FEND_RE = re.compile(r"^D3-[A-Z0-9]+$")
 
 
-class RuleMetadata(BaseModel):
+class _MetadataCommon(BaseModel):
+    """Fields shared by every envelope kind's ``metadata:`` block.
+
+    ``RuleMetadata`` (detection content) adds the four required
+    detection fields on top; ``SupportAssetMetadata`` (automation
+    rules, playbooks) makes those same four optional. Everything
+    below — owner, runbook, Section T authoring fields, validators,
+    ``frozen`` + ``extra="forbid"`` — is identical for both, so a
+    consumer that reads ``metadata.techniques`` or
+    ``metadata.severity`` always finds the attribute (possibly
+    empty / None) regardless of kind.
+    """
+
     owner: str = Field(min_length=1)
     runbookUrl: str = Field(min_length=1)
-    severity: Severity
-    tactics: list[Tactic] = Field(min_length=1)
     techniques: list[str] = Field(default_factory=list)
-    expectedAlertsPerDay: int = Field(ge=0)
-    fpHandling: str = Field(min_length=1)
     cohort: str | None = None
     lastValidatedAt: str | None = None
     # Set by `contentops collect` — preserves the original ARM resource
@@ -139,10 +147,13 @@ class RuleMetadata(BaseModel):
                 )
         return v
 
-    @field_validator("fpHandling")
+    # ``fpHandling`` is declared on the subclasses (required on
+    # RuleMetadata, optional on SupportAssetMetadata), so the validator
+    # lives here with ``check_fields=False`` and applies to both.
+    @field_validator("fpHandling", check_fields=False)
     @classmethod
-    def _fp_nonempty(cls, v: str) -> str:
-        if not v.strip():
+    def _fp_nonempty(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
             raise ValueError("fpHandling must be non-empty guidance")
         return v
 
@@ -171,3 +182,42 @@ class RuleMetadata(BaseModel):
                     "(e.g. D3-NTA, D3-PSA, D3-FCA)"
                 )
         return v
+
+
+class RuleMetadata(_MetadataCommon):
+    """Mandatory rule metadata for detection-content envelopes (M1).
+
+    Adds the four required detection fields on top of
+    :class:`_MetadataCommon`. The field set and validation are
+    byte-for-byte what they were before the support-asset kinds
+    existed; every detection kind (analytics, hunting, watchlists,
+    parsers, connectors, Defender custom detections) still parses
+    against this model.
+    """
+
+    severity: Severity
+    tactics: list[Tactic] = Field(min_length=1)
+    expectedAlertsPerDay: int = Field(ge=0)
+    fpHandling: str = Field(min_length=1)
+
+
+class SupportAssetMetadata(_MetadataCommon):
+    """Metadata for non-detection kinds (``NON_DETECTION_ASSETS``).
+
+    Automation rules and playbooks have an owner, a runbook, and a
+    description, but no severity, no ATT&CK tactics, no expected
+    alert volume, and no false-positive handling — those four are
+    optional here so a support-asset envelope parses with the
+    full model instead of falling into ``parse_envelope``'s loose
+    branch (which silently dropped owner / description and made
+    every META rule fire). Consumers that read these attributes
+    still find them, as ``None`` / ``[]``.
+    """
+
+    severity: Severity | None = None
+    tactics: list[Tactic] = Field(default_factory=list)
+    expectedAlertsPerDay: int | None = Field(default=None, ge=0)
+    fpHandling: str | None = None
+
+
+AnyMetadata = RuleMetadata | SupportAssetMetadata

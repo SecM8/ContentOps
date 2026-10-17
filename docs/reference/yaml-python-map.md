@@ -128,7 +128,7 @@ Earlier revisions of this document described `sentinel_settings`,
 kinds (and several others — workbooks, automation/playbooks, bookmarks,
 hunts, content packages, TI indicators, source control, incidents) were
 **removed in the asset-taxonomy reduction** that narrowed the supported
-surface to the six kinds defined in `contentops/core/asset.py`:
+surface to the kinds defined in `contentops/core/asset.py`:
 
 - `sentinel_analytic`
 - `defender_custom_detection`
@@ -136,6 +136,8 @@ surface to the six kinds defined in `contentops/core/asset.py`:
 - `sentinel_watchlist`
 - `sentinel_parser`
 - `sentinel_data_connector`
+- `sentinel_automation_rule` (support kind, re-introduced; `detections/sentinel_automation_rule/`)
+- `sentinel_playbook` (support kind, re-introduced; `detections/sentinel_playbook/<id>.yml` + `<id>.workflow.json`)
 
 The removed handlers, their `detections/<kind>/` directories, and the example
 YAML files are recoverable from git history if a kind needs to be reinstated;

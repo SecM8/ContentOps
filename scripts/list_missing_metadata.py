@@ -45,6 +45,9 @@ import yaml
 
 
 _FIELDS = ("description", "attackDescription", "references", "falsePositives")
+# Mirrors contentops.core.asset.NON_DETECTION_ASSETS (kept literal so the
+# script stays runnable without the package on sys.path).
+_NON_DETECTION_KINDS = frozenset({"sentinel_automation_rule", "sentinel_playbook"})
 
 
 @dataclass
@@ -91,6 +94,11 @@ def _scan(root: Path) -> list[Missing]:
             continue
         rule_id = str(raw.get("id") or yml.stem)
         asset_kind = str(raw.get("asset") or raw.get("platform") or "unknown")
+        # Support assets (automation rules, playbooks) carry no
+        # attackDescription / falsePositives by design; keep them
+        # off the authoring backlog.
+        if asset_kind in _NON_DETECTION_KINDS:
+            continue
         status = str(raw.get("status") or "unknown")
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else None
         missing = [f for f in _FIELDS if _is_missing(metadata, f)]

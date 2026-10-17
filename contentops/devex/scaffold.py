@@ -42,7 +42,16 @@ _SUPPORTED: frozenset[Asset] = frozenset({
     Asset.SENTINEL_WATCHLIST,
     Asset.SENTINEL_PARSER,
     Asset.DEFENDER_CUSTOM_DETECTION,
+    Asset.SENTINEL_AUTOMATION_RULE,
+    Asset.SENTINEL_PLAYBOOK,
 })
+
+# Kinds whose scaffold writes a second file next to the envelope:
+# ``<template suffix>`` -> ``<id><suffix>``. Playbooks keep the Logic App
+# definition in a ``.workflow.json`` sidecar (designer export, verbatim).
+_SIDECAR_TEMPLATES: dict[Asset, str] = {
+    Asset.SENTINEL_PLAYBOOK: ".workflow.json",
+}
 
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*[a-z0-9]$")
@@ -141,7 +150,32 @@ def scaffold(
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered, encoding="utf-8")
+
+    # Sidecar (playbook definition). Written next to the envelope under
+    # the name the template's ``definitionFile:`` points at.
+    suffix = _SIDECAR_TEMPLATES.get(parsed)
+    if suffix is not None:
+        sidecar_src = _sidecar_template_text(parsed, suffix)
+        sidecar_rendered = Template(sidecar_src).safe_substitute(id=id, asset=parsed.value)
+        sidecar_target = target.parent / f"{id}{suffix}"
+        if sidecar_target.exists() and not force:
+            raise ScaffoldError(
+                f"refusing to overwrite existing file: {sidecar_target} (use --force)",
+                exit_code=1,
+            )
+        sidecar_target.write_text(sidecar_rendered, encoding="utf-8")
     return target
+
+
+def _sidecar_template_text(asset: Asset, suffix: str) -> str:
+    name = f"{asset.value}{suffix}.tmpl"
+    res = files("contentops.templates").joinpath(name)
+    if not res.is_file():
+        raise ScaffoldError(
+            f"no sidecar template for asset {asset.value!r} (looked for {name})",
+            exit_code=2,
+        )
+    return res.read_text(encoding="utf-8")
 
 
 __all__ = ["scaffold", "ScaffoldError"]

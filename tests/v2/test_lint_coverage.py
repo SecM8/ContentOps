@@ -45,6 +45,10 @@ from contentops.lint.kql import lint_kql
 _NON_KQL_BEARING_ASSETS: frozenset[Asset] = frozenset({
     Asset.SENTINEL_WATCHLIST,
     Asset.SENTINEL_DATA_CONNECTOR,
+    # Support assets: automation rules are trigger/condition/action
+    # documents, playbooks are Logic App definitions. No KQL anywhere.
+    Asset.SENTINEL_AUTOMATION_RULE,
+    Asset.SENTINEL_PLAYBOOK,
 })
 
 
@@ -221,6 +225,13 @@ _EXPECTED_SEVERITIES: dict[str, str] = {
     "PAYLOAD004": "warning", # Defender recommendedActions is null
     "PAYLOAD005": "warning", # FileProfile output column filtered w/o column_ifexists
     "PAYLOAD006": "warning", # entity column not re-projected after FileProfile
+    # Support-asset rules in contentops/lint/support_assets.py
+    "PAYLOAD007": "error",   # dangling playbook: / analytic: reference
+    "PAYLOAD008": "warning", # automation rule already expired
+    "PAYLOAD009": "warning", # duplicate order on the same trigger
+    "PAYLOAD010": "warning", # connector outside the managed-identity table
+    "PAYLOAD012": "warning", # Sentinel connector without roleAssignments
+    "PAYLOAD014": "error",   # close rule with no conditions (warning when unscoped)
     # Strict-mode policy in contentops/lint/strict_rules.py
     "KQL101": "warning",     # | take / | limit in production (advisory)
     # Envelope-metadata rules in contentops/lint/metadata_rules.py.

@@ -141,6 +141,8 @@ def test_register_default_handlers_registers_both_when_both_configured(
     assert default_registry.has(Asset.SENTINEL_WATCHLIST)
     assert default_registry.has(Asset.SENTINEL_PARSER)
     assert default_registry.has(Asset.SENTINEL_DATA_CONNECTOR)
+    assert default_registry.has(Asset.SENTINEL_AUTOMATION_RULE)
+    assert default_registry.has(Asset.SENTINEL_PLAYBOOK)
 
 
 def test_register_default_handlers_skips_defender_when_disabled(
@@ -171,6 +173,8 @@ def test_register_default_handlers_skips_sentinel_when_zero_workspaces(
     assert not default_registry.has(Asset.SENTINEL_WATCHLIST)
     assert not default_registry.has(Asset.SENTINEL_PARSER)
     assert not default_registry.has(Asset.SENTINEL_DATA_CONNECTOR)
+    assert not default_registry.has(Asset.SENTINEL_AUTOMATION_RULE)
+    assert not default_registry.has(Asset.SENTINEL_PLAYBOOK)
     assert default_registry.has(Asset.DEFENDER_CUSTOM_DETECTION)
 
 

@@ -10,12 +10,18 @@ Focused single-tenant detection-engineering surface:
 * ``sentinel_hunting``, ``sentinel_watchlist``, ``sentinel_parser``,
   ``sentinel_data_connector`` — supporting assets that detection content
   depends on.
+* ``sentinel_automation_rule`` and ``sentinel_playbook`` — the response
+  and noise-control layer next to detections: Sentinel automation rules
+  (including the "suppression" rules that auto-close noisy incidents)
+  and the Logic App playbooks those rules call. Deployable and
+  drift-capable; see :data:`NON_DETECTION_ASSETS` for how they differ
+  from detection content in lint, coverage, and reporting.
 
-Broad-Sentinel everything-management surfaces (workbooks, automation /
-playbooks, bookmarks, hunts, content packages, TI indicators, workspace
-manager, source control, incidents, settings, onboarding, metadata) were
-deleted in the asset-taxonomy reduction. They can be rebuilt from git
-history if needed; out of scope for the focused product.
+Broad-Sentinel everything-management surfaces (workbooks, bookmarks,
+hunts, content packages, TI indicators, workspace manager, source
+control, incidents, settings, onboarding, metadata) were deleted in the
+asset-taxonomy reduction. They can be rebuilt from git history if
+needed; out of scope for the focused product.
 """
 
 from __future__ import annotations
@@ -30,6 +36,8 @@ class Asset(str, enum.Enum):
     SENTINEL_PARSER = "sentinel_parser"
     SENTINEL_DATA_CONNECTOR = "sentinel_data_connector"
     DEFENDER_CUSTOM_DETECTION = "defender_custom_detection"
+    SENTINEL_AUTOMATION_RULE = "sentinel_automation_rule"
+    SENTINEL_PLAYBOOK = "sentinel_playbook"
 
 
 # The detection-class kinds: assets that carry a query and MITRE ATT&CK
@@ -66,6 +74,66 @@ def payload_display_name(payload: object) -> str:
 COLLECT_BASELINE_VERSION = "1.0.0"
 
 
+# Kinds that are NOT detection content. They carry no KQL, no MITRE
+# mapping, are excluded from coverage maths and the detection inventory
+# report, and run a reduced metadata lint set (owner / description /
+# freshness, not severity / tactics / alert volume). ``parse_envelope``
+# validates their ``metadata:`` block with ``SupportAssetMetadata``
+# instead of ``RuleMetadata``.
+#
+# Code that iterates *every* envelope (coverage evidence, the Navigator
+# repo axis, the metadata lint runner) checks membership here so a
+# stray ``techniques:`` on a playbook can never inflate a heatmap.
+NON_DETECTION_ASSETS: frozenset[Asset] = frozenset({
+    Asset.SENTINEL_AUTOMATION_RULE,
+    Asset.SENTINEL_PLAYBOOK,
+})
+
+
+# Per-kind apply ordering. ``contentops apply`` processes envelopes
+# sorted by ``(APPLY_ORDER_BY_ASSET.get(kind, APPLY_ORDER_DEFAULT),
+# path)``; the stable sort keeps today's path order inside each tier.
+#
+#   10  playbooks      — no dependencies; must exist before any
+#                        automation rule that runs them.
+#   50  everything else (analytics, hunting, watchlists, parsers,
+#                        connectors, Defender) — unchanged order.
+#   90  automation rules — an ``analytic:<id>`` scope condition needs
+#                        the analytics rule to exist remotely, and a
+#                        ``playbook:<id>`` action needs the Logic App.
+APPLY_ORDER_DEFAULT = 50
+APPLY_ORDER_BY_ASSET: dict[Asset, int] = {
+    Asset.SENTINEL_PLAYBOOK: 10,
+    Asset.SENTINEL_AUTOMATION_RULE: 90,
+}
+
+
+# Per-kind management mode defaults (see ``WorkspaceSafeguards.assetModes``
+# in contentops/config.py). ``managed`` = apply writes and prune deletes;
+# ``monitor`` = collect / drift / lint only, apply skips, prune refuses.
+#
+# The defaults live HERE, in code, not in config/tenant.yml.example:
+# an existing tenant secret that pre-dates a kind carries no
+# ``assetModes`` entry for it, so the code default is what a fork gets
+# on upgrade. New kinds therefore default to ``monitor`` — a
+# post-upgrade ``prune`` with zero local files for the kind can never
+# delete the tenant's portal-created rules. Flipping a kind to
+# ``managed`` is an explicit operator opt-in in tenant.yml.
+AssetMode = str  # "managed" | "monitor" (Literal lives in config.py)
+ASSET_MODE_MANAGED = "managed"
+ASSET_MODE_MONITOR = "monitor"
+DEFAULT_ASSET_MODES: dict[Asset, str] = {
+    Asset.SENTINEL_ANALYTIC: ASSET_MODE_MANAGED,
+    Asset.SENTINEL_HUNTING: ASSET_MODE_MANAGED,
+    Asset.SENTINEL_WATCHLIST: ASSET_MODE_MANAGED,
+    Asset.SENTINEL_PARSER: ASSET_MODE_MANAGED,
+    Asset.SENTINEL_DATA_CONNECTOR: ASSET_MODE_MANAGED,
+    Asset.DEFENDER_CUSTOM_DETECTION: ASSET_MODE_MANAGED,
+    Asset.SENTINEL_AUTOMATION_RULE: ASSET_MODE_MONITOR,
+    Asset.SENTINEL_PLAYBOOK: ASSET_MODE_MONITOR,
+}
+
+
 # Single source of truth for "which payload field(s) carry KQL".
 # Consumed by the lint runner (KQL rules + KQLOVERRIDE rules) and by
 # the snippet substitution engine. Kept here -- in the asset module --
@@ -89,7 +157,8 @@ def kql_body_from_payload(asset: Asset, payload: dict) -> str | None:
     supports nested fields like Defender's ``queryCondition.queryText``)
     and returns the first one that holds a non-blank string. Returns
     ``None`` when the asset kind carries no KQL (watchlist /
-    data_connector) or the field is absent / empty.
+    data_connector / automation rule / playbook) or the field is
+    absent / empty.
 
     Single source of truth for "give me the rule's query" — shared by
     ``contentops rule-test`` and the ``live_test_pass`` promotion gate so

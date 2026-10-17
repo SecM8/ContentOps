@@ -487,3 +487,31 @@ support. If multi-tenant ever lands as a real workstream, the
 design is open enough to accommodate it (per-env tenant.yml files
 selected via PIPELINE_ENV), but that's a separate, currently-
 hypothetical workstream rather than operator guidance. -->
+
+## Per-workspace `playbooksResourceGroup` and `assetModes`
+
+Two optional per-workspace fields arrived with the support kinds:
+
+```yaml
+sentinelWorkspaces:
+  - role: prod
+    subscriptionId: "..."
+    resourceGroup: rg-sentinel
+    workspaceName: law-sentinel
+    playbooksResourceGroup: rg-sentinel-playbooks   # optional; default = resourceGroup
+    assetModes:                                    # optional; per-kind managed | monitor
+      sentinel_automation_rule: managed
+      sentinel_playbook: monitor
+```
+
+- Automation rules are deployed per workspace (each gets its own GUID,
+  `uuid5(envelope id)` for authored rules).
+- Playbooks follow each workspace's `playbooksResourceGroup`: two
+  workspaces sharing one RG make one idempotent PUT; two workspaces
+  with different RGs each get their own copy of the playbook and its
+  connections.
+- `assetModes` is evaluated per workspace, so you can manage
+  automation rules in `integration` while still only monitoring them in
+  `prod`. The Defender block has its own `assetModes` for `defender_*`
+  kinds. See
+  [`upgrading-to-support-assets.md`](upgrading-to-support-assets.md).

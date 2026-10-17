@@ -248,6 +248,44 @@ _DEFENDER_ASSET_VALUES = frozenset(
 )
 
 
+def asset_mode_for(asset: "_Asset", workspace_name: str | None = None) -> str:
+    """Effective ``managed`` / ``monitor`` mode for ``asset`` in this run.
+
+    Sentinel kinds read the active workspace's ``assetModes`` (the named
+    one, else the implicit single workspace); Defender kinds read the
+    tenant-level ``defender:`` block. Without a loadable tenant.yml the
+    code defaults in ``contentops.core.asset.DEFAULT_ASSET_MODES`` apply,
+    so new support kinds still start in ``monitor`` mode.
+    """
+    from contentops.config import load_tenant_config
+    from contentops.core.asset import ASSET_MODE_MANAGED, DEFAULT_ASSET_MODES
+
+    fallback = DEFAULT_ASSET_MODES.get(asset, ASSET_MODE_MANAGED)
+    try:
+        cfg = load_tenant_config()
+    except FileNotFoundError:
+        return fallback
+    if asset.value in _DEFENDER_ASSET_VALUES:
+        return cfg.defender_safeguards().asset_mode(asset)
+    name = workspace_name or os.environ.get("PIPELINE_WORKSPACE_NAME")
+    if name:
+        try:
+            return cfg.workspace_by_name(name).asset_mode(asset)
+        except KeyError:
+            return fallback
+    if len(cfg.sentinelWorkspaces) == 1:
+        return cfg.sentinelWorkspaces[0].asset_mode(asset)
+    return fallback
+
+
+def monitor_mode_detail(asset: "_Asset") -> str:
+    return (
+        f"assetModes[{asset.value}]=monitor — collect/drift/lint only; set "
+        f"`assetModes: {{{asset.value}: managed}}` on the workspace (or defender:) "
+        f"block in config/tenant.yml to enable apply and prune"
+    )
+
+
 def _filter_disabled_engines(loaded: list[LoadedAsset]) -> list[LoadedAsset]:
     """Drop envelopes whose deployment engine is disabled in tenant.yml.
 

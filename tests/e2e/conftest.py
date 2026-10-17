@@ -146,6 +146,11 @@ tenant:
       resourceGroup: "rg-e2e-itest"
       workspaceName: "law-e2e-itest"
       location: westeurope
+      # Support kinds default to monitor; the e2e matrix opts them in so
+      # apply --dry-run / collect / drift exercise the handlers.
+      assetModes:
+        sentinel_automation_rule: managed
+        sentinel_playbook: managed
 """
 
 
@@ -307,6 +312,96 @@ payload:
     dataTypes:
       alerts:
         state: enabled
+""",
+        encoding="utf-8",
+    )
+
+    # sentinel_playbook — envelope + definition sidecar (designer export).
+    (detections / "sentinel_playbook").mkdir(parents=True, exist_ok=True)
+    (detections / "sentinel_playbook" / "e2e-playbook-001.workflow.json").write_text(
+        json.dumps({
+            "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+            "contentVersion": "1.0.0.0",
+            "triggers": {"Microsoft_Sentinel_incident": {
+                "type": "ApiConnectionWebhook",
+                "inputs": {
+                    "body": {"callback_url": "@{listCallbackUrl()}"},
+                    "host": {"connection": {"name": "@parameters('$connections')['azuresentinel']['connectionId']"}},
+                    "path": "/incident-creation",
+                },
+            }},
+            "actions": {"Add_comment": {
+                "type": "ApiConnection", "runAfter": {},
+                "inputs": {"method": "post", "path": "/Incidents/Comment",
+                           "host": {"connection": {"name": "@parameters('$connections')['azuresentinel']['connectionId']"}},
+                           "body": {"incidentArmId": "@triggerBody()?['object']?['id']", "message": "e2e"}},
+            }},
+            "outputs": {},
+        }, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (detections / "sentinel_playbook" / "e2e-playbook-001.yml").write_text(
+        """id: e2e-playbook-001
+version: 0.1.0
+asset: sentinel_playbook
+status: production
+metadata:
+  arm_name: e2e-playbook-001
+  owner: e2e@example.invalid
+  runbookUrl: https://example.invalid/runbooks/e2e-playbook-001
+  description: Synthetic playbook for the e2e capability matrix.
+payload:
+  state: Enabled
+  connections:
+    - name: azuresentinel
+  roleAssignments:
+    - role: Microsoft Sentinel Responder
+      scope: workspace
+  definitionFile: e2e-playbook-001.workflow.json
+  parameters: {}
+""",
+        encoding="utf-8",
+    )
+
+    # sentinel_automation_rule — scoped close (suppression) + run-playbook
+    # action using the envelope-id sugar (no GUIDs on disk).
+    (detections / "sentinel_automation_rule").mkdir(parents=True, exist_ok=True)
+    (detections / "sentinel_automation_rule" / "e2e-automation-001.yml").write_text(
+        f"""id: e2e-automation-001
+version: 0.1.0
+asset: sentinel_automation_rule
+status: production
+metadata:
+  owner: e2e@example.invalid
+  runbookUrl: https://example.invalid/runbooks/e2e-automation-001
+  description: Synthetic automation rule for the e2e capability matrix.
+payload:
+  displayName: E2E Automation Rule
+  order: 900
+  triggeringLogic:
+    isEnabled: false
+    triggersOn: Incidents
+    triggersWhen: Created
+    expirationTimeUtc: "2099-01-01T00:00:00Z"
+    conditions:
+      - conditionType: Property
+        conditionProperties:
+          propertyName: IncidentRelatedAnalyticRuleIds
+          operator: Contains
+          propertyValues:
+            - "analytic:{rule_id}"
+  actions:
+    - order: 1
+      actionType: ModifyProperties
+      actionConfiguration:
+        status: Closed
+        classification: BenignPositive
+        classificationReason: SuspiciousButExpected
+        classificationComment: e2e synthetic suppression
+    - order: 2
+      actionType: RunPlaybook
+      actionConfiguration:
+        playbook: e2e-playbook-001
 """,
         encoding="utf-8",
     )

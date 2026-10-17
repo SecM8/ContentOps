@@ -13,7 +13,7 @@
 ```yaml
 id: my-rule-id                  # kebab-case, len ≥ 2, [a-z0-9-]
 version: 0.1.0                  # envelope schema version
-asset: sentinel_analytic        # one of the six canonical kinds
+asset: sentinel_analytic        # one of the eight canonical kinds
 status: experimental            # deploy gate — experimental / test / production / deprecated
 lifecycleStage: engineering     # authoring gate — concept / research / engineering / delivery / optimization / feedback
 metadata:                       # authoring + triage metadata (see section below)
@@ -47,16 +47,30 @@ rule under active tuning.
 |---|---|---|---|
 | `id` | `str` (kebab-case pattern) | yes | Canonical identifier. Mutating after first apply is a breaking change — `apply` addresses rules by this id (mapped to `metadata.arm_name` for collected envelopes). |
 | `version` | `str` | yes | Envelope schema version. Defaults to `"0.1.0"` for hand-authored content; collect uses the source rule's `templateVersion` for template-bound rules (Fusion / MLBA / TI), falling back to `"1.0.0"`. |
-| `asset` | `Asset` enum | yes | One of: `sentinel_analytic`, `sentinel_hunting`, `sentinel_watchlist`, `sentinel_parser`, `sentinel_data_connector`, `defender_custom_detection`. |
+| `asset` | `Asset` enum | yes | One of: `sentinel_analytic`, `sentinel_hunting`, `sentinel_watchlist`, `sentinel_parser`, `sentinel_data_connector`, `defender_custom_detection`, plus the support kinds `sentinel_automation_rule`, `sentinel_playbook` (see [Support-asset metadata](#support-asset-metadata-supportassetmetadata)). |
 | `status` | `str` | yes | Deploy gate: `experimental` / `test` / `production` / `deprecated`. |
 | `lifecycleStage` | `LifecycleStage \| None` | no | Authoring stage: `concept` / `research` / `engineering` / `delivery` / `optimization` / `feedback`. |
-| `metadata` | `RuleMetadata \| None` | no at parse time, required by lint --strict | Authoring + triage metadata. See below. |
+| `metadata` | `RuleMetadata \| SupportAssetMetadata \| None` | no at parse time, required by lint --strict | Authoring + triage metadata. `RuleMetadata` for detection kinds; `SupportAssetMetadata` for the support kinds. See below. |
 | `payload` | `dict` | yes | ARM / Graph API body for the asset kind. Validated per-kind by Pydantic models under `contentops/models.py`. |
 | `arm_name` | `str \| None` | no | Mirrors `metadata.arm_name` in memory for collected envelopes; ignored on hand-authored content. |
 
 ---
 
 ## `metadata` block — authoring + triage fields
+
+### Support-asset metadata (`SupportAssetMetadata`)
+
+Automation rules and playbooks (`NON_DETECTION_ASSETS`) parse their
+`metadata:` block with `SupportAssetMetadata`: the same model as below
+except that `severity`, `tactics`, `expectedAlertsPerDay` and
+`fpHandling` are **optional** (they describe detection behaviour a
+response rule doesn't have). `owner` and `runbookUrl` stay required and
+validated; the Section T fields are accepted. Only META001
+(`lastValidatedAt`), META002 (`description`) and META008 (placeholder
+past experimental) fire on these kinds. Consumers reading
+`metadata.techniques` / `.tactics` / `.severity` still find the
+attribute (empty / `None`); nothing from these kinds reaches coverage
+maths.
 
 ### Required (lint --strict enforces non-empty)
 

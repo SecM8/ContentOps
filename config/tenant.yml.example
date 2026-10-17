@@ -56,6 +56,29 @@ tenant:
       writeAllowed: true
       purgeAllowed: false
       maxDelete: 25
+      # ----------------------------------------------------------------
+      # Per-kind management mode (optional). `managed` = apply writes and
+      # prune deletes (behind the gates above); `monitor` = collect /
+      # drift / lint only — apply skips the kind, prune refuses it.
+      #
+      # A kind you do not list falls back to the code default: the six
+      # detection kinds are `managed`, the support kinds
+      # (`sentinel_automation_rule`, `sentinel_playbook`) are `monitor`.
+      # The ladder for a new tenant: start in monitor, run
+      # `contentops collect --asset <kind>` on a branch and review the
+      # import, flip the kind to `managed`, and only then consider
+      # `purgeAllowed`. See docs/operations/upgrading-to-support-assets.md.
+      # ----------------------------------------------------------------
+      assetModes:
+        sentinel_automation_rule: monitor
+        sentinel_playbook: monitor
+      # Resource group that holds this workspace's Logic App playbooks
+      # (optional; defaults to resourceGroup). The deploy identity needs
+      # Logic App Contributor there, and the Azure Security Insights
+      # service principal needs Microsoft Sentinel Automation Contributor
+      # there for automation rules to run playbooks — see
+      # docs/operations/authentication-setup.md.
+      # playbooksResourceGroup: "rg-sentinel-playbooks"
 
     # Optional second workspace — uncomment + fill if you have an
     # integration / staging Sentinel workspace. The

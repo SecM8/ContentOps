@@ -59,6 +59,13 @@ from contentops.core.result import ActionResult, PlanAction
     help="By default locked assets (localCustomization=true) are NEVER pruned. Pass to override.",
 )
 @click.option(
+    "--allow-empty-kind", is_flag=True, default=False,
+    help="By default prune REFUSES to delete a kind that has zero local "
+         "envelopes but remote items (a wiped or never-collected "
+         "detections/<kind>/ would otherwise purge the tenant). Pass to "
+         "override after a deliberate `collect --asset <kind>` review.",
+)
+@click.option(
     "--json", "as_json", is_flag=True, default=False,
     help="Emit a structured JSON summary on stdout instead of the human-readable table.",
 )
@@ -86,6 +93,7 @@ def prune_cmd(
     as_json: bool,
     role: str | None,
     workspace_name: str | None,
+    allow_empty_kind: bool = False,
 ) -> None:
     """Delete remote assets that are not in local YAML.
 
@@ -182,6 +190,21 @@ def prune_cmd(
 
     drift_handlers = _collect_drift_handlers(target_asset)
 
+    # Per-kind management mode: a kind in `monitor` mode is observed
+    # (collect / drift) but never pruned. Excluded here so neither the
+    # preview nor the delete phase can touch it.
+    from contentops.cli.commands._shared import asset_mode_for, monitor_mode_detail
+    from contentops.core.asset import ASSET_MODE_MONITOR
+    monitored = [
+        h for h in drift_handlers
+        if asset_mode_for(h.asset) == ASSET_MODE_MONITOR
+    ]
+    if monitored:
+        drift_handlers = [h for h in drift_handlers if h not in monitored]
+        if not as_json:
+            for h in monitored:
+                click.echo(f"  info: {h.asset.value} not pruned — {monitor_mode_detail(h.asset)}")
+
     if not drift_handlers:
         click.echo("No drift-capable handlers registered.")
         return
@@ -190,6 +213,9 @@ def prune_cmd(
     # compare envelope ids against local, collect orphans.
     orphans: list[dict] = []  # {asset, envelope_id, remote_id, path?}
     skipped_locked: list[dict] = []
+    # Kinds with zero local envelopes but remote items: refused unless
+    # --allow-empty-kind (see the option help).
+    empty_kinds: list[dict] = []
     # Assets whose remote inventory could not be enumerated. Prune decides
     # what to DELETE by subtracting the local YAML set from the remote set,
     # so a failed listing is NOT "zero remote items" — it's an unknown. We
@@ -208,6 +234,12 @@ def prune_cmd(
                 list_errors.append({"asset": asset_value, "error": str(exc)[:300]})
                 continue
             listed_ok += 1
+            if remote_items and not local:
+                empty_kinds.append({
+                    "asset": asset_value, "remote_count": len(remote_items),
+                })
+                if not allow_empty_kind:
+                    continue
             for remote in remote_items:
                 envelope = handler.to_envelope(remote)
                 if envelope is None:
@@ -276,6 +308,34 @@ def prune_cmd(
             }, indent=2))
         default_registry.close_all()
         sys.exit(2)
+
+    if empty_kinds and not allow_empty_kind:
+        # Refuse, don't silently skip: an empty local set for a kind that
+        # has remote items is almost always "never collected" or "wiped",
+        # and deleting everything remote would be the worst outcome.
+        for ek in empty_kinds:
+            click.echo(
+                f"  refused: no local {ek['asset']} envelopes but "
+                f"{ek['remote_count']} remote item(s) — run "
+                f"`contentops collect --asset {ek['asset']}` and review first, "
+                f"or pass --allow-empty-kind to prune them anyway.",
+                err=True,
+            )
+        if will_actually_delete:
+            if as_json:
+                click.echo(_json.dumps({
+                    "dry_run": False,
+                    "max_deletes": max_deletes,
+                    "orphans": orphans,
+                    "skipped_locked": skipped_locked,
+                    "deleted": [],
+                    "errors": [],
+                    "list_errors": list_errors,
+                    "empty_kinds": empty_kinds,
+                    "error": "empty_local_kind",
+                }, indent=2))
+            default_registry.close_all()
+            sys.exit(2)
 
     if list_errors and not as_json:
         # Partial visibility: proceed, but make the un-listable kinds loud so
@@ -451,14 +511,10 @@ def _resolve_safeguards_for_target(
     except FileNotFoundError:
         return []
 
-    sentinel_assets = {
-        Asset.SENTINEL_ANALYTIC.value,
-        Asset.SENTINEL_HUNTING.value,
-        Asset.SENTINEL_PARSER.value,
-        Asset.SENTINEL_WATCHLIST.value,
-        Asset.SENTINEL_DATA_CONNECTOR.value,
-    }
-    defender_assets = {Asset.DEFENDER_CUSTOM_DETECTION.value}
+    # Engine membership by prefix (the same contract _shared.py uses), so
+    # a new kind inherits purgeAllowed / maxDelete gating automatically.
+    sentinel_assets = {a.value for a in Asset if a.value.startswith("sentinel_")}
+    defender_assets = {a.value for a in Asset if a.value.startswith("defender_")}
 
     want_sentinel = asset is None or asset in sentinel_assets
     want_defender = asset is None or asset in defender_assets

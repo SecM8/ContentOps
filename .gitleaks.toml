@@ -46,6 +46,12 @@ path = '''config/tenant.*\.ya?ml'''
 #    historical entries.
 [allowlist]
 description = "Null-GUID example file + historical leaked GUIDs (2026-05)"
+# Null / synthetic placeholder GUIDs (all-zero prefix) never trip the
+# GUID rules. Referenced by the comments above; this is the regex
+# allowlist those comments point at.
+regexes = [
+  '''00000000-0000-0000-0000-[0-9a-fA-F]{12}''',
+]
 paths = [
   '''config/tenant\.yml\.example$''',
   # Mode A forks only (config/tenant.yml committed on purpose in a
@@ -64,6 +70,19 @@ id = "tenant-yml-real-name"
 description = "config/tenant.yml is gitignored — committing it is a mistake"
 regex = '''.''' # match anything (a non-empty file)
 path = '''config/tenant\.yml$'''
+
+[[rules]]
+id = "azure-guid-in-support-asset-envelope"
+# Automation rules and playbooks reference other resources by ARM id.
+# Authored envelopes must use the repo-side sugar instead
+# (`playbook: <envelope id>`, `analytic:<envelope id>`), which the
+# handler resolves at apply time and collect reverses — so a
+# subscription / tenant GUID in detections/sentinel_automation_rule/
+# or detections/sentinel_playbook/ is a leak of the 2026-05 class.
+# Synthetic all-zero GUIDs are exempt via the global allowlist.
+description = "Subscription / tenant GUID inside a support-asset envelope (use envelope-id references)"
+regex = '''(?i)(tenantId|subscriptionId|logicAppResourceId|/subscriptions/)\s*[:=]?\s*['"]?/?[^\s'"]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+path = '''detections/(sentinel_automation_rule|sentinel_playbook)/.*\.(ya?ml|workflow\.json)$'''
 
 [[rules]]
 id = "guid-in-status-dashboard"

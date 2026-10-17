@@ -429,7 +429,7 @@ def test_prune_does_not_flag_remote_orphan_when_arm_name_matches(tmp_path):
     _register_only(Asset.SENTINEL_ANALYTIC, handler)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic"],
     )
     assert result.exit_code == 0, result.output
@@ -453,7 +453,7 @@ def test_prune_falls_back_to_envelope_id_for_legacy(tmp_path):
     _register_only(Asset.SENTINEL_ANALYTIC, handler)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic"],
     )
     assert result.exit_code == 0, result.output
@@ -487,7 +487,7 @@ def test_prune_slug_collision_does_not_delete_surviving_rule(tmp_path):
     # attempt a delete; max-deletes default of 25 wouldn't even
     # fire (single orphan).
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes"],
     )
@@ -518,7 +518,7 @@ def test_prune_max_deletes_remains_guardrail_not_primary_safety(tmp_path):
     _register_only(Asset.SENTINEL_ANALYTIC, handler)
 
     result = CliRunner().invoke(
-        cli, ["prune", "--path", str(detections),
+        cli, ["prune", "--allow-empty-kind", "--path", str(detections),
               "--asset", "sentinel_analytic",
               "--no-dry-run", "--yes",
               "--max-deletes", "2"],

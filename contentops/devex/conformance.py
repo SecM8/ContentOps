@@ -1350,6 +1350,159 @@ def check_l5_azure_rbac(
                             "(read identity — least privilege)",
                         ))
 
+                _check_support_asset_rbac(
+                    report, layer, client, w, tag, perms, config,
+                )
+
+
+def _check_support_asset_rbac(
+    report: ConformanceReport,
+    layer: str,
+    client: httpx.Client,
+    w: object,
+    tag: str,
+    workspace_perms: list,
+    config: ConformanceConfig,
+) -> None:
+    """L5 extras for the support-asset kinds (automation rules, playbooks).
+
+    * ``rbac_automation_write`` — ``Microsoft.SecurityInsights/
+      automationRules/write`` in the workspace-scope effective
+      permissions already fetched for ``rbac_write``.
+    * ``rbac_playbook_write`` — ``Microsoft.Logic/workflows/write`` and
+      ``Microsoft.Web/connections/write`` at the playbook resource group
+      (Logic App Contributor).
+    * ``sentinel_automation_contributor`` — INFO only: whether ANY role
+      assignment of Microsoft Sentinel Automation Contributor exists at
+      the playbook RG scope (the Azure Security Insights service
+      principal needs it for automation rules to run playbooks; the
+      principal match needs a Graph lookup L5 does not have).
+
+    Reported as INFO (not FAIL) when the kind is in ``monitor`` mode —
+    the identity does not need write there yet. For a read identity
+    the write checks are skipped (``rbac_write`` already covers SoD).
+    """
+    from contentops.core.asset import ASSET_MODE_MANAGED, Asset
+    from contentops.handlers.sentinel_playbook_models import (
+        SENTINEL_AUTOMATION_CONTRIBUTOR_ROLE_ID,
+    )
+
+    if not config.expect_rbac_write:
+        return
+    # ``w`` is a SentinelWorkspaceConfig in production; tests pass a bare
+    # namespace, so resolve the mode + playbook RG defensively.
+    from contentops.core.asset import DEFAULT_ASSET_MODES
+    mode_of = getattr(w, "asset_mode", None)
+    modes = {
+        kind: (mode_of(kind) if callable(mode_of) else DEFAULT_ASSET_MODES[kind])
+        for kind in (Asset.SENTINEL_AUTOMATION_RULE, Asset.SENTINEL_PLAYBOOK)
+    }
+    report.add(ConformanceCheck(
+        layer, f"asset_modes[{tag}]", "INFO",
+        ", ".join(f"{k.value}={v}" for k, v in modes.items()),
+    ))
+
+    auto_action = "Microsoft.SecurityInsights/automationRules/write"
+    can_auto = any(
+        _action_granted(auto_action, p.get("actions") or [], p.get("notActions") or [])
+        for p in workspace_perms
+    )
+    auto_status = "PASS" if can_auto else (
+        "INFO" if modes[Asset.SENTINEL_AUTOMATION_RULE] != ASSET_MODE_MANAGED else "FAIL"
+    )
+    report.add(ConformanceCheck(
+        layer, f"rbac_automation_write[{tag}]", auto_status,
+        f"effective permissions {'include' if can_auto else 'do NOT include'} {auto_action}",
+        "" if can_auto else (
+            "Grant 'Microsoft Sentinel Contributor' on the workspace RG "
+            "(needed once sentinel_automation_rule is managed)."
+        ),
+    ))
+
+    playbook_rg = getattr(w, "effective_playbooks_resource_group", None) or w.resourceGroup
+    rg_scope = f"/subscriptions/{w.subscriptionId}/resourceGroups/{playbook_rg}"
+    perm_url = (
+        f"{rg_scope}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01"
+    )
+    pb_mode = modes[Asset.SENTINEL_PLAYBOOK]
+    try:
+        rp = client.get(perm_url)
+    except Exception as exc:  # noqa: BLE001
+        report.add(ConformanceCheck(
+            layer, f"rbac_playbook_write[{tag}]", "FAIL", f"permissions query failed: {exc}",
+        ))
+        return
+    if rp.status_code != 200:
+        report.add(ConformanceCheck(
+            layer, f"rbac_playbook_write[{tag}]",
+            "INFO" if pb_mode != ASSET_MODE_MANAGED else "FAIL",
+            f"permissions query on RG={playbook_rg} returned {rp.status_code}",
+            "Grant the SP at least Reader on the playbook resource group.",
+        ))
+        return
+    rg_perms = rp.json().get("value") or []
+    needed = ("Microsoft.Logic/workflows/write", "Microsoft.Web/connections/write")
+    missing = [
+        a for a in needed
+        if not any(
+            _action_granted(a, p.get("actions") or [], p.get("notActions") or [])
+            for p in rg_perms
+        )
+    ]
+    if not missing:
+        report.add(ConformanceCheck(
+            layer, f"rbac_playbook_write[{tag}]", "PASS",
+            f"effective permissions on RG={playbook_rg} include Logic App + connection write",
+        ))
+    else:
+        report.add(ConformanceCheck(
+            layer, f"rbac_playbook_write[{tag}]",
+            "INFO" if pb_mode != ASSET_MODE_MANAGED else "FAIL",
+            f"missing on RG={playbook_rg}: {', '.join(missing)}",
+            f"Grant 'Logic App Contributor' to the App Registration on RG={playbook_rg} "
+            "(needed once sentinel_playbook is managed).",
+        ))
+
+    ra_url = (
+        f"{rg_scope}/providers/Microsoft.Authorization/roleAssignments"
+        f"?api-version=2022-04-01&$filter=atScope()"
+    )
+    try:
+        ra = client.get(ra_url)
+    except Exception as exc:  # noqa: BLE001
+        report.add(ConformanceCheck(
+            layer, f"sentinel_automation_contributor[{tag}]", "INFO",
+            f"role assignments unreadable: {exc}",
+        ))
+        return
+    if ra.status_code != 200:
+        report.add(ConformanceCheck(
+            layer, f"sentinel_automation_contributor[{tag}]", "INFO",
+            f"role assignments query returned {ra.status_code} (cannot verify)",
+        ))
+        return
+    present = any(
+        str((item.get("properties") or {}).get("roleDefinitionId") or "")
+        .lower().endswith(SENTINEL_AUTOMATION_CONTRIBUTOR_ROLE_ID)
+        for item in ra.json().get("value", []) or []
+    )
+    report.add(ConformanceCheck(
+        layer, f"sentinel_automation_contributor[{tag}]", "INFO",
+        (
+            f"a Microsoft Sentinel Automation Contributor assignment exists on RG={playbook_rg}"
+            if present else
+            f"no Microsoft Sentinel Automation Contributor assignment on RG={playbook_rg} — "
+            "automation rules cannot run playbooks there until an Owner grants it to the "
+            "'Azure Security Insights' service principal"
+        ),
+        "" if present else (
+            "az role assignment create --assignee <Azure Security Insights object id> "
+            "--role 'Microsoft Sentinel Automation Contributor' "
+            f"--scope {rg_scope}  (requires Owner / User Access Administrator; "
+            "the pipeline never assigns roles)"
+        ),
+    ))
+
 
 # ---------------------------------------------------------------------------
 # L6 — Functional reach

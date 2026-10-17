@@ -27,3 +27,9 @@ tenant:
       writeAllowed: true
       purgeAllowed: false
       maxDelete: 25
+      # Per-kind management mode (see config/tenant.yml.example). The
+      # support kinds default to `monitor`; opt in per kind.
+      assetModes:
+        sentinel_automation_rule: monitor
+        sentinel_playbook: monitor
+      # playbooksResourceGroup: "rg-sentinel-integration-playbooks"

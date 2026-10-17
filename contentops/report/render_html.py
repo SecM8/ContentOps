@@ -41,6 +41,8 @@ _ASSET_KIND_LABELS = {
     "sentinel_watchlist": "Sentinel Watchlist",
     "sentinel_data_connector": "Sentinel Data Connector",
     "defender_custom_detection": "Defender XDR Custom Detection",
+    "sentinel_automation_rule": "Sentinel Automation Rule",
+    "sentinel_playbook": "Sentinel Playbook",
 }
 
 

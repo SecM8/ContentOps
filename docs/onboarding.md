@@ -606,7 +606,7 @@ order:
 1. [`reference/architecture.md`](reference/architecture.md) — the
    shape.
 2. [`contentops/core/asset.py`](../contentops/core/asset.py) — the
-   asset taxonomy (6 kinds).
+   asset taxonomy (8 kinds: 6 detection + 2 support).
 3. [`contentops/core/envelope.py`](../contentops/core/envelope.py) —
    what's in the YAML and how it parses.
 4. [`contentops/core/handler.py`](../contentops/core/handler.py) — the

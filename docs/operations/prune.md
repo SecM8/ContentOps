@@ -90,7 +90,9 @@ into another tool:
 | `--max-deletes N` | Fail-closed. Default 25. Exceeding the cap aborts (exit 1) before any delete runs. |
 | `--include-locked` required for locked envelopes | Top-level `localCustomization: true` on the YAML protects an envelope; pass `--include-locked` to override. |
 | Read-only handlers SKIP | `NotSupportedError` is caught and emits a SKIP row, not a batch failure. |
-| Singletons SKIP | N/A — the legacy singleton handlers (`sentinel_settings`, `sentinel_onboarding`) were removed in the asset-taxonomy reduction; the current six kinds have no singletons. |
+| Singletons SKIP | N/A — the legacy singleton handlers (`sentinel_settings`, `sentinel_onboarding`) were removed in the asset-taxonomy reduction; the current eight kinds have no singletons. |
+| `monitor` kinds excluded | A kind whose `assetModes` entry (or code default — the support kinds) is `monitor` is never pruned; prune prints an info line per excluded kind. |
+| Empty-local-set refusal | A kind with **zero** local envelopes but remote items is refused (exit 2 on a real run) unless `--allow-empty-kind`: a wiped or never-collected `detections/<kind>/` must not purge the tenant. |
 | Audit chain | One AuditRecord per attempted delete, on the same JSONL hash chain that `apply` uses. |
 
 ## Workflow
@@ -124,7 +126,9 @@ at the summary, expect zero orphans.
 - Legacy singleton/toggle handlers (`sentinel_settings/{EyesOn,
   Anomalies,EntityAnalytics,Ueba}`, `sentinel_onboarding/default`)
   are N/A — they were removed in the asset-taxonomy reduction and
-  are not part of the current six kinds.
+  are not part of the current eight kinds.
+- Any kind in `monitor` mode (see above), and playbooks that are not
+  tagged `contentops-managed` (they are invisible to the handler).
 - Any handler whose `delete()` raises `NotSupportedError` (read-only
   / collect-only kinds).
 

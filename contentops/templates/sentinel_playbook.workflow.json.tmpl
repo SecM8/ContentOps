@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {},
+  "triggers": {
+    "Microsoft_Sentinel_incident": {
+      "type": "ApiConnectionWebhook",
+      "inputs": {
+        "body": {
+          "callback_url": "@{listCallbackUrl()}"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "path": "/incident-creation"
+      }
+    }
+  },
+  "actions": {
+    "Add_comment_to_incident": {
+      "type": "ApiConnection",
+      "runAfter": {},
+      "inputs": {
+        "method": "post",
+        "path": "/Incidents/Comment",
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "TODO: replace with the playbook's real actions (${id})"
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

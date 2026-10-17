@@ -412,6 +412,11 @@ def write_drift(report: DriftReport, out_dir: Path) -> list[Path]:
     for entry in report.new + report.changed:
         if entry.envelope is None:
             continue
+        # Convert to the on-disk form FIRST (playbooks move their
+        # definition into a sidecar) so the preserve-* comparisons below
+        # see the same shape the existing file has; otherwise every
+        # re-import of an unchanged playbook would bump its version.
+        entry.envelope, sidecars = split_sidecar_files(entry.envelope)
         if entry.local_path is not None:
             target = entry.local_path
             entry.envelope = _preserve_local_metadata(
@@ -421,6 +426,9 @@ def write_drift(report: DriftReport, out_dir: Path) -> list[Path]:
             entry.envelope = _preserve_local_version(
                 entry.envelope, target,
             )
+            entry.envelope = _bump_for_changed_sidecars(
+                entry.envelope, target, sidecars,
+            )
         else:
             target = out_dir / entry.asset.value / f"{entry.asset_id}.yml"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -429,7 +437,48 @@ def write_drift(report: DriftReport, out_dir: Path) -> list[Path]:
             encoding="utf-8",
         )
         written.append(target)
+        for name, text in sidecars.items():
+            sidecar_path = target.parent / name
+            if sidecar_path.exists() and sidecar_path.read_text(encoding="utf-8") == text:
+                continue
+            sidecar_path.write_text(text, encoding="utf-8")
+            written.append(sidecar_path)
     return written
+
+
+def _bump_for_changed_sidecars(
+    envelope: dict, local_path: Path, sidecars: dict[str, str],
+) -> dict:
+    """A portal edit that only touched the playbook definition leaves the
+    envelope body identical (the definition lives in the sidecar), so
+    ``_preserve_local_version`` sees no change. Bump the patch version
+    when a sidecar's new text differs from the file on disk — once, and
+    only if the envelope body didn't already earn a bump."""
+    if not sidecars:
+        return envelope
+    try:
+        local = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+    except Exception:
+        return envelope
+    local_version = local.get("version") if isinstance(local, dict) else None
+    if not local_version or envelope.get("version") != local_version:
+        return envelope  # new asset, or body change already bumped it
+    for name, text in sidecars.items():
+        existing = local_path.parent / name
+        if not existing.exists() or existing.read_text(encoding="utf-8") != text:
+            envelope["version"] = _bump_patch(local_version)
+            break
+    return envelope
+
+
+def split_sidecar_files(envelope: dict) -> tuple[dict, dict[str, str]]:
+    """On-disk form of ``envelope`` plus any sidecar files to write
+    alongside it (``{file name: text}``). Only playbooks have sidecars
+    today; every other kind passes through unchanged."""
+    if envelope.get("asset") == Asset.SENTINEL_PLAYBOOK.value:
+        from contentops.handlers.sentinel_playbook_models import split_sidecars
+        return split_sidecars(envelope)
+    return envelope, {}
 
 
 def disambiguate_envelope_ids(envelopes: list[dict]) -> list[dict]:

@@ -190,15 +190,17 @@ Every registered command, the Click callback that implements it (the Function), 
 
 ## Asset taxonomy
 
-Total: **6** asset kinds (six-kind detection-engineering taxonomy).
+Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 | Asset kind | Handler module | KQL field declared |
 |---|---|---|
 | `defender_custom_detection` | `contentops.handlers.defender_custom_detection` | yes |
 | `sentinel_analytic` | `contentops.handlers.sentinel_analytic` | yes |
+| `sentinel_automation_rule` | `contentops.handlers.sentinel_automation_rule` | no |
 | `sentinel_data_connector` | `contentops.handlers.sentinel_data_connector` | no |
 | `sentinel_hunting` | `contentops.handlers.sentinel_hunting` | yes |
 | `sentinel_parser` | `contentops.handlers.sentinel_parser` | yes |
+| `sentinel_playbook` | `contentops.handlers.sentinel_playbook` | no |
 | `sentinel_watchlist` | `contentops.handlers.sentinel_watchlist` | no |
 
 ## Lint rules
@@ -237,6 +239,12 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 | `PAYLOAD004` | warning | `contentops.lint.payload` |
 | `PAYLOAD005` | warning | `contentops.lint.payload` |
 | `PAYLOAD006` | warning | `contentops.lint.payload` |
+| `PAYLOAD007` | error | `contentops.lint.support_assets` |
+| `PAYLOAD008` | warning | `contentops.lint.support_assets` |
+| `PAYLOAD009` | warning | `contentops.lint.support_assets` |
+| `PAYLOAD010` | warning | `contentops.lint.support_assets` |
+| `PAYLOAD012` | warning | `contentops.lint.support_assets` |
+| `PAYLOAD014` | error | `contentops.lint.support_assets` |
 
 ## Handlers
 
@@ -244,9 +252,11 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 |---|---|---|
 | `contentops.handlers.defender_custom_detection` | `contentops/handlers/defender_custom_detection.py` | `defender_custom_detection` |
 | `contentops.handlers.sentinel_analytic` | `contentops/handlers/sentinel_analytic.py` | `sentinel_analytic` |
+| `contentops.handlers.sentinel_automation_rule` | `contentops/handlers/sentinel_automation_rule.py` | `sentinel_automation_rule` |
 | `contentops.handlers.sentinel_data_connector` | `contentops/handlers/sentinel_data_connector.py` | `sentinel_data_connector` |
 | `contentops.handlers.sentinel_hunting` | `contentops/handlers/sentinel_hunting.py` | `sentinel_hunting` |
 | `contentops.handlers.sentinel_parser` | `contentops/handlers/sentinel_parser.py` | `sentinel_parser` |
+| `contentops.handlers.sentinel_playbook` | `contentops/handlers/sentinel_playbook.py` | `sentinel_playbook` |
 | `contentops.handlers.sentinel_watchlist` | `contentops/handlers/sentinel_watchlist.py` | `sentinel_watchlist` |
 
 ## GitHub Actions workflows
@@ -291,7 +301,7 @@ Total: **6** asset kinds (six-kind detection-engineering taxonomy).
 
 ## Tests
 
-Unit: **186** files, **2151** test functions. Integration: **11** files, **15** test functions.
+Unit: **195** files, **2261** test functions. Integration: **11** files, **15** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -316,6 +326,7 @@ Unit: **186** files, **2151** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_apply_verify_watchlist.py` | 13 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
 | `tests/v2/test_arm_name_matching.py` | 11 |
+| `tests/v2/test_asset_modes.py` | 13 |
 | `tests/v2/test_attack_matrix_data.py` | 10 |
 | `tests/v2/test_audit.py` | 13 |
 | `tests/v2/test_audit_chain.py` | 23 |
@@ -324,6 +335,9 @@ Unit: **186** files, **2151** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_audit_timestamp_monotonicity.py` | 18 |
 | `tests/v2/test_auth.py` | 6 |
 | `tests/v2/test_auth_credential_chain.py` | 12 |
+| `tests/v2/test_automation_playbook_drift.py` | 3 |
+| `tests/v2/test_automation_rule_handler.py` | 20 |
+| `tests/v2/test_automation_rule_models.py` | 17 |
 | `tests/v2/test_bootstrap_cli.py` | 3 |
 | `tests/v2/test_catalog.py` | 21 |
 | `tests/v2/test_check_references_diff.py` | 5 |
@@ -342,7 +356,7 @@ Unit: **186** files, **2151** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_config_envs.py` | 7 |
 | `tests/v2/test_config_reports.py` | 7 |
 | `tests/v2/test_conformance_auth_env.py` | 3 |
-| `tests/v2/test_conformance_layers.py` | 50 |
+| `tests/v2/test_conformance_layers.py` | 52 |
 | `tests/v2/test_coverage.py` | 25 |
 | `tests/v2/test_coverage_corpus.py` | 11 |
 | `tests/v2/test_coverage_d3fend.py` | 12 |
@@ -423,6 +437,9 @@ Unit: **186** files, **2151** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_navigator_render.py` | 10 |
 | `tests/v2/test_optional_engines.py` | 14 |
 | `tests/v2/test_plan_against_tenant.py` | 4 |
+| `tests/v2/test_playbook_handler.py` | 18 |
+| `tests/v2/test_playbook_models.py` | 16 |
+| `tests/v2/test_playbook_sidecar.py` | 7 |
 | `tests/v2/test_portfolio.py` | 15 |
 | `tests/v2/test_portfolio_score.py` | 21 |
 | `tests/v2/test_portfolio_telemetry.py` | 6 |
@@ -461,6 +478,8 @@ Unit: **186** files, **2151** test functions. Integration: **11** files, **15** 
 | `tests/v2/test_status_state_env.py` | 8 |
 | `tests/v2/test_stdio_utf8.py` | 4 |
 | `tests/v2/test_strict_allowlist.py` | 14 |
+| `tests/v2/test_support_asset_lint.py` | 8 |
+| `tests/v2/test_support_asset_metadata.py` | 6 |
 | `tests/v2/test_tenant_policy.py` | 6 |
 | `tests/v2/test_token_auth.py` | 6 |
 | `tests/v2/test_tuning.py` | 13 |

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -46,7 +47,50 @@ def discover_assets(base: Path) -> list[Path]:
 def load_asset(path: Path) -> LoadedAsset:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     envelope, payload = parse_envelope(raw)
+    if envelope.asset is Asset.SENTINEL_PLAYBOOK:
+        _inline_playbook_sidecar(path, payload)
     return LoadedAsset(path=path, envelope=envelope, payload=payload, raw=raw)
+
+
+def _inline_playbook_sidecar(path: Path, payload: dict) -> None:
+    """Replace ``payload.definitionFile`` with the sidecar's JSON as
+    ``payload.definition`` (in place, so ``raw["payload"]`` sees it too).
+
+    The on-disk form keeps the Logic App definition in
+    ``<id>.workflow.json`` next to the envelope (a designer export,
+    verbatim); every handler and comparison works on the inlined form.
+    ``split_sidecars`` in the playbook models is the inverse, used by
+    the writers. A sidecar name must be a bare file name so an envelope
+    can never read outside its own directory.
+    """
+    if not isinstance(payload, dict):
+        return
+    sidecar = payload.get("definitionFile")
+    if not sidecar:
+        return
+    if "definition" in payload:
+        raise ValueError(
+            f"{path}: payload has both `definition` and `definitionFile`; keep one"
+        )
+    name = str(sidecar)
+    if "/" in name or "\\" in name or name in (".", "..") or not name.endswith(".workflow.json"):
+        raise ValueError(
+            f"{path}: definitionFile {name!r} must be a bare file name ending in "
+            ".workflow.json in the same directory"
+        )
+    sidecar_path = path.parent / name
+    if not sidecar_path.is_file():
+        raise FileNotFoundError(
+            f"{path}: definitionFile {name!r} not found at {sidecar_path}"
+        )
+    try:
+        definition = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{sidecar_path}: not valid JSON ({exc})") from exc
+    if not isinstance(definition, dict):
+        raise ValueError(f"{sidecar_path}: expected a JSON object (the workflow definition)")
+    payload.pop("definitionFile", None)
+    payload["definition"] = definition
 
 
 def iter_loaded_assets(

@@ -1,0 +1,59 @@
+id: ${id}
+version: 0.1.0
+asset: ${asset}
+status: experimental
+# Authoring lifecycle stage (T.2). See contentops/core/lifecycle_stage.py.
+lifecycleStage: concept
+legacy: false
+metadata:
+  owner: detection-engineering@example.com
+  runbookUrl: https://example.com/runbooks/${id}
+  # Support-asset metadata: automation rules carry no severity / tactics /
+  # expected alert volume. META001 (lastValidatedAt), META002
+  # (description) and META008 still apply.
+  description: |
+    TODO (META002): what this automation rule does and why it exists
+    (e.g. which analytics rule it scopes, who approved the suppression).
+  references: []
+payload:
+  displayName: "${display_name}"
+  # Execution order among rules with the same trigger (1..1000). Assigned
+  # by you, not by Sentinel; PAYLOAD009 warns on duplicates.
+  order: 100
+  triggeringLogic:
+    isEnabled: true
+    triggersOn: Incidents        # Incidents | Alerts
+    triggersWhen: Created        # Created | Updated
+    # Optional expiry. Required by policy for suppression (close) rules;
+    # ARM rejects expired rules and apply skips them.
+    # expirationTimeUtc: "2026-12-31T23:59:59Z"
+    conditions:
+      # Scope the rule. Prefer scoping to specific analytics rules by
+      # their envelope id (the pipeline resolves it to the ARM resource
+      # id at apply time; PAYLOAD007 errors when the id does not exist):
+      #   - conditionType: Property
+      #     conditionProperties:
+      #       propertyName: IncidentRelatedAnalyticRuleIds
+      #       operator: Contains
+      #       propertyValues: ["analytic:<sentinel_analytic envelope id>"]
+      - conditionType: Property
+        conditionProperties:
+          propertyName: IncidentSeverity
+          operator: Equals
+          propertyValues: ["Informational"]
+  actions:
+    - order: 1
+      actionType: ModifyProperties
+      actionConfiguration:
+        # Example: add a tag. For a suppression rule use
+        #   status: Closed
+        #   classification: BenignPositive
+        #   classificationReason: SuspiciousButExpected
+        #   classificationComment: "why, and the change / ticket reference"
+        labels:
+          - labelName: "${id}"
+    # To run a playbook declared under detections/sentinel_playbook/:
+    # - order: 2
+    #   actionType: RunPlaybook
+    #   actionConfiguration:
+    #     playbook: REPLACE-WITH-SENTINEL-PLAYBOOK-ENVELOPE-ID

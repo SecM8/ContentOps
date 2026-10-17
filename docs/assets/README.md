@@ -6,8 +6,9 @@ limitations. This is the spec the handler enforces — new
 contributors should read the asset doc before touching the
 corresponding handler.
 
-The canonical, code-derived view of the asset taxonomy (six kinds
-today, RBAC + hash projection per row) is
+The canonical, code-derived view of the asset taxonomy (eight kinds
+today: six detection kinds plus two support kinds, RBAC + hash
+projection per row) is
 [`../reference/asset-coverage.md`](../reference/asset-coverage.md).
 This index points at the longer-form per-asset pages.
 
@@ -20,6 +21,15 @@ This index points at the longer-form per-asset pages.
 | `sentinel_watchlist`      | [sentinel_watchlist_sas.md](sentinel_watchlist_sas.md)                                           | `contentops.handlers.sentinel_watchlist`        |
 | `sentinel_parser`         | [sentinel_extras.md](sentinel_extras.md)                                                         | `contentops.handlers.sentinel_parser`           |
 | `sentinel_data_connector` | see [`../reference/asset-coverage.md`](../reference/asset-coverage.md) (no dedicated page yet)   | `contentops.handlers.sentinel_data_connector`   |
+
+## Sentinel — support kinds (write-capable, drift-capable, default `monitor`)
+
+| Asset kind                 | Per-asset doc                                              | Handler module                                   |
+|----------------------------|------------------------------------------------------------|--------------------------------------------------|
+| `sentinel_automation_rule` | [sentinel_automation_rules.md](sentinel_automation_rules.md) | `contentops.handlers.sentinel_automation_rule`   |
+| `sentinel_playbook`        | [sentinel_playbooks.md](sentinel_playbooks.md)             | `contentops.handlers.sentinel_playbook`          |
+
+Upgrade / opt-in guide: [`../operations/upgrading-to-support-assets.md`](../operations/upgrading-to-support-assets.md).
 
 ## Defender — write-capable, drift-capable
 
@@ -50,6 +60,9 @@ automation, playbooks, hunts, content packages, TI indicators,
 workspace-manager kinds, source control, incidents, settings,
 onboarding, metadata, summary rules) plus the deferred Defender
 Graph extensions (tuning rules, alert suppression, saved queries).
+Automation rules and playbooks were later **re-introduced** as the
+support kinds `sentinel_automation_rule` and `sentinel_playbook`
+(rebuilt on the current handler contract, not restored verbatim).
 See the
 [Historical kinds section in `asset-coverage.md`](../reference/asset-coverage.md#historical-kinds-removed-in-pr-122--129)
 for the full list, and `git log --all --diff-filter=D -- contentops/handlers/`
