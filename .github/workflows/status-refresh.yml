@@ -103,10 +103,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -m contentops status all --scope all
 
+      - name: Skip landing on a non-main ref
+        # Both landing modes write generated output to main. A dispatch
+        # from any other ref (e.g. a feature branch) must not fast-forward
+        # main to that branch's content, so landing is skipped there.
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::notice::Ref ${{ github.ref }} is not main — status pages regenerated but not landed."
+          echo "## Status refresh -- not landed (ref is not main)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Commit and push to main (direct-push mode)
         # Default landing mode. Skipped when CONTENTOPS_LAND_VIA_PR is
-        # 'true' (the rolling-PR steps below run instead).
-        if: vars.CONTENTOPS_LAND_VIA_PR != 'true'
+        # 'true' (the rolling-PR steps below run instead) and on any
+        # ref other than main.
+        if: github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR != 'true'
         run: |
           set -euo pipefail
           echo "Landing mode: direct push to main (CONTENTOPS_LAND_VIA_PR is not 'true')."
@@ -132,7 +142,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Prepare rolling PR body (PR-landing mode)
-        if: vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        if: github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
         id: meta
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -158,7 +168,7 @@ jobs:
           } > status_body.md
 
       - name: Open / update rolling PR (PR-landing mode)
-        if: vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        if: github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
         id: auto-pr
         uses: ./.github/actions/auto-pr
         with:
@@ -175,7 +185,7 @@ jobs:
           token-source: ${{ secrets.AUTO_PR_TOKEN != '' && 'AUTO_PR_TOKEN' || 'GITHUB_TOKEN' }}
 
       - name: Step summary (PR-landing mode)
-        if: vars.CONTENTOPS_LAND_VIA_PR == 'true'
+        if: github.ref == 'refs/heads/main' && vars.CONTENTOPS_LAND_VIA_PR == 'true'
         env:
           CHANGED: ${{ steps.auto-pr.outputs.changed }}
           PR_NUMBER: ${{ steps.auto-pr.outputs.pull-request-number }}

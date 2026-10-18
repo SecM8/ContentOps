@@ -336,3 +336,17 @@ def test_emergency_disable_reports_token_source() -> None:
     assert "::warning::" in report["run"] and "AUTO_PR_TOKEN" in report["run"]
     opener = steps[names.index("Open PR (manual merge required)")]
     assert opener["env"]["GH_TOKEN"] == TOKEN_EXPR
+
+
+def test_status_refresh_never_lands_from_a_non_main_ref() -> None:
+    """status-refresh runs on dispatch from any ref; both landing modes
+    push generated output to main, so each landing step must also be
+    gated on the ref being main. Found 2026-10-18 when a dispatch from a
+    feature branch tried `git push origin HEAD:main` (only a non-fast-
+    forward reject stopped it)."""
+    steps = _steps("status-refresh.yml")
+    guard = "github.ref == 'refs/heads/main'"
+    assert guard in str(_direct_steps(steps)[0].get("if", ""))
+    assert guard in str(_pr_steps(steps)[0].get("if", ""))
+    assert any("non-main" in (s.get("name") or "") for s in steps)
+
