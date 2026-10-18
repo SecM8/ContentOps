@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Callable
 
 import click
@@ -100,6 +101,13 @@ def _slugify_defender_id(name: str) -> str:
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
     return f"defender-{slug}" if slug else "defender-unknown"
+
+
+# Post-apply verification: Graph's detectionRules read path can lag a
+# successful write by seconds. Six attempts five seconds apart bounds
+# the wait at ~25s per changed rule; unchanged rules never get here.
+_VERIFY_ATTEMPTS = 6
+_VERIFY_DELAY_S = 5.0
 
 
 class DefenderCustomDetectionHandler:
@@ -304,9 +312,16 @@ class DefenderCustomDetectionHandler:
                 record_graph_id(display_name, graph_id, name_map, self._graph_ids)
             click.echo(f"  {action.value}: {loaded.envelope.id}")
 
-        # Post-apply content-hash verification.
+        # Post-apply content-hash verification. Graph acknowledges a
+        # POST/PATCH before its read path converges (observed 2026-10-18:
+        # the verifying GET returned the pre-PATCH displayName), so a
+        # stale read is retried a bounded number of times before it is
+        # reported as a mismatch.
         remote: dict | None = None
-        if graph_id:
+        got_hash = ""
+        for attempt in range(1, _VERIFY_ATTEMPTS + 1):
+            if not graph_id:
+                break
             try:
                 remote = client.get_rule(graph_id)
             except Exception as exc:  # pragma: no cover — defensive
@@ -316,6 +331,22 @@ class DefenderCustomDetectionHandler:
                     action=action, status="success", detail=err,
                     verified=False, error=err,
                 )
+            if remote is not None:
+                # Strip the same server-managed fields we strip at collect
+                # time so the post-apply hash sees the same canonical body
+                # the pre-PUT hash was computed over. Without this, every
+                # Defender rule reports MISMATCH because
+                # schedule.nextRunDateTime moves between PUT and the
+                # verifying GET. See `_strip_server_fields`.
+                got_hash = compute_content_hash(_strip_server_fields(remote), hashed_fields)
+                if got_hash == sent_hash:
+                    break
+            if attempt < _VERIFY_ATTEMPTS:
+                logger.info(
+                    "Defender post-apply read for %s not yet converged (attempt %d/%d); retrying in %ss",
+                    loaded.envelope.id, attempt, _VERIFY_ATTEMPTS, _VERIFY_DELAY_S,
+                )
+                time.sleep(_VERIFY_DELAY_S)
         if remote is None:
             err = "post-apply GET returned 404"
             return ActionResult(
@@ -323,13 +354,6 @@ class DefenderCustomDetectionHandler:
                 action=action, status="success", detail=err,
                 verified=False, error=err,
             )
-        # Strip the same server-managed fields we strip at collect time
-        # so the post-apply hash sees the same canonical body the pre-PUT
-        # hash was computed over. Without this, every Defender rule
-        # reports MISMATCH because schedule.nextRunDateTime moves between
-        # PUT and the verifying GET. See `_strip_server_fields` for the
-        # rationale.
-        got_hash = compute_content_hash(_strip_server_fields(remote), hashed_fields)
         if got_hash != sent_hash:
             err = hash_mismatch_error(sent_hash, got_hash)
             return ActionResult(

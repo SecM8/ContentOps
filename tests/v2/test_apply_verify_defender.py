@@ -21,12 +21,14 @@ from contentops.core.handler import LoadedAsset
 from contentops.core.result import PlanAction
 from contentops.defender import client as defender_client_module
 from contentops.defender.client import BASE_URL, DefenderClient
+from contentops.handlers import defender_custom_detection as handler_module
 from contentops.handlers.defender_custom_detection import DefenderCustomDetectionHandler
 
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
     monkeypatch.setattr(defender_client_module.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(handler_module.time, "sleep", lambda *_: None)
 
 
 def _client_with(transport: httpx.MockTransport) -> DefenderClient:
@@ -235,6 +237,59 @@ def test_apply_hash_mismatch() -> None:
 
     assert result.verified is False
     assert "post-apply hash mismatch" in (result.error or "")
+
+
+def test_apply_retries_stale_post_apply_read_until_converged(monkeypatch) -> None:
+    """Graph can return the pre-write body for a few seconds after a 2xx
+    POST/PATCH. The verifier retries the GET and reports verified once
+    the read converges, instead of a false hash mismatch."""
+    gets = {"n": 0}
+    sleeps: list[float] = []
+    monkeypatch.setattr(handler_module.time, "sleep", lambda s: sleeps.append(s))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/detectionRules"):
+            return httpx.Response(200, json=_list_response())
+        if request.method == "POST" and path.endswith("/detectionRules"):
+            return httpx.Response(201, json=_full_remote())
+        if request.method == "GET" and "/detectionRules/graph-1" in path:
+            gets["n"] += 1
+            if gets["n"] < 3:
+                return httpx.Response(200, json=_full_remote(query="union *"))  # stale
+            return httpx.Response(200, json=_full_remote())
+        return httpx.Response(404)
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = DefenderCustomDetectionHandler(lambda: client)
+    result = h.apply(_loaded())
+
+    assert result.verified is True, result.error
+    assert gets["n"] == 3
+    assert sleeps == [handler_module._VERIFY_DELAY_S] * 2
+
+
+def test_apply_retries_post_apply_404_then_gives_up() -> None:
+    gets = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/detectionRules"):
+            return httpx.Response(200, json=_list_response())
+        if request.method == "POST" and path.endswith("/detectionRules"):
+            return httpx.Response(201, json=_full_remote())
+        if request.method == "GET" and "/detectionRules/graph-1" in path:
+            gets["n"] += 1
+            return httpx.Response(404)
+        return httpx.Response(404)
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = DefenderCustomDetectionHandler(lambda: client)
+    result = h.apply(_loaded())
+
+    assert result.verified is False
+    assert "404" in (result.error or "")
+    assert gets["n"] == handler_module._VERIFY_ATTEMPTS
 
 
 def test_apply_noop_when_unchanged() -> None:

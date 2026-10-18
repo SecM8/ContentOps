@@ -13,22 +13,21 @@ import time
 
 from tests.integration.conftest import RESOURCE_PREFIX_UNDERSCORE
 
-# Graph acknowledges DELETE with 2xx before the read path catches up; a
-# GET issued straight after can still return the rule (observed
-# 2026-10-18: ``status: disabled`` for ~seconds). Poll before asserting.
-_DELETE_VISIBLE_TIMEOUT_S = 120
-_DELETE_POLL_INTERVAL_S = 5
+# Graph acknowledges PATCH / DELETE with 2xx before its read path catches
+# up; a GET issued straight after can return the pre-write body or the
+# deleted rule (observed 2026-10-18, seconds-scale). Poll before asserting.
+_READ_CONVERGE_TIMEOUT_S = 120
+_READ_POLL_INTERVAL_S = 5
 
 
-def _wait_until_gone(defender_client, graph_id: str) -> bool:
-    """True once GET returns 404 for ``graph_id`` within the timeout."""
-    deadline = time.monotonic() + _DELETE_VISIBLE_TIMEOUT_S
-    while True:
-        if defender_client.get_rule(graph_id) is None:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(_DELETE_POLL_INTERVAL_S)
+def _wait_for(check, *, what: str) -> None:
+    """Poll ``check()`` until truthy; fail with ``what`` on timeout."""
+    deadline = time.monotonic() + _READ_CONVERGE_TIMEOUT_S
+    while not check():
+        assert time.monotonic() < deadline, (
+            f"{what} not visible {_READ_CONVERGE_TIMEOUT_S}s after the write"
+        )
+        time.sleep(_READ_POLL_INTERVAL_S)
 
 
 def _display_name(integration_id: str) -> str:
@@ -89,7 +88,10 @@ def test_defender_custom_detection_full_crud(defender_client, integration_id, cr
     # UPDATE
     update_resp = defender_client.update_rule(graph_id, {"displayName": f"{name} v2"})
     assert update_resp.status_code in (200, 204), update_resp.text
-    assert defender_client.get_rule(graph_id)["displayName"].endswith("v2")
+    _wait_for(
+        lambda: (defender_client.get_rule(graph_id) or {}).get("displayName", "").endswith("v2"),
+        what="updated displayName",
+    )
 
     # LIST contains it
     listed_ids = {r["id"] for r in defender_client.list_rules()}
@@ -98,8 +100,6 @@ def test_defender_custom_detection_full_crud(defender_client, integration_id, cr
     # DELETE
     delete_resp = defender_client.delete_rule(graph_id)
     assert delete_resp.status_code in (200, 204), delete_resp.text
-    assert _wait_until_gone(defender_client, graph_id), (
-        f"rule {graph_id} still readable {_DELETE_VISIBLE_TIMEOUT_S}s after DELETE"
-    )
+    _wait_for(lambda: defender_client.get_rule(graph_id) is None, what="deletion")
 
     created_defender_rules.remove(graph_id)
