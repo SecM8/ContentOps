@@ -156,7 +156,22 @@ jobs:
           git commit \
             -m "chore(report): refresh detection inventory snapshot" \
             -s
-          git push origin HEAD:main
+          # Another landing workflow (coverage, report, status-refresh) may
+          # have pushed to main since checkout -- the push trigger starts
+          # them together. Rebase the bot commit onto the current tip and
+          # retry so a lost race never fails the run (seen 2026-10-18:
+          # report lost to coverage with "cannot lock ref 'refs/heads/main'").
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            if git push origin HEAD:main; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::push to main failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
           echo "## Detection inventory report -- refreshed snapshot pushed to main (landing mode: direct push)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open / update rolling PR with refreshed report (main only, PR-landing mode)

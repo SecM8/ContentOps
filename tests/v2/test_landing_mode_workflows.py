@@ -350,3 +350,16 @@ def test_status_refresh_never_lands_from_a_non_main_ref() -> None:
     assert guard in str(_pr_steps(steps)[0].get("if", ""))
     assert any("non-main" in (s.get("name") or "") for s in steps)
 
+
+def test_direct_push_rebases_and_retries_on_a_lost_race(landing) -> None:
+    """coverage and report both start on the same push to main and both
+    land with a direct push; status-refresh lands on a schedule. Whichever
+    pushes second loses with "cannot lock ref 'refs/heads/main'" unless it
+    rebases onto the new tip first (report lost to coverage, 2026-10-18).
+    Every direct-push step must pull --rebase and retry around its push."""
+    name, _ = landing
+    run = _direct_steps(_steps(name))[0]["run"]
+    rebase = run.index("git pull --rebase origin main")
+    assert rebase < run.index(DIRECT_PUSH), f"{name}: rebase must precede the push"
+    assert "for attempt in" in run, f"{name}: push must be retried"
+

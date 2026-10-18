@@ -130,7 +130,22 @@ jobs:
           fi
           today=$(date -u +%Y-%m-%d)
           git commit -s -m "chore(status): refresh ${today}"
-          git push origin HEAD:main
+          # Another landing workflow (coverage, report, status-refresh) may
+          # have pushed to main since checkout -- the push trigger starts
+          # them together. Rebase the bot commit onto the current tip and
+          # retry so a lost race never fails the run (seen 2026-10-18:
+          # report lost to coverage with "cannot lock ref 'refs/heads/main'").
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            if git push origin HEAD:main; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::push to main failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
           {
             echo "## Status refresh -- pushed to main (landing mode: direct push)"
             echo ""

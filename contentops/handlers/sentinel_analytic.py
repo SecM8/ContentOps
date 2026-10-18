@@ -92,10 +92,14 @@ _MLBA_BODY_ALLOWLIST = (
 )
 # ThreatIntelligence is NOT in this list: ARM *requires* displayName for
 # TI rules ("Required property 'displayName' not found"), so the apply
-# path leaves TI bodies as collected. Same goes for Scheduled / NRT /
-# MicrosoftSecurityIncidentCreation bound to a template — they only
-# need displayName stripped (template owns it), and the existing
-# alertRuleTemplateName-driven branch handles that.
+# path leaves TI bodies as collected. The same holds for Scheduled /
+# NRT / MicrosoftSecurityIncidentCreation rules bound to a Content Hub
+# template: ``displayName`` is a required property of those kinds
+# whether or not ``alertRuleTemplateName`` is set. An earlier version
+# stripped it for template-bound rules ("template owns it"); on
+# 2026-10-18 a fork deploy that renamed 68 template-bound Scheduled
+# rules got the same 400 for every one of them, so the body is now
+# sent as authored.
 
 
 # Server-managed fields stripped before round-trip diff so the
@@ -130,23 +134,21 @@ def _strip_server_fields(remote: dict) -> dict:
     return cleaned
 
 
-# Kinds whose body keeps everything except ``displayName`` when bound
-# to a Content Hub template (apply strips displayName; the template
-# owns it).
+# Kinds that may carry a Content Hub template link
+# (``alertRuleTemplateName``) while keeping their full operator-authored
+# body, ``displayName`` included.
 _TEMPLATE_BINDABLE_KINDS = ("Scheduled", "NRT", "MicrosoftSecurityIncidentCreation")
 
 
 def _template_bound_projection(fields: list[str]) -> list[str]:
-    """Return ``fields`` minus ``displayName``, plus the template link.
+    """Return ``fields`` plus the template link.
 
-    Apply strips ``properties.displayName`` from template-bound bodies,
-    so the sent hash would always read it as None while the remote GET
-    returns the template's displayName -- a guaranteed verify mismatch.
-    Hashing the template name instead keeps the projection stable on
-    both sides.
+    The body is sent as authored (``displayName`` is required by ARM for
+    these kinds even when template-bound), so the standard projection
+    applies; the template link is added so a re-bind to another
+    template is caught by the post-apply verify.
     """
-    projected = [f for f in fields if f != "properties.displayName"]
-    return ["properties.alertRuleTemplateName", *projected]
+    return ["properties.alertRuleTemplateName", *fields]
 
 
 def _hashed_fields_for_kind(kind: str, *, template_bound: bool = False) -> list[str]:
@@ -312,14 +314,9 @@ class SentinelAnalyticHandler:
                 if k in _MLBA_BODY_ALLOWLIST
             }
             body["properties"] = properties
-        elif kind_marker == "ThreatIntelligence":
-            # ARM REQUIRES displayName for TI rules. Leave the body intact.
-            pass
-        elif properties.get("alertRuleTemplateName") and "displayName" in properties:
-            # Template-bound Scheduled / NRT / MSI — template owns
-            # displayName, but the rest of the body stays.
-            properties.pop("displayName", None)
-            body["properties"] = properties
+        # ThreatIntelligence and template-bound Scheduled / NRT / MSI
+        # rules are sent as authored: ARM requires displayName for all
+        # of them ("Required property 'displayName' not found").
 
         if loaded.envelope.status == "deprecated":
             body["properties"]["enabled"] = False

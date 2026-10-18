@@ -464,11 +464,13 @@ def test_threat_intelligence_apply_preserves_displayname() -> None:
     assert put_properties["alertRuleTemplateName"].startswith("0dd422ee")
 
 
-def test_scheduled_with_template_binding_strips_displayname() -> None:
-    """A Scheduled-kind rule that carries alertRuleTemplateName is still
-    template-bound — ARM's displayName-read-only rule applies regardless
-    of kind. This is the case that hit `aa-azure-vm-run-command-...` on
-    2026-05-15."""
+def test_scheduled_with_template_binding_keeps_displayname() -> None:
+    """A Scheduled-kind rule that carries alertRuleTemplateName must still
+    send ``displayName``: ARM lists it as required for Scheduled / NRT /
+    MicrosoftSecurityIncidentCreation whether or not the rule is bound
+    to a template. The earlier strip produced "Required property
+    'displayName' not found in JSON" for all 68 template-bound rules in
+    a 2026-10-18 deploy."""
     payload = {
         "kind": "Scheduled",
         "displayName": "Template-bound Scheduled rule",
@@ -489,11 +491,11 @@ def test_scheduled_with_template_binding_strips_displayname() -> None:
     assert result.status == "success", f"expected success, got {result.status} / {result.detail}"
     assert len(captured) == 1
     put_properties = captured[0].get("properties") or {}
-    assert "displayName" not in put_properties, (
-        f"Scheduled+template PUT must not include displayName; got "
+    assert put_properties.get("displayName") == "Template-bound Scheduled rule", (
+        f"Scheduled+template PUT must send displayName as authored; got "
         f"properties={list(put_properties.keys())}"
     )
-    # query / severity etc. stay — only the template-managed field is stripped.
+    # The rest of the body is sent as authored too.
     assert put_properties.get("query") == "SecurityEvent | take 1"
     assert put_properties.get("alertRuleTemplateName") == "scheduled-template-guid"
 
@@ -501,10 +503,9 @@ def test_scheduled_with_template_binding_strips_displayname() -> None:
 def test_scheduled_with_template_binding_verifies_against_template_displayname() -> None:
     """Post-apply verify for a template-bound Scheduled rule.
 
-    Apply strips displayName from the PUT body, but the remote GET
-    returns the template's displayName. The hash projection must not
-    count that as a mismatch -- before the fix every template-bound
-    Scheduled / NRT / MSI rule reported ``verified=False``.
+    The PUT sends displayName as authored and the remote GET echoes it
+    (plus server fields); the template-bound projection must hash the
+    same on both sides so the rule reports ``verified=True``.
     """
     import json as _json
 
@@ -526,7 +527,7 @@ def test_scheduled_with_template_binding_verifies_against_template_displayname()
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "PUT":
             body = _json.loads(request.content.decode())
-            # ARM fills displayName back in from the template.
+            # ARM stores the displayName that was sent.
             stored.update({
                 "name": "rule-1",
                 "kind": body.get("kind"),
