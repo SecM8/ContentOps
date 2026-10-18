@@ -9,8 +9,26 @@ CustomDetection.ReadWrite.All Graph application permission.
 
 from __future__ import annotations
 
+import time
 
 from tests.integration.conftest import RESOURCE_PREFIX_UNDERSCORE
+
+# Graph acknowledges DELETE with 2xx before the read path catches up; a
+# GET issued straight after can still return the rule (observed
+# 2026-10-18: ``status: disabled`` for ~seconds). Poll before asserting.
+_DELETE_VISIBLE_TIMEOUT_S = 120
+_DELETE_POLL_INTERVAL_S = 5
+
+
+def _wait_until_gone(defender_client, graph_id: str) -> bool:
+    """True once GET returns 404 for ``graph_id`` within the timeout."""
+    deadline = time.monotonic() + _DELETE_VISIBLE_TIMEOUT_S
+    while True:
+        if defender_client.get_rule(graph_id) is None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_DELETE_POLL_INTERVAL_S)
 
 
 def _display_name(integration_id: str) -> str:
@@ -80,6 +98,8 @@ def test_defender_custom_detection_full_crud(defender_client, integration_id, cr
     # DELETE
     delete_resp = defender_client.delete_rule(graph_id)
     assert delete_resp.status_code in (200, 204), delete_resp.text
-    assert defender_client.get_rule(graph_id) is None
+    assert _wait_until_gone(defender_client, graph_id), (
+        f"rule {graph_id} still readable {_DELETE_VISIBLE_TIMEOUT_S}s after DELETE"
+    )
 
     created_defender_rules.remove(graph_id)
