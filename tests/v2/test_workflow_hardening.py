@@ -144,3 +144,16 @@ def test_drift_closes_superseded_prs_by_exact_head_branch() -> None:
     assert '--search "head:' not in text
     assert 'select(.headRefName | startswith("drift/auto-"))' in text
 
+
+def test_deploy_fetches_an_operator_supplied_changed_since_ref() -> None:
+    """deploy.yml checks out with fetch-depth 2, so a ``changed_since``
+    dispatch input older than that failed with "unknown revision" before
+    the diff ran (2026-10-18). The apply step must fetch the ref (and
+    fall back to unshallowing) before passing it to ``--changed-since``."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    fetch = text.index('git fetch --no-tags --depth=1 origin "$INPUT_CHANGED_SINCE"')
+    assert "--unshallow" in text[fetch:fetch + 400]
+    assert fetch < text.index('ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )')
+

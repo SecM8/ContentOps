@@ -206,6 +206,13 @@ jobs:
           fi
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             if [ -n "$INPUT_CHANGED_SINCE" ]; then
+              # The checkout is shallow (fetch-depth 2), so an operator-
+              # supplied ref is normally not in the clone and the diff
+              # fails with "unknown revision". Fetch the ref (full SHA,
+              # branch or tag) directly; an abbreviated SHA cannot be
+              # fetched by name, so fall back to unshallowing the clone.
+              git fetch --no-tags --depth=1 origin "$INPUT_CHANGED_SINCE" 2>/dev/null \
+                || git fetch --no-tags --unshallow origin
               ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )
             fi
             if [ "$INPUT_DRY_RUN" = "true" ]; then
