@@ -233,9 +233,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Exact head-branch filter. A `--search "head:drift/auto-"` query
-          # is fuzzy on GitHub's side and once closed an operator's own
-          # draft PR when drift was dispatched from that PR's branch.
+          # Exact head-branch filter. A fuzzy `gh pr list --search` on the
+          # head qualifier once closed an operator's own draft PR when
+          # drift was dispatched from that PR's branch.
           mapfile -t PRS < <(gh pr list \
             --state open --limit 100 \
             --json number,headRefName \
