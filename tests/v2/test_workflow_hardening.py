@@ -179,4 +179,7 @@ def test_retry_failed_fetches_the_deploy_audit_artefact() -> None:
     fetch = next(s for s in steps if s.get("name") == "Fetch the deploy audit trail")
     assert 'gh run download "$RUN_ID" -n "audit-$RUN_ID" -D audit' in fetch["run"]
     assert "$INPUT_DEPLOY_RUN_ID" in fetch["run"] and "inputs.deploy_run_id" in str(fetch.get("env"))
+    # Default selection must skip completed deploy runs without an audit
+    # artefact (deploy job skipped on a push that changed no detection).
+    assert 'actions/runs/$id/artifacts' in fetch["run"] and 'grep -qx "audit-$id"' in fetch["run"]
 

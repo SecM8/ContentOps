@@ -126,10 +126,19 @@ jobs:
           fi
           RUN_ID="$INPUT_DEPLOY_RUN_ID"
           if [ -z "$RUN_ID" ]; then
-            RUN_ID=$(gh run list --workflow deploy.yml --branch "$REF_NAME" --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            # Newest completed deploy run that actually uploaded an audit
+            # artefact. A push whose deploy job was skipped (no detection
+            # changed) completes without one and must not shadow the last
+            # real deploy.
+            for id in $(gh run list --workflow deploy.yml --branch "$REF_NAME" --status completed --limit 10 --json databaseId --jq '.[].databaseId'); do
+              if gh api "repos/{owner}/{repo}/actions/runs/$id/artifacts" --jq '.artifacts[].name' | grep -qx "audit-$id"; then
+                RUN_ID="$id"
+                break
+              fi
+            done
           fi
           if [ -z "$RUN_ID" ]; then
-            echo "::notice::No completed deploy run found on $REF_NAME; nothing to retry."
+            echo "::notice::No completed deploy run with an audit artefact found on $REF_NAME; nothing to retry."
             exit 0
           fi
           if gh run download "$RUN_ID" -n "audit-$RUN_ID" -D audit; then
