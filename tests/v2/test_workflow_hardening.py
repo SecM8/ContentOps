@@ -157,3 +157,26 @@ def test_deploy_fetches_an_operator_supplied_changed_since_ref() -> None:
     assert "--unshallow" in text[fetch:fetch + 400]
     assert fetch < text.index('ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )')
 
+
+def test_retry_failed_fetches_the_deploy_audit_artefact() -> None:
+    """The audit trail is never committed (deploy.yml uploads it as the
+    ``audit-<run id>`` artefact), so retry-failed on a fresh checkout saw
+    no audit/ and always answered "nothing to retry" (2026-10-18). The
+    workflow must download the deploy audit before running the retry,
+    with ``actions: read`` and an optional ``deploy_run_id`` input."""
+    from pathlib import Path
+
+    import yaml
+
+    path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "retry-failed.yml"
+    wf = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert wf["permissions"].get("actions") == "read"
+    inputs = wf.get("on", wf.get(True))["workflow_dispatch"]["inputs"]
+    assert inputs["deploy_run_id"]["default"] == ""
+    steps = wf["jobs"]["retry"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert names.index("Fetch the deploy audit trail") < names.index("Run contentops retry-failed")
+    fetch = next(s for s in steps if s.get("name") == "Fetch the deploy audit trail")
+    assert 'gh run download "$RUN_ID" -n "audit-$RUN_ID" -D audit' in fetch["run"]
+    assert "$INPUT_DEPLOY_RUN_ID" in fetch["run"] and "inputs.deploy_run_id" in str(fetch.get("env"))
+

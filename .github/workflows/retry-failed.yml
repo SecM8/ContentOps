@@ -41,12 +41,20 @@ on:
         required: true
         default: false
         type: boolean
+      deploy_run_id:
+        description: "Deploy run id whose audit trail to retry from. Empty = the newest completed deploy run on this ref."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   id-token: write
   # state sync pushes refs/heads/state/<env> after a non-dry-run retry
   # so subsequent workflows see the freshly-applied entries.
   contents: write
+  # The audit-trail fetch step lists deploy runs and downloads their
+  # audit artefact.
+  actions: read
 
 concurrency:
   group: ${{ inputs.env == 'prod' && 'deploy-prod' || format('retry-failed-{0}', inputs.env) }}
@@ -98,6 +106,37 @@ jobs:
           contentops state sync pull || {
             echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
           }
+
+      - name: Fetch the deploy audit trail
+        # The audit trail is not committed; deploy.yml uploads it as the
+        # `audit-<run id>` artefact. Without this step retry-failed sees
+        # no audit/ directory in a fresh checkout and always reports
+        # "nothing to retry" (found 2026-10-18). Download the audit of
+        # the requested deploy run, or of the newest completed deploy
+        # run on this ref. A checkout that already carries audit/ wins.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_DEPLOY_RUN_ID: ${{ inputs.deploy_run_id }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if compgen -G "audit/*.jsonl" > /dev/null; then
+            echo "audit/ already present in the checkout; using it."
+            exit 0
+          fi
+          RUN_ID="$INPUT_DEPLOY_RUN_ID"
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list --workflow deploy.yml --branch "$REF_NAME" --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          fi
+          if [ -z "$RUN_ID" ]; then
+            echo "::notice::No completed deploy run found on $REF_NAME; nothing to retry."
+            exit 0
+          fi
+          if gh run download "$RUN_ID" -n "audit-$RUN_ID" -D audit; then
+            echo "Fetched audit trail of deploy run $RUN_ID: $(ls audit)"
+          else
+            echo "::warning::Deploy run $RUN_ID has no audit-$RUN_ID artefact (expired, or it pre-dates the audit upload); nothing to retry."
+          fi
 
       - name: Run contentops retry-failed
         # Route workflow_dispatch inputs through env vars before
