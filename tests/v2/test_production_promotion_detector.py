@@ -130,6 +130,37 @@ def test_ignores_unchanged_production_rule(repo: Path) -> None:
     assert "No production promotions" in md
 
 
+def test_ignores_renamed_production_rule(repo: Path) -> None:
+    """A production envelope moved to a new file name (with its id and
+    displayName edited, as a slug clean-up does) is not a promotion: the
+    base-revision status is read from the old path."""
+    _write(repo, "detections/sentinel/old-long-name.yml",
+           ENVELOPE_TEMPLATE.format(rule_id="old-long-name", status="production"))
+    base = _commit_all(repo, "base")
+    _git(repo, "mv", "detections/sentinel/old-long-name.yml", "detections/sentinel/short.yml")
+    _write(repo, "detections/sentinel/short.yml",
+           ENVELOPE_TEMPLATE.format(rule_id="short", status="production"))
+    _commit_all(repo, "rename")
+
+    code, md = _run_detector(repo, base)
+
+    assert code == 0
+    assert "No production promotions" in md
+
+
+def test_renamed_rule_that_also_flips_to_production_is_detected(repo: Path) -> None:
+    _write(repo, "detections/sentinel/old.yml", ENVELOPE_TEMPLATE.format(rule_id="old", status="testing"))
+    base = _commit_all(repo, "base")
+    _git(repo, "mv", "detections/sentinel/old.yml", "detections/sentinel/new.yml")
+    _write(repo, "detections/sentinel/new.yml", ENVELOPE_TEMPLATE.format(rule_id="new", status="production"))
+    _commit_all(repo, "rename and promote")
+
+    code, md = _run_detector(repo, base)
+
+    assert code == 0
+    assert "new" in md and "testing" in md
+
+
 def test_ignores_promotion_to_testing(repo: Path) -> None:
     _write(repo, "detections/sentinel/r.yml", ENVELOPE_TEMPLATE.format(rule_id="r", status="development"))
     base = _commit_all(repo, "base")

@@ -64,15 +64,22 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _changed_files(base: str, head: str, cwd: Path) -> list[str]:
+def _changed_files(base: str, head: str, cwd: Path) -> list[tuple[str, str]]:
+    """Return ``(head_path, base_path)`` pairs for changed detection files.
+
+    Renames (``R<score>\told\tnew``) and copies keep their base path so the
+    base-revision status is read from where the envelope used to live; a
+    renamed production rule is not a promotion. ``-M`` makes rename
+    detection explicit instead of relying on the ``diff.renames`` default.
+    """
     result = _run_git(
-        ["diff", "--name-status", f"{base}...{head}", "--", "detections/**"],
+        ["diff", "-M", "--name-status", f"{base}...{head}", "--", "detections/**"],
         cwd=cwd,
     )
     if result.returncode != 0:
         LOG.error("git diff failed: %s", result.stderr.strip())
         return []
-    files: list[str] = []
+    files: list[tuple[str, str]] = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) < 2:
@@ -80,11 +87,12 @@ def _changed_files(base: str, head: str, cwd: Path) -> list[str]:
         status, path = parts[0], parts[-1]
         if status.startswith("D"):
             continue
+        base_path = parts[1] if status[:1] in ("R", "C") and len(parts) >= 3 else path
         if not path.startswith(DETECTION_PREFIX):
             continue
         if not path.lower().endswith(YAML_SUFFIXES):
             continue
-        files.append(path)
+        files.append((path, base_path))
     return files
 
 
@@ -172,7 +180,7 @@ def detect_promotions(
 ) -> list[Promotion]:
     today = today or date.today()
     promotions: list[Promotion] = []
-    for path in _changed_files(base, head, cwd):
+    for path, base_path in _changed_files(base, head, cwd):
         head_text = _read_at_rev(head, path, cwd)
         head_doc = _parse_envelope(head_text, path, head)
         if head_doc is None:
@@ -181,8 +189,8 @@ def detect_promotions(
         if head_status != PRODUCTION:
             continue
 
-        base_text = _read_at_rev(base, path, cwd)
-        base_doc = _parse_envelope(base_text, path, base)
+        base_text = _read_at_rev(base, base_path, cwd)
+        base_doc = _parse_envelope(base_text, base_path, base)
         base_status = (
             str(base_doc.get("status", "")).strip().lower()
             if base_doc is not None
