@@ -131,3 +131,16 @@ def test_tenant_config_is_materialised_through_the_conflict_check() -> None:
         # The old skip-if-exists shortcut let a committed file win silently.
         assert "if [ ! -f config/tenant.yml ]" not in text, path.name
         assert 'if [ ! -f "$default_cfg" ]' not in text, path.name
+
+
+def test_drift_closes_superseded_prs_by_exact_head_branch() -> None:
+    """drift.yml must select superseded auto-PRs by an exact
+    ``headRefName`` prefix, never a fuzzy ``--search "head:..."`` query
+    (which closed an operator's draft PR when drift was dispatched from
+    that PR's branch, 2026-10-18)."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "drift.yml").read_text(encoding="utf-8")
+    assert '--search "head:' not in text
+    assert 'select(.headRefName | startswith("drift/auto-"))' in text
+

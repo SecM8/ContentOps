@@ -233,10 +233,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # Exact head-branch filter. A `--search "head:drift/auto-"` query
+          # is fuzzy on GitHub's side and once closed an operator's own
+          # draft PR when drift was dispatched from that PR's branch.
           mapfile -t PRS < <(gh pr list \
-            --search "head:drift/auto- is:open" \
-            --json number \
-            --jq '.[].number' || true)
+            --state open --limit 100 \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("drift/auto-")) | .number' || true)
           for n in "${PRS[@]:-}"; do
             gh pr close "$n" --comment "Superseded by a fresher drift run." || true
           done
