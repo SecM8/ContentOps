@@ -23,6 +23,11 @@ on:
         default: integration
         type: choice
         options: [integration, production]
+      sweep-only:
+        description: "Only delete leftover zz-itest-/zz_itest_ resources from earlier runs (session sweep); creates nothing."
+        required: false
+        default: false
+        type: boolean
   pull_request:
     types: [labeled]
 
@@ -73,4 +78,13 @@ jobs:
           extra-pip-packages: pytest
 
       - name: Run integration suite
-        run: pytest -q tests/integration
+        # sweep-only: select just the sweep test; its session fixtures
+        # delete leftover test resources and nothing is created.
+        env:
+          SWEEP_ONLY: ${{ inputs.sweep-only }}
+        run: |
+          if [ "$SWEEP_ONLY" = "true" ]; then
+            pytest -q tests/integration -k sweep_leftover
+          else
+            pytest -q tests/integration
+          fi

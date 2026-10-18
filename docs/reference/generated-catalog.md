@@ -301,7 +301,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **195** files, **2268** test functions. Integration: **11** files, **15** test functions.
+Unit: **195** files, **2268** test functions. Integration: **12** files, **17** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -518,6 +518,7 @@ Unit: **195** files, **2268** test functions. Integration: **11** files, **15** 
 | `tests/integration/test_sentinel_analytic_scaffold_deploys.py` | 1 |
 | `tests/integration/test_sentinel_extras_crud.py` | 1 |
 | `tests/integration/test_sentinel_live_full_coverage.py` | 1 |
+| `tests/integration/test_sweep_leftovers.py` | 2 |
 
 ## MITRE ATT&CK coverage
 
