@@ -36,7 +36,7 @@
     {"id": "T1027", "name": "Obfuscated Files or Information", "tactics": ["DefenseEvasion"]},
     {"id": "T1070", "name": "Indicator Removal", "tactics": ["DefenseEvasion"]},
     {"id": "T1218", "name": "System Binary Proxy Execution", "tactics": ["DefenseEvasion"]},
-    {"id": "T1685", "name": "Disable or Modify Tools", "tactics": ["DefenseEvasion"]},
+    {"id": "T1562", "name": "Impair Defenses", "tactics": ["DefenseEvasion"]},
     {"id": "T1497", "name": "Virtualization/Sandbox Evasion", "tactics": ["DefenseEvasion", "Discovery"]},
     {"id": "T1112", "name": "Modify Registry", "tactics": ["DefenseEvasion", "Persistence"]},
     {"id": "T1140", "name": "Deobfuscate/Decode Files or Information", "tactics": ["DefenseEvasion"]},

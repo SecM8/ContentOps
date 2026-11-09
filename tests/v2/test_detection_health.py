@@ -749,8 +749,8 @@ def test_defender_techniques_come_from_the_alert_template() -> None:
     env = EnvelopeV2(id="def-rule", version="1.0.0",
                      asset=Asset.DEFENDER_CUSTOM_DETECTION, status="production")
     payload = {"displayName": "D", "detectionAction": {"alertTemplate": {
-        "mitreTechniques": ["t1059.001", "T1562.001"], "category": "Execution",
+        "mitreTechniques": ["t1059.001", "T1089"], "category": "Execution",
     }}}
     techniques = _extract_techniques(LoadedAsset(path=Path("d.yml"), envelope=env,
                                                  payload=payload))
-    assert techniques == ("T1059.001", "T1685")
+    assert techniques == ("T1059.001", "T1562.001")

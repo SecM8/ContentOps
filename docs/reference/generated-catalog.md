@@ -522,7 +522,7 @@ Unit: **195** files, **2271** test functions. Integration: **12** files, **17** 
 
 ## MITRE ATT&CK coverage
 
-- Covered: **0** / 222 techniques (**0%**)
+- Covered: **0** / 216 techniques (**0%**)
 - Matrix: MITRE ATT&CK Enterprise (full)
 - Badge: see `coverage/badge.json` (shields.io endpoint format).
 - Layer: see `coverage/navigator-layer.json` (uploadable to https://mitre-attack.github.io/attack-navigator/).

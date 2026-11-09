@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/mitre-attack/attack-stix-data enterprise-attack",
   "schema_version": 3,
-  "attack_version": "19.2",
+  "attack_version": "18.1",
   "tactics": [
     {
       "id": "Collection",
@@ -547,8 +547,7 @@
       "id": "T1127",
       "name": "Trusted Developer Utilities Proxy Execution",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "DefenseEvasion"
       ]
     },
     {
@@ -656,8 +655,7 @@
       "name": "BITS Jobs",
       "tactics": [
         "DefenseEvasion",
-        "Persistence",
-        "Execution"
+        "Persistence"
       ]
     },
     {
@@ -727,7 +725,7 @@
     },
     {
       "id": "T1211",
-      "name": "Exploitation for Stealth",
+      "name": "Exploitation for Defense Evasion",
       "tactics": [
         "DefenseEvasion"
       ]
@@ -1015,13 +1013,15 @@
       "id": "T1548",
       "name": "Abuse Elevation Control Mechanism",
       "tactics": [
-        "PrivilegeEscalation"
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ]
     },
     {
       "id": "T1550",
       "name": "Use Alternate Authentication Material",
       "tactics": [
+        "DefenseEvasion",
         "LateralMovement"
       ]
     },
@@ -1057,9 +1057,9 @@
       "id": "T1556",
       "name": "Modify Authentication Process",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ]
     },
     {
@@ -1096,6 +1096,13 @@
       "name": "Disk Wipe",
       "tactics": [
         "Impact"
+      ]
+    },
+    {
+      "id": "T1562",
+      "name": "Impair Defenses",
+      "tactics": [
+        "DefenseEvasion"
       ]
     },
     {
@@ -1179,8 +1186,9 @@
       "id": "T1574",
       "name": "Hijack Execution Flow",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ]
     },
     {
@@ -1362,6 +1370,7 @@
       "id": "T1610",
       "name": "Deploy Container",
       "tactics": [
+        "DefenseEvasion",
         "Execution"
       ]
     },
@@ -1486,6 +1495,13 @@
       ]
     },
     {
+      "id": "T1656",
+      "name": "Impersonation",
+      "tactics": [
+        "DefenseEvasion"
+      ]
+    },
+    {
       "id": "T1657",
       "name": "Financial Theft",
       "tactics": [
@@ -1543,6 +1559,13 @@
       ]
     },
     {
+      "id": "T1672",
+      "name": "Email Spoofing",
+      "tactics": [
+        "DefenseEvasion"
+      ]
+    },
+    {
       "id": "T1673",
       "name": "Virtual Machine Discovery",
       "tactics": [
@@ -1596,69 +1619,6 @@
       "name": "Search Threat Vendor Data",
       "tactics": [
         "Reconnaissance"
-      ]
-    },
-    {
-      "id": "T1682",
-      "name": "Query Public AI Services",
-      "tactics": [
-        "Reconnaissance"
-      ]
-    },
-    {
-      "id": "T1683",
-      "name": "Generate Content",
-      "tactics": [
-        "ResourceDevelopment"
-      ]
-    },
-    {
-      "id": "T1684",
-      "name": "Social Engineering",
-      "tactics": [
-        "DefenseEvasion"
-      ]
-    },
-    {
-      "id": "T1685",
-      "name": "Disable or Modify Tools",
-      "tactics": [
-        "DefenseEvasion"
-      ]
-    },
-    {
-      "id": "T1686",
-      "name": "Disable or Modify System Firewall",
-      "tactics": [
-        "DefenseEvasion"
-      ]
-    },
-    {
-      "id": "T1687",
-      "name": "Exploitation for Defense Impairment",
-      "tactics": [
-        "DefenseEvasion"
-      ]
-    },
-    {
-      "id": "T1688",
-      "name": "Safe Mode Boot",
-      "tactics": [
-        "DefenseEvasion"
-      ]
-    },
-    {
-      "id": "T1689",
-      "name": "Downgrade Attack",
-      "tactics": [
-        "DefenseEvasion"
-      ]
-    },
-    {
-      "id": "T1690",
-      "name": "Prevent Command History Logging",
-      "tactics": [
-        "DefenseEvasion"
       ]
     }
   ],
@@ -1978,14 +1938,6 @@
     {
       "id": "T1027.017",
       "name": "SVG Smuggling",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1027"
-    },
-    {
-      "id": "T1027.018",
-      "name": "Invisible Unicode",
       "tactics": [
         "DefenseEvasion"
       ],
@@ -2487,6 +2439,22 @@
       "parent_id": "T1069"
     },
     {
+      "id": "T1070.001",
+      "name": "Clear Windows Event Logs",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1070"
+    },
+    {
+      "id": "T1070.002",
+      "name": "Clear Linux or Mac System Logs",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1070"
+    },
+    {
       "id": "T1070.003",
       "name": "Clear Command History",
       "tactics": [
@@ -2861,8 +2829,7 @@
       "id": "T1127.001",
       "name": "MSBuild",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "DefenseEvasion"
       ],
       "parent_id": "T1127"
     },
@@ -2870,8 +2837,7 @@
       "id": "T1127.002",
       "name": "ClickOnce",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "DefenseEvasion"
       ],
       "parent_id": "T1127"
     },
@@ -2879,8 +2845,7 @@
       "id": "T1127.003",
       "name": "JamPlus",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "DefenseEvasion"
       ],
       "parent_id": "T1127"
     },
@@ -3319,7 +3284,7 @@
     },
     {
       "id": "T1222.001",
-      "name": "Windows Permissions",
+      "name": "Windows File and Directory Permissions Modification",
       "tactics": [
         "DefenseEvasion"
       ],
@@ -3327,7 +3292,7 @@
     },
     {
       "id": "T1222.002",
-      "name": "Linux and Mac Permissions",
+      "name": "Linux and Mac File and Directory Permissions Modification",
       "tactics": [
         "DefenseEvasion"
       ],
@@ -3566,8 +3531,8 @@
       "id": "T1542.001",
       "name": "System Firmware",
       "tactics": [
-        "DefenseEvasion",
-        "Persistence"
+        "Persistence",
+        "DefenseEvasion"
       ],
       "parent_id": "T1542"
     },
@@ -3575,8 +3540,8 @@
       "id": "T1542.002",
       "name": "Component Firmware",
       "tactics": [
-        "DefenseEvasion",
-        "Persistence"
+        "Persistence",
+        "DefenseEvasion"
       ],
       "parent_id": "T1542"
     },
@@ -3584,8 +3549,8 @@
       "id": "T1542.003",
       "name": "Bootkit",
       "tactics": [
-        "DefenseEvasion",
-        "Persistence"
+        "Persistence",
+        "DefenseEvasion"
       ],
       "parent_id": "T1542"
     },
@@ -3944,7 +3909,8 @@
       "id": "T1548.001",
       "name": "Setuid and Setgid",
       "tactics": [
-        "PrivilegeEscalation"
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1548"
     },
@@ -3952,7 +3918,8 @@
       "id": "T1548.002",
       "name": "Bypass User Account Control",
       "tactics": [
-        "PrivilegeEscalation"
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1548"
     },
@@ -3960,7 +3927,8 @@
       "id": "T1548.003",
       "name": "Sudo and Sudo Caching",
       "tactics": [
-        "PrivilegeEscalation"
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1548"
     },
@@ -3968,7 +3936,8 @@
       "id": "T1548.004",
       "name": "Elevated Execution with Prompt",
       "tactics": [
-        "PrivilegeEscalation"
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1548"
     },
@@ -3976,7 +3945,8 @@
       "id": "T1548.005",
       "name": "Temporary Elevated Cloud Access",
       "tactics": [
-        "PrivilegeEscalation"
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1548"
     },
@@ -3984,6 +3954,7 @@
       "id": "T1548.006",
       "name": "TCC Manipulation",
       "tactics": [
+        "DefenseEvasion",
         "PrivilegeEscalation"
       ],
       "parent_id": "T1548"
@@ -3992,6 +3963,7 @@
       "id": "T1550.001",
       "name": "Application Access Token",
       "tactics": [
+        "DefenseEvasion",
         "LateralMovement"
       ],
       "parent_id": "T1550"
@@ -4000,6 +3972,7 @@
       "id": "T1550.002",
       "name": "Pass the Hash",
       "tactics": [
+        "DefenseEvasion",
         "LateralMovement"
       ],
       "parent_id": "T1550"
@@ -4008,6 +3981,7 @@
       "id": "T1550.003",
       "name": "Pass the Ticket",
       "tactics": [
+        "DefenseEvasion",
         "LateralMovement"
       ],
       "parent_id": "T1550"
@@ -4016,6 +3990,7 @@
       "id": "T1550.004",
       "name": "Web Session Cookie",
       "tactics": [
+        "DefenseEvasion",
         "LateralMovement"
       ],
       "parent_id": "T1550"
@@ -4184,9 +4159,9 @@
       "id": "T1556.001",
       "name": "Domain Controller Authentication",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4194,9 +4169,9 @@
       "id": "T1556.002",
       "name": "Password Filter DLL",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4204,9 +4179,9 @@
       "id": "T1556.003",
       "name": "Pluggable Authentication Modules",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4214,9 +4189,9 @@
       "id": "T1556.004",
       "name": "Network Device Authentication",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4224,9 +4199,9 @@
       "id": "T1556.005",
       "name": "Reversible Encryption",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4234,9 +4209,9 @@
       "id": "T1556.006",
       "name": "Multi-Factor Authentication",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4244,9 +4219,9 @@
       "id": "T1556.007",
       "name": "Hybrid Identity",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4254,9 +4229,9 @@
       "id": "T1556.008",
       "name": "Network Provider DLL",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
@@ -4264,15 +4239,15 @@
       "id": "T1556.009",
       "name": "Conditional Access Policies",
       "tactics": [
+        "CredentialAccess",
         "DefenseEvasion",
-        "Persistence",
-        "CredentialAccess"
+        "Persistence"
       ],
       "parent_id": "T1556"
     },
     {
       "id": "T1557.001",
-      "name": "Name Resolution Poisoning and SMB Relay",
+      "name": "LLMNR/NBT-NS Poisoning and SMB Relay",
       "tactics": [
         "CredentialAccess",
         "Collection"
@@ -4409,6 +4384,102 @@
         "Impact"
       ],
       "parent_id": "T1561"
+    },
+    {
+      "id": "T1562.001",
+      "name": "Disable or Modify Tools",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.002",
+      "name": "Disable Windows Event Logging",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.003",
+      "name": "Impair Command History Logging",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.004",
+      "name": "Disable or Modify System Firewall",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.006",
+      "name": "Indicator Blocking",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.007",
+      "name": "Disable or Modify Cloud Firewall",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.008",
+      "name": "Disable or Modify Cloud Logs",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.009",
+      "name": "Safe Mode Boot",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.010",
+      "name": "Downgrade Attack",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.011",
+      "name": "Spoof Security Alerting",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.012",
+      "name": "Disable or Modify Linux Audit System",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
+    },
+    {
+      "id": "T1562.013",
+      "name": "Disable or Modify Network Device Firewall",
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "parent_id": "T1562"
     },
     {
       "id": "T1563.001",
@@ -4694,8 +4765,9 @@
       "id": "T1574.001",
       "name": "DLL",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4703,8 +4775,9 @@
       "id": "T1574.004",
       "name": "Dylib Hijacking",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4712,8 +4785,9 @@
       "id": "T1574.005",
       "name": "Executable Installer File Permissions Weakness",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4721,8 +4795,9 @@
       "id": "T1574.006",
       "name": "Dynamic Linker Hijacking",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4730,8 +4805,9 @@
       "id": "T1574.007",
       "name": "Path Interception by PATH Environment Variable",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4739,8 +4815,9 @@
       "id": "T1574.008",
       "name": "Path Interception by Search Order Hijacking",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4748,8 +4825,9 @@
       "id": "T1574.009",
       "name": "Path Interception by Unquoted Path",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4757,8 +4835,9 @@
       "id": "T1574.010",
       "name": "Services File Permissions Weakness",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4766,8 +4845,9 @@
       "id": "T1574.011",
       "name": "Services Registry Permissions Weakness",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4775,8 +4855,9 @@
       "id": "T1574.012",
       "name": "COR_PROFILER",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4784,8 +4865,9 @@
       "id": "T1574.013",
       "name": "KernelCallbackTable",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -4793,8 +4875,9 @@
       "id": "T1574.014",
       "name": "AppDomainManager",
       "tactics": [
-        "DefenseEvasion",
-        "Execution"
+        "Persistence",
+        "PrivilegeEscalation",
+        "DefenseEvasion"
       ],
       "parent_id": "T1574"
     },
@@ -5501,110 +5584,6 @@
         "Discovery"
       ],
       "parent_id": "T1614"
-    },
-    {
-      "id": "T1683.001",
-      "name": "Written Content",
-      "tactics": [
-        "ResourceDevelopment"
-      ],
-      "parent_id": "T1683"
-    },
-    {
-      "id": "T1683.002",
-      "name": "Audio-Visual Content",
-      "tactics": [
-        "ResourceDevelopment"
-      ],
-      "parent_id": "T1683"
-    },
-    {
-      "id": "T1684.001",
-      "name": "Impersonation",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1684"
-    },
-    {
-      "id": "T1684.002",
-      "name": "Email Spoofing",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1684"
-    },
-    {
-      "id": "T1685.001",
-      "name": "Disable or Modify Windows Event Log",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1685"
-    },
-    {
-      "id": "T1685.002",
-      "name": "Disable or Modify Cloud Log",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1685"
-    },
-    {
-      "id": "T1685.003",
-      "name": "Modify or Spoof Tool UI",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1685"
-    },
-    {
-      "id": "T1685.004",
-      "name": "Disable or Modify Linux Audit System Log",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1685"
-    },
-    {
-      "id": "T1685.005",
-      "name": "Clear Windows Event Logs",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1685"
-    },
-    {
-      "id": "T1685.006",
-      "name": "Clear Linux or Mac System Logs",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1685"
-    },
-    {
-      "id": "T1686.001",
-      "name": "Cloud Firewall",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1686"
-    },
-    {
-      "id": "T1686.002",
-      "name": "Network Device Firewall",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1686"
-    },
-    {
-      "id": "T1686.003",
-      "name": "Windows Host Firewall",
-      "tactics": [
-        "DefenseEvasion"
-      ],
-      "parent_id": "T1686"
     }
   ],
   "revoked": {
@@ -5628,15 +5607,13 @@
     "T1045": "T1027.002",
     "T1050": "T1543.003",
     "T1053.001": "T1053.002",
-    "T1054": "T1685",
+    "T1054": "T1562.006",
     "T1058": "T1574.011",
     "T1060": "T1547.001",
     "T1063": "T1518.001",
     "T1065": "T1571",
     "T1066": "T1027.005",
     "T1067": "T1542.003",
-    "T1070.001": "T1685.005",
-    "T1070.002": "T1685.006",
     "T1073": "T1574.001",
     "T1075": "T1550.002",
     "T1076": "T1021.001",
@@ -5647,7 +5624,7 @@
     "T1085": "T1218.011",
     "T1086": "T1059.001",
     "T1088": "T1548.002",
-    "T1089": "T1685",
+    "T1089": "T1562.001",
     "T1093": "T1055.012",
     "T1094": "T1095",
     "T1096": "T1564.004",
@@ -5676,7 +5653,7 @@
     "T1145": "T1552.004",
     "T1146": "T1070.003",
     "T1147": "T1564.002",
-    "T1148": "T1690",
+    "T1148": "T1562.003",
     "T1150": "T1647",
     "T1151": "T1036.006",
     "T1152": "T1569.001",
@@ -5741,22 +5718,7 @@
     "T1527": "T1550.001",
     "T1536": "T1578.004",
     "T1547.011": "T1647",
-    "T1562": "T1685",
-    "T1562.001": "T1685",
-    "T1562.002": "T1685.001",
-    "T1562.003": "T1690",
-    "T1562.004": "T1686",
-    "T1562.006": "T1685",
-    "T1562.007": "T1686.001",
-    "T1562.008": "T1685.002",
-    "T1562.009": "T1688",
-    "T1562.010": "T1689",
-    "T1562.011": "T1685.003",
-    "T1562.012": "T1685.004",
-    "T1562.013": "T1686.002",
-    "T1574.002": "T1574.001",
-    "T1656": "T1684.001",
-    "T1672": "T1684.002"
+    "T1574.002": "T1574.001"
   },
   "deprecated": [
     "T1026",

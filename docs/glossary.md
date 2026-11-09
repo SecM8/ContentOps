@@ -298,7 +298,7 @@ merge whenever convenient; nothing piles up.
 
 ### Revoked / deprecated ATT&CK id
 MITRE retires technique ids between releases: a *revoked* id is
-replaced by another (ATT&CK v19.2 revoked T1562 → T1685), a
+replaced by another (T1089 Disabling Security Tools → T1562.001), a
 *deprecated* one has no replacement. The bundled matrix
 (`contentops/coverage/data/mitre_attack_full.json`) records both for
 its `attack_version`; coverage counts a revoked id as its replacement

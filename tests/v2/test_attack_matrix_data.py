@@ -83,7 +83,7 @@ def test_defense_evasion_technique_resolves_at_runtime() -> None:
 
 # ---------------------------------------------------------------------------
 # Release metadata: version + retired ids (review finding: revoked ids were
-# dropped silently, so T1562.x tags scored zero).
+# dropped silently, so retired-id tags such as T1089 scored zero).
 # ---------------------------------------------------------------------------
 
 
@@ -104,11 +104,11 @@ def test_revoked_ids_map_to_current_techniques() -> None:
     assert not set(doc["deprecated"]) & current
 
 
-def test_impair_defenses_resolves_to_a_current_defense_evasion_technique() -> None:
+def test_disabling_security_tools_resolves_to_a_current_defense_evasion_technique() -> None:
     from contentops.coverage.matrix import load_matrix
 
     matrix = load_matrix()
-    current, status = matrix.resolve("T1562.001")
+    current, status = matrix.resolve("T1089")
     assert status == "revoked" and current is not None
     assert "DefenseEvasion" in matrix.tactics_for(current)
 
@@ -135,11 +135,11 @@ def test_custom_reference_list_remaps_revoked_ids(tmp_path) -> None:
 
     custom = tmp_path / "mine.json"
     custom.write_text(json.dumps({"techniques": [
-        {"id": "T1562.001", "name": "Disable or Modify Tools", "tactics": ["DefenseEvasion"]},
+        {"id": "T1089", "name": "Disabling Security Tools", "tactics": ["DefenseEvasion"]},
         {"id": "T9999", "name": "Org-specific", "tactics": ["Impact"]},
     ]}), encoding="utf-8")
     refs, label = load_techniques(custom)
     assert label == "custom: mine.json"
     ids = [r.id for r in refs]
-    assert "T1562.001" not in ids and ids[1] == "T9999"
-    assert ids[0] != "T1562.001" and refs[0].tactics == ("DefenseEvasion",)
+    assert "T1089" not in ids and ids[1] == "T9999"
+    assert ids[0] == "T1562.001" and refs[0].tactics == ("DefenseEvasion",)

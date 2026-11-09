@@ -24,8 +24,8 @@ def default_attack_version() -> str:
     """Major ATT&CK release of the bundled matrix (e.g. ``"19"``).
 
     The layer must name the release its technique ids come from: the
-    matrix is refreshed weekly, and ids revoked since an older release
-    (T1562.x -> T1685 in v19) would otherwise point at the wrong tiles.
+    matrix is pinned to one release, and ids revoked since an older release
+    (T1089 -> T1562.001) would otherwise point at the wrong tiles.
     """
     return load_matrix().attack_major or _FALLBACK_ATTACK_VERSION
 

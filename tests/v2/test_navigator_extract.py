@@ -415,8 +415,8 @@ def test_deployed_and_firing_ids_are_normalised_and_remapped() -> None:
     provider = _StubArmProvider({"value": [
         {"name": "m", "properties": {"displayName": "Messy", "enabled": True,
                                      "techniques": [" t1059", "T9999", "bogus"],
-                                     "subTechniques": ["T1562.001"]}},
+                                     "subTechniques": ["T1089"]}},
     ]})
     assert {h.technique_id for h in extract_sentinel_rule_techniques(provider)} == {
-        "T1059", "T1685",
+        "T1059", "T1562.001",
     }

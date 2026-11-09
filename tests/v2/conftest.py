@@ -166,9 +166,8 @@ COVERAGE_CORPUS = {
             }},
         },
     },
-    # Revoked: T1562 / T1562.001 -> T1685 (ATT&CK v19).
-    "r9-revoked": _sentinel("r9-revoked", tactics=["DefenseEvasion"], techniques=["T1562"],
-                            sub_techniques=["T1562.001"]),
+    # Revoked: T1089 -> T1562.001 (ATT&CK v18.1).
+    "r9-revoked": _sentinel("r9-revoked", tactics=["DefenseEvasion"], techniques=["T1089"]),
     # Non-production.
     "r10-experimental": _sentinel("r10-experimental", tactics=["CredentialAccess"],
                                   techniques=["T1003"], status="experimental"),
@@ -177,9 +176,9 @@ COVERAGE_CORPUS = {
 # What the default scope (enabled production, hunting excluded) covers.
 COVERAGE_CORPUS_PARENTS = frozenset({
     "T1110", "T1190", "T1059", "T1018", "T1046", "T1041", "T1566",
-    "T1082", "T1087", "T1078", "T1685",
+    "T1082", "T1087", "T1078", "T1562",
 })
-COVERAGE_CORPUS_SUBS = frozenset({"T1110.003"})
+COVERAGE_CORPUS_SUBS = frozenset({"T1110.003", "T1562.001"})
 COVERAGE_CORPUS_TACTICS = frozenset({
     "CredentialAccess", "InitialAccess", "Execution", "Persistence",
     "Discovery", "Exfiltration", "DefenseEvasion",

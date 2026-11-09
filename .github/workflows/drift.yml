@@ -241,7 +241,7 @@ jobs:
             --json number,headRefName \
             --jq '.[] | select(.headRefName | startswith("drift/auto-")) | .number' || true)
           for n in "${PRS[@]:-}"; do
-            gh pr close "$n" --comment "Superseded by a fresher drift run." || true
+            gh pr close "$n" --comment "Superseded by a fresher drift run." --delete-branch || true
           done
 
       - name: Open PR if tree changed

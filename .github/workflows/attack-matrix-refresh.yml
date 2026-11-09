@@ -1,9 +1,12 @@
 name: ATT&CK matrix refresh
 
-# Weekly + on-demand refresh of the bundled MITRE ATT&CK Enterprise
-# matrix at `contentops/coverage/data/mitre_attack_full.json` from MITRE's
-# maintained STIX source (github.com/mitre-attack/attack-stix-data) via
-# `scripts/refresh_attack_matrix.py`.
+# Weekly + on-demand re-check of the bundled MITRE ATT&CK Enterprise
+# matrix at `contentops/coverage/data/mitre_attack_full.json` against the
+# release pinned by `ATTACK_VERSION` in `scripts/refresh_attack_matrix.py`
+# (MITRE's versioned `enterprise-attack-<ver>.json` in
+# github.com/mitre-attack/attack-stix-data). Moving to a newer release is a
+# deliberate change to that constant plus the tests that name the release,
+# never an automatic bump.
 #
 # The coverage heatmap + `--out-badge` (coverage.extract) and
 # `coverage --gaps` (coverage.gaps) read the committed file at runtime
@@ -78,7 +81,8 @@ jobs:
           body: |
             Auto-opened by `.github/workflows/attack-matrix-refresh.yml`.
 
-            Pulls the enterprise-attack STIX bundle from
+            Pulls the pinned enterprise-attack STIX bundle (`ATTACK_VERSION` in
+            `scripts/refresh_attack_matrix.py`) from
             `mitre-attack/attack-stix-data` and regenerates
             `contentops/coverage/data/mitre_attack_full.json` (tactics +
             parent techniques + sub-techniques), normalising MITRE's

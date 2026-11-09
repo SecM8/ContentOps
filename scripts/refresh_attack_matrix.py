@@ -3,7 +3,7 @@
 
 """Refresh the bundled MITRE ATT&CK Enterprise matrix.
 
-Fetches the latest enterprise-attack STIX bundle from MITRE's
+Fetches the pinned (``ATTACK_VERSION``) enterprise-attack STIX bundle from MITRE's
 maintained GitHub repo (https://github.com/mitre-attack/attack-stix-data),
 extracts the minimum data ContentOps needs for coverage analysis, writes
 it to ``contentops/coverage/data/mitre_attack_full.json``.
@@ -21,10 +21,10 @@ The bundled output carries three flat tables:
 plus the metadata coverage needs to stay honest across ATT&CK releases:
 
 * ``attack_version`` — the Enterprise collection's ``x_mitre_version``
-  (e.g. ``"19.2"``), used for the Navigator layer and snapshot deltas.
+(e.g. ``"18.1"``), used for the Navigator layer and snapshot deltas.
 * ``revoked`` — ``{old_id: current_id}``, built from MITRE's
   ``revoked-by`` relationships with chains resolved transitively, so a
-  detection still tagged with a retired ID (e.g. T1562.001) is credited
+detection still tagged with a retired ID (e.g. T1089) is credited
   to its replacement instead of silently scoring zero.
 * ``deprecated`` — retired IDs with no replacement (reported, never
   counted).
@@ -36,7 +36,7 @@ and ``coverage.extract._CANONICAL_TACTICS``; a CI test
 drifts off the canonical set.
 
 Cadence: ``.github/workflows/attack-matrix-refresh.yml`` runs this weekly
-and opens a PR with the refreshed bundle. The pipeline NEVER calls this
+and opens a PR only if the pinned bundle's content changed. The pipeline NEVER calls this
 script at runtime — coverage reads the committed file (offline, so it
 works for locked-down adopters). This script is purely a generator.
 """
@@ -49,9 +49,12 @@ import urllib.request
 from pathlib import Path
 
 
+# Pinned ATT&CK release. Bump deliberately (and update tests/fixtures that
+# name the release) rather than tracking MITRE's moving `enterprise-attack.json`.
+ATTACK_VERSION = "18.1"
 STIX_URL = (
     "https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/"
-    "enterprise-attack/enterprise-attack.json"
+    f"enterprise-attack/enterprise-attack-{ATTACK_VERSION}.json"
 )
 OUT_PATH = (
     Path(__file__).resolve().parent.parent

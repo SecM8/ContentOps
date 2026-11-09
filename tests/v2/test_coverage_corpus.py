@@ -47,7 +47,7 @@ def test_badge_numbers(coverage_corpus, coverage_corpus_expected) -> None:
     assert covered.sub_techniques == coverage_corpus_expected.subs   # C1
     assert covered.tactics == coverage_corpus_expected.tactics
     assert summary.techniques.covered == len(coverage_corpus_expected.parents)
-    assert summary.sub_techniques.covered == 1
+    assert summary.sub_techniques.covered == len(coverage_corpus_expected.subs)
     assert summary.tactics.covered == len(coverage_corpus_expected.tactics)
     assert summary.detections_in_scope == coverage_corpus_expected.in_scope
     assert summary.scope_label.startswith("enabled production detections")
@@ -67,7 +67,7 @@ def test_heatmap_lists_techniques_only_under_their_own_tactics(coverage_corpus) 
     assert set(by["Discovery"].techniques) == {"T1046", "T1082", "T1087"}
     # C1 + revoked remap.
     assert set(by["CredentialAccess"].techniques) == {"T1110", "T1110.003"}
-    assert set(by["DefenseEvasion"].techniques) == {"T1685"}
+    assert set(by["DefenseEvasion"].techniques) == {"T1562.001"}
     # C6: tags from partial / strict-failing metadata survive.
     assert set(by["Exfiltration"].techniques) == {"T1041"}
     # C4 / C5 / non-production contribute nothing.
@@ -81,8 +81,7 @@ def test_diagnostics_report_every_data_quality_problem(coverage_corpus) -> None:
     assert ("r7-messy-ids", "T10") in diag.invalid_ids
     assert ("r7-messy-ids", "bogus") in diag.invalid_ids
     assert diag.unknown_ids == ("T9999",)
-    assert ("T1562", "T1685") in diag.remapped_ids
-    assert ("T1562.001", "T1685") in diag.remapped_ids
+    assert ("T1089", "T1562.001") in diag.remapped_ids
     assert diag.outside_tactics == ("T1018",)
     assert {rule for rule, _ in diag.metadata_errors} == {
         "r6-partial-metadata", "r6b-bad-reference",
@@ -199,5 +198,5 @@ def test_inventory_report_matches_the_badge(coverage_corpus, coverage_corpus_exp
     assert len(rows) == 12
     assert sum(r.in_coverage_scope for r in rows) == coverage_corpus_expected.in_scope
     by_id = {r.rule_id: r for r in rows}
-    assert by_id["r9-revoked"].techniques == ("T1685",)
+    assert by_id["r9-revoked"].techniques == ("T1562.001",)
     assert by_id["r1-subtechniques"].techniques == ("T1110", "T1110.003")

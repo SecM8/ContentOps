@@ -401,12 +401,11 @@ def test_strict_metadata_wins_over_raw_metadata() -> None:
 
 def test_revoked_ids_are_remapped_to_their_successor() -> None:
     cov = extract_mitre(_envelope(Asset.SENTINEL_ANALYTIC), {
-        "tactics": ["DefenseEvasion"], "techniques": ["T1562"],
-        "subTechniques": ["T1562.001"],
+        "tactics": ["DefenseEvasion"], "techniques": ["T1089"],
     })
-    assert ("T1562.001", "T1685") in cov.remapped_ids
-    assert cov.counted_techniques == ("T1685",)
-    assert cov.techniques_for("DefenseEvasion") == ("T1685",)
+    assert ("T1089", "T1562.001") in cov.remapped_ids
+    assert cov.counted_techniques == ("T1562.001",)
+    assert cov.techniques_for("DefenseEvasion") == ("T1562.001",)
 
 
 def test_extractor_uses_an_injected_matrix() -> None:
