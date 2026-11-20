@@ -218,3 +218,125 @@ class TestDefender:
                     },
                 },
             )
+
+    # --- entities: impactedAssets is deprecated in favour of entityMappings ---
+
+    def test_entity_mappings_without_impacted_assets_is_valid(self) -> None:
+        """A rule built with entity mapping only carries an empty impactedAssets."""
+        validate_defender_payload(_defender_payload())
+
+    def test_rule_without_any_entity_is_rejected(self) -> None:
+        template = _alert_template(entityMappings={"hosts": [], "accounts": [], "ips": []})
+        with pytest.raises(ValueError, match="impactedAssets or entityMappings"):
+            validate_defender_payload(_defender_payload(alert_template=template))
+
+    def test_entity_mapping_with_only_blank_columns_is_rejected(self) -> None:
+        """The service returns unused mapping columns as empty strings."""
+        template = _alert_template(
+            entityMappings={"hosts": [{"deviceIdColumn": "", "nameColumn": ""}]},
+        )
+        with pytest.raises(ValueError, match="impactedAssets or entityMappings"):
+            validate_defender_payload(_defender_payload(alert_template=template))
+
+    def test_rule_with_neither_entity_property_is_rejected(self) -> None:
+        template = {"title": "Test", "severity": "medium"}
+        with pytest.raises(ValueError, match="impactedAssets or entityMappings"):
+            validate_defender_payload(_defender_payload(alert_template=template))
+
+    # --- schedule: period is deprecated in favour of frequency / lookback ---
+
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            {"frequency": "PT5M", "lookback": "PT1H"},
+            {"frequency": "P14D", "lookback": "P14D"},
+            {"frequency": "P2W", "lookback": "P14D"},
+            {"frequency": "PT30M", "lookback": "PT47H59M"},
+            {"frequency": "PT1H", "lookback": "P14D"},
+            {"frequency": "PT23H", "lookback": "P14D"},
+            {"frequency": "P1D", "lookback": "P30D"},
+            {"frequency": "P1D", "lookback": "P1D"},
+            {"frequency": "PT1H"},
+            {"frequency": "PT0S"},
+            {"frequency": "PT0S", "lookback": None},
+        ],
+    )
+    def test_schedule_within_service_limits_is_valid(self, schedule: dict) -> None:
+        validate_defender_payload(_defender_payload(schedule=schedule))
+
+    @pytest.mark.parametrize(
+        ("schedule", "message"),
+        [
+            ({"frequency": "PT4M", "lookback": "PT1H"}, "frequency must be between 5 minutes and 14 days"),
+            ({"frequency": "PT1M", "lookback": "PT30H"}, "frequency must be between 5 minutes and 14 days"),
+            ({"frequency": "P15D", "lookback": "P30D"}, "frequency must be between 5 minutes and 14 days"),
+            ({"frequency": "PT30M", "lookback": "P2D"}, "lookback must be less than 48 hours"),
+            ({"frequency": "PT1H", "lookback": "P15D"}, "lookback must be at most 14 days"),
+            ({"frequency": "P1D", "lookback": "P31D"}, "lookback must be at most 30 days"),
+            ({"frequency": "P2D", "lookback": "P1D"}, "lookback must be at least the frequency"),
+            ({"frequency": "PT0S", "lookback": "PT1H"}, "lookback is not supported for continuous"),
+            ({"frequency": "1H"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": "4H"}, "lookback must be an ISO 8601 duration"),
+        ],
+    )
+    def test_schedule_outside_service_limits_is_rejected(self, schedule: dict, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            validate_defender_payload(_defender_payload(schedule=schedule))
+
+    def test_unexpected_period_is_accepted_when_frequency_is_set(self) -> None:
+        """period is a deprecated echo of frequency; frequency decides."""
+        schedule = {"period": "15M", "frequency": "PT15M", "lookback": "PT1H"}
+        validate_defender_payload(_defender_payload(schedule=schedule))
+
+    def test_schedule_without_period_or_frequency_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="schedule requires frequency"):
+            validate_defender_payload(_defender_payload(schedule={}))
+
+    # --- properties the model does not know about ---
+
+    def test_unknown_top_level_property_is_ignored(self) -> None:
+        payload = _defender_payload()
+        payload["propertyAddedByTheService"] = "value"
+        validate_defender_payload(payload)
+
+    def test_unknown_query_condition_property_is_ignored(self) -> None:
+        payload = _defender_payload()
+        payload["queryCondition"]["propertyAddedByTheService"] = "value"
+        validate_defender_payload(payload)
+
+    def test_missing_display_name_is_still_rejected(self) -> None:
+        payload = _defender_payload()
+        del payload["displayName"]
+        with pytest.raises(ValueError, match="displayName"):
+            validate_defender_payload(payload)
+
+
+def _alert_template(**overrides: object) -> dict:
+    """Alert template as the service returns it for an entity-mapping-only rule."""
+    template: dict = {
+        "title": "Test",
+        "severity": "medium",
+        "impactedAssets": [],
+        "entityMappings": {
+            "hosts": [],
+            "accounts": [],
+            "ips": [{"addressColumn": "IPAddress", "scopeColumn": ""}],
+        },
+    }
+    template.update(overrides)
+    return template
+
+
+def _defender_payload(
+    *, schedule: dict | None = None, alert_template: dict | None = None,
+) -> dict:
+    """Minimal Defender payload; ``schedule`` / ``alert_template`` replace the defaults."""
+    return {
+        "displayName": "Test",
+        "status": "enabled",
+        "queryCondition": {"queryText": "SigninLogs | take 1"},
+        "schedule": {"frequency": "PT1H", "lookback": "PT4H"} if schedule is None else schedule,
+        "detectionAction": {
+            "alertTemplate": _alert_template() if alert_template is None else alert_template,
+        },
+    }

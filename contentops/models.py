@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import enum
-from typing import Literal
+import re
+from datetime import timedelta
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -405,8 +407,116 @@ class SentinelThreatIntelligencePayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# ``schedule.period`` is the legacy Graph beta field. Graph deprecates it
+# in favour of ``frequency`` and the v1.0 ``ruleSchedule`` type has no
+# ``period`` at all.
+_DEFENDER_LEGACY_PERIODS = frozenset({"0", "1H", "3H", "12H", "24H"})
+
+# Limits the service applies to a rule's schedule (the "Frequency" and
+# "Lookback" fields of the Defender portal's rule wizard). A frequency of
+# zero (``PT0S``) is a continuous (NRT) rule and takes no lookback.
+_DEFENDER_MIN_FREQUENCY = timedelta(minutes=5)
+_DEFENDER_MAX_FREQUENCY = timedelta(days=14)
+# Maximum lookback by frequency: below 1 hour it must stay under 48
+# hours; below 1 day it may reach 14 days; from 1 day on, 30 days.
+_DEFENDER_SUB_HOURLY_LOOKBACK_LIMIT = timedelta(hours=48)  # exclusive
+_DEFENDER_SUB_DAILY_MAX_LOOKBACK = timedelta(days=14)
+_DEFENDER_MAX_LOOKBACK = timedelta(days=30)
+
+_ISO_8601_DURATION_RE = re.compile(
+    r"^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$"
+)
+
+
+def _parse_schedule_duration(value: str, *, field: str) -> timedelta:
+    """Parse an ISO 8601 duration as Graph writes it for a rule schedule.
+
+    Weeks, days, hours, minutes and whole seconds are accepted (``PT0S``,
+    ``PT15M``, ``PT1H``, ``P1D``, ``P2W``). Months and years have no fixed
+    length and are not schedule values.
+    """
+    match = _ISO_8601_DURATION_RE.match(value)
+    if match is None or all(part is None for part in match.groups()):
+        raise ValueError(
+            f"schedule.{field} must be an ISO 8601 duration such as PT1H or P1D, got {value!r}"
+        )
+    weeks, days, hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    return timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds)
+
+
+def _has_entity_mapping(entity_mappings: dict[str, Any] | None) -> bool:
+    """True when at least one entity mapping names a query column.
+
+    The service returns every entity collection, unused ones as empty
+    lists and unused columns as empty strings, so emptiness is decided
+    per column.
+    """
+    for mappings in (entity_mappings or {}).values():
+        if not isinstance(mappings, list):
+            continue
+        for mapping in mappings:
+            if isinstance(mapping, dict) and any(
+                isinstance(column, str) and column.strip() for column in mapping.values()
+            ):
+                return True
+    return False
+
+
 class DefenderSchedule(BaseModel):
-    period: Literal["0", "1H", "3H", "12H", "24H"]
+    """Run schedule of a custom detection rule.
+
+    ``frequency`` (ISO 8601 duration) decides when it is present and is
+    checked, together with ``lookback``, against the service limits.
+    ``period`` is its deprecated predecessor: it is required, and
+    checked, only when ``frequency`` is absent.
+    """
+
+    period: str | None = None
+    frequency: str | None = None
+    lookback: str | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> DefenderSchedule:
+        frequency_text = (self.frequency or "").strip()
+        if not frequency_text:
+            if self.period is None:
+                raise ValueError("schedule requires frequency (or the legacy period)")
+            if self.period not in _DEFENDER_LEGACY_PERIODS:
+                raise ValueError(
+                    "schedule.period must be one of 0, 1H, 3H, 12H, 24H when frequency is not set"
+                )
+            return self
+
+        frequency = _parse_schedule_duration(frequency_text, field="frequency")
+        lookback_text = (self.lookback or "").strip()
+        if frequency == timedelta(0):
+            if lookback_text:
+                raise ValueError("schedule.lookback is not supported for continuous (NRT) rules")
+            return self
+        if not _DEFENDER_MIN_FREQUENCY <= frequency <= _DEFENDER_MAX_FREQUENCY:
+            raise ValueError(
+                "schedule.frequency must be between 5 minutes and 14 days (or PT0S for continuous)"
+            )
+        if not lookback_text:
+            # The service derives the lookback from the frequency.
+            return self
+
+        lookback = _parse_schedule_duration(lookback_text, field="lookback")
+        if lookback < frequency:
+            raise ValueError("schedule.lookback must be at least the frequency")
+        if frequency < timedelta(hours=1):
+            if lookback >= _DEFENDER_SUB_HOURLY_LOOKBACK_LIMIT:
+                raise ValueError(
+                    "schedule.lookback must be less than 48 hours when frequency is below 1 hour"
+                )
+        elif frequency < timedelta(days=1):
+            if lookback > _DEFENDER_SUB_DAILY_MAX_LOOKBACK:
+                raise ValueError(
+                    "schedule.lookback must be at most 14 days when frequency is below 1 day"
+                )
+        elif lookback > _DEFENDER_MAX_LOOKBACK:
+            raise ValueError("schedule.lookback must be at most 30 days")
+        return self
 
 
 class DefenderImpactedAsset(BaseModel):
@@ -423,7 +533,19 @@ class DefenderAlertTemplate(BaseModel):
     category: str | None = None
     recommendedActions: str | None = None
     mitreTechniques: list[str] | None = None
-    impactedAssets: list[DefenderImpactedAsset] = Field(min_length=1)
+    # Graph deprecates ``impactedAssets`` in favour of ``entityMappings``;
+    # a rule built with entity mapping carries an empty list here. Either
+    # property has to identify at least one entity.
+    impactedAssets: list[DefenderImpactedAsset] = Field(default_factory=list)
+    entityMappings: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def require_an_entity(self) -> DefenderAlertTemplate:
+        if not self.impactedAssets and not _has_entity_mapping(self.entityMappings):
+            raise ValueError(
+                "At least one of impactedAssets or entityMappings must be provided."
+            )
+        return self
 
 
 class DefenderResponseAction(BaseModel):
@@ -445,7 +567,10 @@ class DefenderDetectionAction(BaseModel):
 
 
 class DefenderQueryCondition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Unknown properties are ignored, not rejected: Graph adds properties
+    # without notice, and one unknown property on one rule would otherwise
+    # fail validation for the whole repository.
+    model_config = ConfigDict(extra="ignore")
     # No upper bound (see SentinelScheduledPayload.query); KQL009 is
     # advisory for Defender, which documents no query-length limit.
     queryText: str
@@ -454,7 +579,9 @@ class DefenderQueryCondition(BaseModel):
 class DefenderPayload(BaseModel):
     """Defender XDR custom detection rule payload."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Unknown properties are ignored for the same reason as on
+    # ``DefenderQueryCondition``. Required properties stay required.
+    model_config = ConfigDict(extra="ignore")
     displayName: str
     description: str | None = None
     # ``status`` replaced ``isEnabled`` in Graph beta (isEnabled removed

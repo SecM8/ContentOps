@@ -308,6 +308,25 @@ from the commit history.
 
 ### Fixed
 
+- **Defender payload model follows the current Graph schema.** Graph
+  deprecates `alertTemplate.impactedAssets` in favour of `entityMappings`
+  and `schedule.period` in favour of `frequency`; the v1.0 resource types
+  carry neither legacy field. A rule built with the current portal can
+  have an empty `impactedAssets`, which the model rejected, and one
+  invalid rule fails `contentops plan` for the whole repository. The
+  model now (1) accepts a rule with at least one impacted asset **or**
+  one populated entity mapping, and still rejects a rule with neither;
+  (2) treats `frequency` as authoritative and checks it and `lookback`
+  as ISO 8601 durations against the service limits — 5 minutes to 14
+  days, or `PT0S` for a continuous rule, which takes no lookback; a
+  lookback of at least the frequency and below 48 hours for a sub-hourly
+  rule, at most 14 days below one day, at most 30 days otherwise — while
+  the legacy `period` values are required only when `frequency` is
+  absent; (3) ignores unknown properties at the top level and in
+  `queryCondition` instead of rejecting them, so a property the service
+  adds no longer fails validation. Required properties stay required.
+  Pinned by `tests/test_models.py`.
+
 - **`production-promotion-check.yml` skips collect / drift PRs by head
   branch as well as head commit subject.** The gate only recognised a
   `chore(collect|drift):` head commit, so GitHub's *Update branch*
