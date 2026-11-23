@@ -6,9 +6,9 @@ name: Drift detection
 #      `contentops drift --write` against the live tenant; opens a
 #      PR with new+changed envelopes so the repo catches up to
 #      portal-side edits. Needs `contents: write` (push branch)
-#      and `pull-requests: write` (close stale auto-PRs + open
-#      a new one). Idempotent supersede closes prior open drift
-#      PRs first.
+#      and `pull-requests: write` (open the new PR + close stale
+#      auto-PRs). Older open drift PRs are closed only after the
+#      new one exists, never before.
 #
 #   2. `drift-pr` (pull_request, paths: detections/**) — runs
 #      `contentops drift` in REPORT-ONLY mode against the live
@@ -227,23 +227,6 @@ jobs:
             --labels-out drift_labels.txt
           echo "Body:"; cat drift_body.md
 
-      - name: Close superseded auto-drift PRs
-        if: steps.tree.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # Exact head-branch filter. A fuzzy `gh pr list --search` on the
-          # head qualifier once closed an operator's own draft PR when
-          # drift was dispatched from that PR's branch.
-          mapfile -t PRS < <(gh pr list \
-            --state open --limit 100 \
-            --json number,headRefName \
-            --jq '.[] | select(.headRefName | startswith("drift/auto-")) | .number' || true)
-          for n in "${PRS[@]:-}"; do
-            gh pr close "$n" --comment "Superseded by a fresher drift run." --delete-branch || true
-          done
-
       - name: Open PR if tree changed
         id: auto-pr
         uses: ./.github/actions/auto-pr
@@ -274,6 +257,50 @@ jobs:
             if [ -n "$lbl" ]; then
               gh pr edit "$AUTO_PR_NUMBER" --add-label "$lbl" || true
             fi
+          done
+
+      - name: Close superseded auto-drift PRs
+        # Only after the new PR exists, so the previous import is never
+        # lost when opening the new one fails, and never the new PR
+        # itself (a re-run of the same run id reuses its branch and PR).
+        if: steps.auto-pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTO_PR_TOKEN: ${{ secrets.AUTO_PR_TOKEN }}
+          NEW_PR: ${{ steps.auto-pr.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+          # A superseded drift PR is one that (1) comes from this
+          # repository, (2) sits on a drift/auto-* branch, (3) was opened
+          # by the identity that opens drift PRs and (4) is not the PR
+          # this run just opened. The branch prefix alone is not proof: a
+          # fork, or a person, can use that name. A search-qualifier query
+          # on the head branch is not used at all: it is fuzzy on GitHub's
+          # side and can match, and so close, a pull request that is not a
+          # drift import.
+          #
+          # Drift PRs are opened by the Actions bot or, where
+          # AUTO_PR_TOKEN is configured, by the account that token
+          # belongs to.
+          export TOKEN_LOGIN=""
+          if [ -n "${AUTO_PR_TOKEN:-}" ]; then
+            TOKEN_LOGIN="$(GH_TOKEN="$AUTO_PR_TOKEN" gh api user --jq .login 2>/dev/null || true)"
+          fi
+          mapfile -t PRS < <(gh pr list \
+            --state open --limit 1000 \
+            --json number,headRefName,isCrossRepository,author \
+            --jq '.[]
+              | select((.isCrossRepository | not)
+                  and (.headRefName | startswith("drift/auto-"))
+                  and (.number != (env.NEW_PR | tonumber))
+                  and (.author.login == "app/github-actions"
+                       or (env.TOKEN_LOGIN != "" and .author.login == env.TOKEN_LOGIN)))
+              | .number' || true)
+          for n in "${PRS[@]:-}"; do
+            # An empty list still yields one empty item, and gh reads an
+            # empty selector as "the PR of the current branch".
+            [ -n "$n" ] || continue
+            gh pr close "$n" --comment "Superseded by #${NEW_PR}." --delete-branch || true
           done
 
       - name: Notify on scheduled failure

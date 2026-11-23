@@ -206,14 +206,35 @@ jobs:
           fi
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             if [ -n "$INPUT_CHANGED_SINCE" ]; then
-              # The checkout is shallow (fetch-depth 2), so an operator-
-              # supplied ref is normally not in the clone and the diff
-              # fails with "unknown revision". Fetch the ref (full SHA,
-              # branch or tag) directly; an abbreviated SHA cannot be
-              # fetched by name, so fall back to unshallowing the clone.
-              git fetch --no-tags --depth=1 origin "$INPUT_CHANGED_SINCE" 2>/dev/null \
-                || git fetch --no-tags --unshallow origin
-              ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )
+              # The baseline decides what is applied, so it is resolved
+              # to a commit id here and only that id is passed on. The
+              # checkout is shallow (fetch-depth 2), so three places are
+              # tried, in this order:
+              #  1. This checkout. HEAD, HEAD~1 and a commit that is
+              #     already here mean the checked-out history. Asking the
+              #     remote for "HEAD" would return the default branch,
+              #     a different baseline on any other branch.
+              #  2. The remote, by name: a full SHA, a branch or a tag.
+              #     A fetched name does not become a local ref (the fetch
+              #     only records the commit in FETCH_HEAD), so the diff
+              #     runs against that commit.
+              #  3. The full history, for an abbreviated SHA or an
+              #     expression such as HEAD~3.
+              # A value that is still not a commit stops the step before
+              # anything is applied. Passed on as it is, git could read
+              # it as a path and report "nothing changed".
+              if SINCE="$(git rev-parse --verify --quiet "${INPUT_CHANGED_SINCE}^{commit}" 2>/dev/null)"; then
+                :
+              elif git fetch --no-tags --depth=1 origin "$INPUT_CHANGED_SINCE" 2>/dev/null; then
+                SINCE="$(git rev-parse --verify 'FETCH_HEAD^{commit}')"
+              else
+                git fetch --no-tags --unshallow origin
+                if ! SINCE="$(git rev-parse --verify --quiet "${INPUT_CHANGED_SINCE}^{commit}" 2>/dev/null)"; then
+                  echo "::error::The changed_since input is not a commit, branch or tag of this repository. Nothing was applied."
+                  exit 1
+                fi
+              fi
+              ARGS+=( "--changed-since" "$SINCE" )
             fi
             if [ "$INPUT_DRY_RUN" = "true" ]; then
               ARGS+=( "--dry-run" )

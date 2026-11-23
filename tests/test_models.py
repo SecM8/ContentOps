@@ -238,6 +238,34 @@ class TestDefender:
         with pytest.raises(ValueError, match="impactedAssets or entityMappings"):
             validate_defender_payload(_defender_payload(alert_template=template))
 
+    def test_blank_columns_with_an_odata_annotation_are_rejected(self) -> None:
+        """An ``@odata.type`` annotation is not a query column: a mapping
+        whose columns are all blank identifies no entity, whatever
+        annotation it carries."""
+        template = _alert_template(entityMappings={"hosts": [{
+            "@odata.type": "#microsoft.graph.security.hostEntityMapping",
+            "deviceIdColumn": "", "nameColumn": "",
+        }]})
+        with pytest.raises(ValueError, match="impactedAssets or entityMappings"):
+            validate_defender_payload(_defender_payload(alert_template=template))
+
+    def test_filled_column_with_an_odata_annotation_is_valid(self) -> None:
+        template = _alert_template(entityMappings={"hosts": [{
+            "@odata.type": "#microsoft.graph.security.hostEntityMapping",
+            "deviceIdColumn": "DeviceId",
+        }]})
+        validate_defender_payload(_defender_payload(alert_template=template))
+
+    def test_filled_mapping_property_that_is_not_an_annotation_still_counts(self) -> None:
+        """Only OData annotations are set aside. A mapping property the
+        service adds later still identifies an entity whatever it is
+        called, so a new property cannot fail validation for every rule
+        that uses it."""
+        template = _alert_template(entityMappings={"hosts": [{
+            "deviceIdColumn": "", "identifierAddedLater": "DeviceId",
+        }]})
+        validate_defender_payload(_defender_payload(alert_template=template))
+
     def test_rule_with_neither_entity_property_is_rejected(self) -> None:
         template = {"title": "Test", "severity": "medium"}
         with pytest.raises(ValueError, match="impactedAssets or entityMappings"):
@@ -259,6 +287,17 @@ class TestDefender:
             {"frequency": "PT1H"},
             {"frequency": "PT0S"},
             {"frequency": "PT0S", "lookback": None},
+            {"frequency": "P1DT12H", "lookback": "P2DT6H"},
+            {"frequency": "P1W", "lookback": "P1W"},
+            # null means "not set", exactly like an absent key.
+            {"period": "1H", "frequency": None},
+            {"frequency": "PT1H", "lookback": None},
+            # A legacy period with a lookback inside the limits.
+            {"period": "1H"},
+            {"period": "0"},
+            {"period": "0", "lookback": None},
+            {"period": "1H", "lookback": "PT4H"},
+            {"period": "24H", "lookback": "P30D"},
         ],
     )
     def test_schedule_within_service_limits_is_valid(self, schedule: dict) -> None:
@@ -277,6 +316,37 @@ class TestDefender:
             ({"frequency": "PT0S", "lookback": "PT1H"}, "lookback is not supported for continuous"),
             ({"frequency": "1H"}, "frequency must be an ISO 8601 duration"),
             ({"frequency": "PT1H", "lookback": "4H"}, "lookback must be an ISO 8601 duration"),
+            # A "T" must be followed by at least one time component.
+            ({"frequency": "P1DT"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "P2WT"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": "P1DT"}, "lookback must be an ISO 8601 duration"),
+            # A blank string is a value, and not a duration. It is not read
+            # as "not set", so it never falls back to the legacy period.
+            ({"period": "1H", "frequency": ""}, "frequency must be an ISO 8601 duration"),
+            ({"period": "1H", "frequency": "   "}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": ""}, "lookback must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": "  "}, "lookback must be an ISO 8601 duration"),
+            # The lookback limits hold whichever key states the frequency.
+            ({"period": "1H", "lookback": "P15D"}, "lookback must be at most 14 days"),
+            ({"period": "24H", "lookback": "P31D"}, "lookback must be at most 30 days"),
+            ({"period": "3H", "lookback": "PT1H"}, "lookback must be at least the frequency"),
+            ({"period": "0", "lookback": "PT1H"}, "lookback is not supported for continuous"),
+            ({"period": "1H", "lookback": "4H"}, "lookback must be an ISO 8601 duration"),
+            # The week form stands alone: weeks are not combined with other units.
+            ({"frequency": "P1W1D"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "P1WT1H"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": "P1W1D"}, "lookback must be an ISO 8601 duration"),
+            # The value is checked exactly as it would be sent: no padding
+            # around it and plain digits only.
+            ({"frequency": " PT1H"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H "}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H\n"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": " PT4H"}, "lookback must be an ISO 8601 duration"),
+            ({"frequency": "PT١H"}, "frequency must be an ISO 8601 duration"),
+            # A number too large to be a duration is a validation error, not a crash.
+            ({"frequency": "P" + "9" * 30 + "D"}, "frequency must be an ISO 8601 duration"),
+            ({"frequency": "PT1H", "lookback": "PT" + "9" * 30 + "H"}, "lookback must be an ISO 8601 duration"),
         ],
     )
     def test_schedule_outside_service_limits_is_rejected(self, schedule: dict, message: str) -> None:

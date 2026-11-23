@@ -133,29 +133,116 @@ def test_tenant_config_is_materialised_through_the_conflict_check() -> None:
         assert 'if [ ! -f "$default_cfg" ]' not in text, path.name
 
 
+def _drift_write_steps() -> list[dict]:
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "drift.yml")
+    return wf["jobs"]["drift-write"]["steps"]
+
+
+def _drift_close_step() -> dict:
+    return next(s for s in _drift_write_steps() if s.get("name") == "Close superseded auto-drift PRs")
+
+
+def test_drift_closes_older_prs_only_after_the_replacement_exists() -> None:
+    """The previous drift PR must stay open, with its branch, until the
+    new one exists. Closing first loses it when the new PR fails to open,
+    and on a re-run the step would close the PR of its own earlier
+    attempt. The step therefore runs after the PR is opened, only when a
+    PR number came back, and never selects that PR."""
+    names = [s.get("name") for s in _drift_write_steps()]
+    assert names.index("Open PR if tree changed") < names.index("Close superseded auto-drift PRs")
+    step = _drift_close_step()
+    assert step["if"] == "steps.auto-pr.outputs.pull-request-number != ''"
+    assert step["env"]["NEW_PR"] == "${{ steps.auto-pr.outputs.pull-request-number }}"
+    assert "(.number != (env.NEW_PR | tonumber))" in step["run"]
+
+
+def test_drift_looks_at_every_open_pr_when_closing_older_ones() -> None:
+    """``gh pr list`` returns 30 pull requests unless told otherwise; an
+    older drift PR beyond the limit would never be closed."""
+    assert "--limit 1000" in _drift_close_step()["run"]
+
+
 def test_drift_closes_superseded_prs_by_exact_head_branch() -> None:
     """drift.yml must select superseded auto-PRs by an exact
     ``headRefName`` prefix, never a fuzzy ``--search "head:..."`` query
     (which closed an operator's draft PR when drift was dispatched from
     that PR's branch, 2026-10-18)."""
-    from pathlib import Path
-
-    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "drift.yml").read_text(encoding="utf-8")
+    text = (REPO_ROOT / ".github" / "workflows" / "drift.yml").read_text(encoding="utf-8")
     assert '--search "head:' not in text
-    assert 'select(.headRefName | startswith("drift/auto-"))' in text
+    assert '.headRefName | startswith("drift/auto-")' in text
+
+
+def test_drift_closes_only_prs_the_automation_opened_in_this_repository() -> None:
+    """The branch prefix alone is not proof that a pull request is an
+    older drift import: a fork, or a person, can use a ``drift/auto-``
+    branch. The supersede step must also require that the PR comes from
+    this repository and was opened by the identity that opens drift PRs."""
+    step = _drift_close_step()["run"]
+    assert "--json number,headRefName,isCrossRepository,author" in step
+    assert "(.isCrossRepository | not)" in step
+    assert ".author.login" in step
+    assert '"app/github-actions"' in step
+
+
+def test_drift_never_calls_gh_pr_close_with_an_empty_selector() -> None:
+    """When nothing is superseded the list is empty, and ``"${PRS[@]:-}"``
+    still yields one empty item. ``gh pr close ""`` does not fail: gh reads
+    an empty selector as "the pull request of the current branch", so a
+    drift run dispatched from a PR branch would close that PR. The loop
+    must skip an empty number before it reaches ``gh pr close``."""
+    step = _drift_close_step()["run"]
+    loop = step[step.index("for n in"):]
+    guard = loop.index('[ -n "$n" ] || continue')
+    assert guard < loop.index("gh pr close")
+
+
+def test_drift_deletes_the_branch_of_a_superseded_pr() -> None:
+    """Closing a superseded drift PR must also delete its branch, or one
+    stale ``drift/auto-*`` branch is left behind per day."""
+    step = _drift_close_step()["run"]
+    close = step.index('gh pr close "$n"')
+    assert "--delete-branch" in step[close:close + 120]
 
 
 def test_deploy_fetches_an_operator_supplied_changed_since_ref() -> None:
     """deploy.yml checks out with fetch-depth 2, so a ``changed_since``
     dispatch input older than that failed with "unknown revision" before
     the diff ran (2026-10-18). The apply step must fetch the ref (and
-    fall back to unshallowing) before passing it to ``--changed-since``."""
-    from pathlib import Path
+    fall back to unshallowing) before passing it to ``--changed-since``.
 
-    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    A fetched branch or tag name does not become a local ref: the fetch
+    only records the commit in ``FETCH_HEAD``. The step must therefore
+    diff against that commit, not against the name it was given."""
+    text = (REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
     fetch = text.index('git fetch --no-tags --depth=1 origin "$INPUT_CHANGED_SINCE"')
-    assert "--unshallow" in text[fetch:fetch + 400]
-    assert fetch < text.index('ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )')
+    after = text[fetch:fetch + 1100]
+    assert "--unshallow" in after
+    assert "git rev-parse --verify 'FETCH_HEAD^{commit}'" in after
+    assert 'ARGS+=( "--changed-since" "$SINCE" )' in after
+    assert 'ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )' not in text
+
+
+def test_deploy_passes_only_a_verified_commit_as_changed_since() -> None:
+    """The baseline of a manual deploy decides what is applied, so the
+    step must never guess it.
+
+    * A ref that already resolves in the checkout (``HEAD``, ``HEAD~1``,
+      a commit that is there) is resolved there first. Fetching ``HEAD``
+      from the remote would return the default branch instead, a
+      different baseline on any other branch.
+    * Whatever is used ends up as a commit id that ``git rev-parse
+      --verify`` accepted. A value that is no commit stops the step
+      before anything is applied; passed on as it is, git could read it
+      as a path and report "nothing changed".
+    """
+    text = (REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    local = text.index('git rev-parse --verify --quiet "${INPUT_CHANGED_SINCE}^{commit}"')
+    fetch = text.index('git fetch --no-tags --depth=1 origin "$INPUT_CHANGED_SINCE"')
+    unshallow = text.index("git fetch --no-tags --unshallow origin")
+    assert local < fetch < unshallow
+    tail = text[unshallow:text.index('ARGS+=( "--changed-since" "$SINCE" )')]
+    assert 'git rev-parse --verify --quiet "${INPUT_CHANGED_SINCE}^{commit}"' in tail
+    assert "exit 1" in tail
 
 
 def test_retry_failed_fetches_the_deploy_audit_artefact() -> None:

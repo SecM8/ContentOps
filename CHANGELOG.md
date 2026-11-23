@@ -327,6 +327,52 @@ from the commit history.
   adds no longer fails validation. Required properties stay required.
   Pinned by `tests/test_models.py`.
 
+- **Defender schedule and entity-mapping checks no longer let malformed
+  values through.** Follow-up to the entry above. (1) A duration is read
+  exactly as it would be sent: `P1DT` (a `T` with no time part), `P1W1D`
+  (weeks combined with another unit), a value with padding or a trailing
+  newline, non-ASCII digits and a number too large to be a duration are
+  rejected instead of being read as something else. (2) A `frequency` or
+  `lookback` that is a blank string is an error; only a missing key or
+  `null` means "not set" (Graph returns a Duration as an ISO 8601 string
+  or `null`). (3) A legacy `period` stands for its frequency, so the same
+  `lookback` limits apply to a rule that has only `period`. (4) An OData
+  annotation such as `@odata.type` inside an entity mapping is not a
+  column, so a mapping with blank columns no longer counts as populated.
+  Pinned by `tests/test_models.py`.
+
+- **Defender deploy: the enabled state is part of the post-deploy
+  check.** The content hash does not cover `status`, so a deploy that
+  disabled (or enabled) a rule was reported as verified on the first
+  read even when the rule still showed the old state. The read is now
+  retried until both the content and the state match, and a state that
+  never matches is reported as `post-apply status mismatch`. A body that
+  sets no `status` leaves the remote state alone, as before. Pinned by
+  `tests/v2/test_apply_verify_defender.py`.
+
+- **`deploy.yml` passes only a verified commit as the `changed_since`
+  baseline.** The step resolves the input in the checkout first (so
+  `HEAD` and `HEAD~1` mean the checked-out history, not the remote's
+  default branch), then fetches it by name and diffs against the fetched
+  commit (a fetched branch or tag name does not become a local ref),
+  then unshallows. A value that is still not a commit stops the step
+  before anything is applied. `changed_paths` passes `--` to `git diff`,
+  so a value that names a file or folder is an error instead of a quiet
+  "nothing changed". Pinned by `tests/v2/test_workflow_hardening.py` and
+  `tests/v2/test_git_diff.py`.
+
+- **`drift.yml` closes older drift PRs only after the new one exists.**
+  The supersede step ran before the new PR was opened, so the previous
+  import was lost when opening failed, and a re-run closed the PR of its
+  own earlier attempt. It now runs last, only when a PR number came back,
+  and never selects that PR. It selects by repository and author as well
+  as by branch prefix (a fork, or a person, can use a `drift/auto-`
+  branch), looks at up to 1000 open PRs instead of 100, and skips an
+  empty list: `gh pr close ""` closes the PR of the current branch.
+  Where `AUTO_PR_TOKEN` is set, the token's account is resolved with
+  `gh api user`; if that fails, only PRs opened by the Actions bot are
+  closed. Pinned by `tests/v2/test_workflow_hardening.py`.
+
 - **`production-promotion-check.yml` skips collect / drift PRs by head
   branch as well as head commit subject.** The gate only recognised a
   `chore(collect|drift):` head commit, so GitHub's *Update branch*

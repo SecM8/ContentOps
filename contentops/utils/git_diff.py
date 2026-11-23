@@ -43,9 +43,12 @@ def changed_paths(ref: str, *, repo: Path | None = None) -> set[Path]:
     # `git diff --name-only <ref>` covers committed + staged + unstaged
     # changes vs. the ref. `git ls-files --others --exclude-standard`
     # covers brand-new untracked files (which a tree diff cannot see).
+    # The trailing ``--`` makes git read ``ref`` as a revision only. Without
+    # it, a value that is not a revision but names a file or folder is
+    # taken as a path, and the diff quietly reports "nothing changed".
     try:
         diff_out = subprocess.run(
-            [git, "-C", str(cwd), "diff", "--name-only", ref],
+            [git, "-C", str(cwd), "diff", "--name-only", ref, "--"],
             capture_output=True, text=True, check=True, timeout=10,
         ).stdout
         untracked_out = subprocess.run(

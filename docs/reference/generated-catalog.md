@@ -301,7 +301,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **195** files, **2271** test functions. Integration: **12** files, **17** test functions.
+Unit: **195** files, **2280** test functions. Integration: **12** files, **17** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -321,7 +321,7 @@ Unit: **195** files, **2271** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_apply_safeguards.py` | 5 |
 | `tests/v2/test_apply_support.py` | 48 |
 | `tests/v2/test_apply_verify_analytic.py` | 3 |
-| `tests/v2/test_apply_verify_defender.py` | 9 |
+| `tests/v2/test_apply_verify_defender.py` | 11 |
 | `tests/v2/test_apply_verify_hunting.py` | 3 |
 | `tests/v2/test_apply_verify_watchlist.py` | 13 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
@@ -403,7 +403,7 @@ Unit: **195** files, **2271** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_envelope_metadata_fallback.py` | 5 |
 | `tests/v2/test_explain.py` | 16 |
 | `tests/v2/test_extract_etag.py` | 5 |
-| `tests/v2/test_git_diff.py` | 5 |
+| `tests/v2/test_git_diff.py` | 6 |
 | `tests/v2/test_handler_coverage.py` | 3 |
 | `tests/v2/test_http_retry.py` | 22 |
 | `tests/v2/test_hunting_handler.py` | 6 |
@@ -494,7 +494,7 @@ Unit: **195** files, **2271** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
 | `tests/v2/test_url_path_safety.py` | 8 |
 | `tests/v2/test_watchlist_model.py` | 7 |
-| `tests/v2/test_workflow_hardening.py` | 7 |
+| `tests/v2/test_workflow_hardening.py` | 13 |
 | `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
 | `tests/v2/test_workspace_kql.py` | 30 |
 | `tests/v2/test_workspace_kql_emulator.py` | 3 |

@@ -292,6 +292,73 @@ def test_apply_retries_post_apply_404_then_gives_up() -> None:
     assert gets["n"] == handler_module._VERIFY_ATTEMPTS
 
 
+def _deprecated() -> LoadedAsset:
+    env = EnvelopeV2(
+        id="defender-test", version="0.1.0",
+        asset=Asset.DEFENDER_CUSTOM_DETECTION, status="deprecated",
+    )
+    return LoadedAsset(path=Path("d.yml"), envelope=env, payload=dict(_PAYLOAD))
+
+
+def test_apply_disable_is_not_verified_while_the_rule_still_reads_enabled() -> None:
+    """The content hash does not cover the enabled state. A disable whose
+    PATCH is acknowledged but never takes effect must not be reported as
+    verified: the check keeps reading and, when the rule still shows as
+    enabled on the last read, reports a status mismatch."""
+    gets = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/detectionRules"):
+            return httpx.Response(200, json=_list_response([_full_remote()]))
+        if request.method == "GET" and "/detectionRules/graph-1" in path:
+            gets["n"] += 1
+            return httpx.Response(200, json=_full_remote())  # enabled, always
+        if request.method == "PATCH" and "/detectionRules/graph-1" in path:
+            return httpx.Response(200, json=_full_remote())
+        return httpx.Response(404, text=f"unexpected {request.method} {path}")
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = DefenderCustomDetectionHandler(lambda: client)
+    result = h.apply(_deprecated())
+
+    assert result.action == PlanAction.DISABLE
+    assert result.verified is False
+    assert "status mismatch" in (result.error or "")
+    assert "disabled" in (result.error or "") and "enabled" in (result.error or "")
+    # One read before the PATCH, then every verification attempt.
+    assert gets["n"] == 1 + handler_module._VERIFY_ATTEMPTS
+
+
+def test_apply_disable_waits_until_the_rule_reads_disabled(monkeypatch) -> None:
+    """A read that still shows the rule enabled right after the PATCH is
+    a stale read, exactly like stale content: it is retried, and the
+    disable is verified once a read shows the rule disabled."""
+    gets = {"n": 0}
+    sleeps: list[float] = []
+    monkeypatch.setattr(handler_module.time, "sleep", lambda s: sleeps.append(s))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/detectionRules"):
+            return httpx.Response(200, json=_list_response([_full_remote()]))
+        if request.method == "GET" and "/detectionRules/graph-1" in path:
+            gets["n"] += 1
+            remote = _full_remote()
+            remote["isEnabled"] = gets["n"] <= 3  # the probe, then two stale reads
+            return httpx.Response(200, json=remote)
+        if request.method == "PATCH" and "/detectionRules/graph-1" in path:
+            return httpx.Response(200, json=_full_remote())
+        return httpx.Response(404, text=f"unexpected {request.method} {path}")
+
+    client = _client_with(httpx.MockTransport(handler))
+    h = DefenderCustomDetectionHandler(lambda: client)
+    result = h.apply(_deprecated())
+
+    assert result.verified is True, result.error
+    assert sleeps == [handler_module._VERIFY_DELAY_S] * 2
+
+
 def test_apply_noop_when_unchanged() -> None:
     """A rule whose live content already matches the desired body is NOT
     re-pushed: no PATCH is issued and the result is a NOOP. This is what

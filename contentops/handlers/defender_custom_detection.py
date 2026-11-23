@@ -317,8 +317,15 @@ class DefenderCustomDetectionHandler:
         # the verifying GET returned the pre-PATCH displayName), so a
         # stale read is retried a bounded number of times before it is
         # reported as a mismatch.
+        #
+        # The content hash does not cover the enabled state, so that is
+        # checked next to it, with the same rule as the pre-write
+        # comparison: a body that sets no ``status`` leaves the remote
+        # state alone. Without it a disable would count as verified on
+        # the first read even when the rule still shows as enabled.
         remote: dict | None = None
         got_hash = ""
+        status_ok = True
         for attempt in range(1, _VERIFY_ATTEMPTS + 1):
             if not graph_id:
                 break
@@ -339,7 +346,11 @@ class DefenderCustomDetectionHandler:
                 # schedule.nextRunDateTime moves between PUT and the
                 # verifying GET. See `_strip_server_fields`.
                 got_hash = compute_content_hash(_strip_server_fields(remote), hashed_fields)
-                if got_hash == sent_hash:
+                status_ok = (
+                    "status" not in body
+                    or rule_status.rule_status(remote) == body["status"]
+                )
+                if got_hash == sent_hash and status_ok:
                     break
             if attempt < _VERIFY_ATTEMPTS:
                 logger.info(
@@ -356,6 +367,16 @@ class DefenderCustomDetectionHandler:
             )
         if got_hash != sent_hash:
             err = hash_mismatch_error(sent_hash, got_hash)
+            return ActionResult(
+                asset_id=loaded.envelope.id, asset_kind=self.asset.value,
+                action=action, status="success", detail=err,
+                verified=False, error=err,
+            )
+        if not status_ok:
+            err = (
+                f"post-apply status mismatch: sent={body['status']} "
+                f"got={rule_status.rule_status(remote)}"
+            )
             return ActionResult(
                 asset_id=loaded.envelope.id, asset_kind=self.asset.value,
                 action=action, status="success", detail=err,

@@ -68,3 +68,19 @@ def test_unknown_ref_raises(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     with pytest.raises(GitDiffError):
         changed_paths("does-not-exist", repo=repo)
+
+
+def test_a_path_name_is_not_accepted_as_a_ref(tmp_path: Path) -> None:
+    """``git diff <x>`` reads ``x`` as a path when it is not a revision but
+    is the name of a file or folder. A mistyped ref that happens to be a
+    folder name would then return "nothing changed" instead of an error,
+    and a deploy limited to changes since that ref would apply nothing."""
+    repo = _init_repo(tmp_path)
+    (repo / "detections").mkdir()
+    (repo / "detections" / "rule.yml").write_text("x: 1")
+    _run(["git", "add", "."], repo)
+    _run(["git", "commit", "-q", "-m", "add a folder"], repo)
+    (repo / "detections" / "rule.yml").write_text("x: 2")  # a real change
+
+    with pytest.raises(GitDiffError):
+        changed_paths("detections", repo=repo)
