@@ -273,6 +273,34 @@ def test_prune_yes_no_dry_run_actually_deletes(tmp_path: Path) -> None:
     assert fake.deleted == ["orphan-1"]
 
 
+def test_a_kind_whose_items_are_never_collected_does_not_block_a_prune(tmp_path: Path) -> None:
+    """The empty-kind rule ("no local envelopes but N remote items")
+    counted raw listed items. Data connectors with portal-generated names
+    are listed but never become envelopes (collect skips them), so that
+    kind always looked empty, and a prune over every kind was refused as
+    a whole: nothing was deleted. Seen in a deployment repo (30 such
+    connectors). Only items prune could act on count now."""
+    class _Uncollectable(_FakeAnalyticHandler):
+        asset = Asset.SENTINEL_DATA_CONNECTOR
+
+        def to_envelope(self, remote: dict) -> dict | None:
+            return None
+
+    detections = tmp_path / "detections"
+    _write_yaml(detections, "kept-1")
+    fake = _FakeAnalyticHandler([{"name": "kept-1"}, {"name": "orphan-1"}])
+    connectors = _Uncollectable([{"name": "0000-portal-generated"}] * 3)
+    _register_only(Asset.SENTINEL_ANALYTIC, fake)
+    default_registry.register(Asset.SENTINEL_DATA_CONNECTOR, lambda: connectors)
+
+    result = CliRunner().invoke(
+        cli, ["prune", "--path", str(detections), "--no-dry-run", "--yes"],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake.deleted == ["orphan-1"]
+    assert connectors.deleted == []
+
+
 def test_prune_max_deletes_fails_closed(tmp_path: Path) -> None:
     detections = tmp_path / "detections"
     detections.mkdir()

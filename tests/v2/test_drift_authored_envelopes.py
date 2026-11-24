@@ -219,6 +219,38 @@ def test_importing_keeps_the_status_of_a_defender_rule_deployed_disabled(tmp_pat
     assert doc["status"] == "production"
 
 
+def test_defaults_graph_fills_into_a_new_defender_rule_are_not_drift(tmp_path: Path) -> None:
+    """A rule written on the current properties leaves the lookback, the
+    event grouping and the incident setting to the service; Graph then
+    returns ``lookback: PT4H``, ``eventGroupingKind: alertPerEvent`` and
+    ``incidentConfiguration``. Drift reported the new rule as changed
+    right after its verified create. Seen against a tenant. A value the
+    file does set is still compared."""
+    payload = {
+        "displayName": "zz rule", "status": "disabled",
+        "queryCondition": {"queryText": "DeviceProcessEvents | take 1"},
+        "schedule": {"frequency": "PT1H"},
+        "detectionAction": {"alertTemplate": {"title": "zz", "severity": "medium"}},
+    }
+    served = {
+        **payload,
+        "schedule": {"frequency": "PT1H", "lookback": "PT4H"},
+        "detectionAction": {
+            "alertTemplate": {"title": "zz", "severity": "medium", "eventGroupingKind": "alertPerEvent"},
+            "incidentConfiguration": {"isExcludedFromIncidentCorrelation": False},
+        },
+    }
+    _write(tmp_path, Asset.DEFENDER_CUSTOM_DETECTION, "zz-new", payload)
+    explicit = {**payload, "schedule": {"frequency": "PT1H", "lookback": "PT12H"}}
+    _write(tmp_path, Asset.DEFENDER_CUSTOM_DETECTION, "zz-explicit", explicit)
+    tenant = _Tenant(Asset.DEFENDER_CUSTOM_DETECTION, [
+        _collected("zz-new", Asset.DEFENDER_CUSTOM_DETECTION, served, name="41"),
+        _collected("zz-explicit", Asset.DEFENDER_CUSTOM_DETECTION, served, name="42"),
+    ])
+    kinds = {e.asset_id: e.kind for e in detect_drift([tenant], tmp_path).entries}
+    assert kinds == {"zz-new": "in-sync", "zz-explicit": "changed"}
+
+
 def test_the_default_label_type_is_not_drift_on_either_side(tmp_path: Path) -> None:
     """The tenant returns every label with ``labelType: User``, the
     default. A file that adds a label does not say so; a collected file

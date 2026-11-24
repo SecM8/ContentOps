@@ -26,6 +26,7 @@ hardening pass.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Callable
 
 import click
@@ -147,6 +148,36 @@ def _item_count_mismatch_error(expected: int, actual: int) -> str:
 
 def _item_fetch_error(detail: str) -> str:
     return f"post-apply watchlistItems GET failed: {detail}"
+
+
+# The workspace ingests ``rawContent`` in the background (the PUT answers
+# "Uploading"); the item count right after a create can still be short.
+_ITEMS_ATTEMPTS = 6
+_ITEMS_DELAY_S = 5.0
+# Upper bound on pages followed; a watchlist this large is a SAS upload.
+_ITEMS_MAX_PAGES = 1000
+
+
+def _count_items(provider: SentinelArmProvider, url: str) -> tuple[int | None, str]:
+    """Count every item, following ``nextLink``. ``(count, "")`` or
+    ``(None, error text)``."""
+    total = 0
+    for _ in range(_ITEMS_MAX_PAGES):
+        try:
+            response = provider.request("GET", url)
+        except Exception as exc:  # pragma: no cover - defensive
+            return None, _item_fetch_error(str(exc))
+        if response.status_code != 200:
+            return None, _item_fetch_error(f"{response.status_code} {response.text[:160]}")
+        try:
+            page = response.json()
+        except ValueError as exc:
+            return None, _item_fetch_error(f"invalid JSON: {exc}")
+        total += len(page.get("value") or [])
+        url = page.get("nextLink") or ""
+        if not url:
+            return total, ""
+    return None, _item_fetch_error(f"more than {_ITEMS_MAX_PAGES} pages")
 
 
 class SentinelWatchlistHandler:
@@ -309,39 +340,27 @@ class SentinelWatchlistHandler:
                 raw_content,
                 int(loaded.payload.get("numberOfLinesToSkip") or 0),
             )
-            try:
-                items_response = provider.request(
-                    "GET",
-                    provider.resource_url(
-                        WATCHLIST_RESOURCE, watchlist_name, child="watchlistItems",
-                    ),
+            items_url = provider.resource_url(
+                WATCHLIST_RESOURCE, watchlist_name, child="watchlistItems",
+            )
+            actual = 0
+            for attempt in range(1, _ITEMS_ATTEMPTS + 1):
+                counted, err = _count_items(provider, items_url)
+                if counted is None:
+                    return ActionResult(
+                        asset_id=loaded.envelope.id, asset_kind=self.asset.value,
+                        action=action, status="success", detail=err,
+                        verified=False, error=err,
+                    )
+                actual = counted
+                # Short means the upload is still running; more is final.
+                if actual >= expected or attempt == _ITEMS_ATTEMPTS:
+                    break
+                logger.info(
+                    "watchlist %s: %d of %d items so far (attempt %d/%d); retrying in %ss",
+                    loaded.envelope.id, actual, expected, attempt, _ITEMS_ATTEMPTS, _ITEMS_DELAY_S,
                 )
-            except Exception as exc:  # pragma: no cover - defensive
-                err = _item_fetch_error(str(exc))
-                return ActionResult(
-                    asset_id=loaded.envelope.id, asset_kind=self.asset.value,
-                    action=action, status="success", detail=err,
-                    verified=False, error=err,
-                )
-            if items_response.status_code != 200:
-                err = _item_fetch_error(
-                    f"{items_response.status_code} {items_response.text[:160]}"
-                )
-                return ActionResult(
-                    asset_id=loaded.envelope.id, asset_kind=self.asset.value,
-                    action=action, status="success", detail=err,
-                    verified=False, error=err,
-                )
-            try:
-                items_payload = items_response.json()
-            except ValueError as exc:
-                err = _item_fetch_error(f"invalid JSON: {exc}")
-                return ActionResult(
-                    asset_id=loaded.envelope.id, asset_kind=self.asset.value,
-                    action=action, status="success", detail=err,
-                    verified=False, error=err,
-                )
-            actual = len(items_payload.get("value") or [])
+                time.sleep(_ITEMS_DELAY_S)
             if actual != expected:
                 err = _item_count_mismatch_error(expected, actual)
                 return ActionResult(

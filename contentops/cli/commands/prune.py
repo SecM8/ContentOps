@@ -234,16 +234,19 @@ def prune_cmd(
                 list_errors.append({"asset": asset_value, "error": str(exc)[:300]})
                 continue
             listed_ok += 1
-            if remote_items and not local:
+            # Only items that become envelopes count: an item collect
+            # skips (a connector with a portal-generated name, say) can
+            # never be an orphan, so it must not make a kind look empty
+            # and refuse the whole run.
+            converted = [(remote, handler.to_envelope(remote)) for remote in remote_items]
+            converted = [(remote, env) for remote, env in converted if env is not None]
+            if converted and not local:
                 empty_kinds.append({
-                    "asset": asset_value, "remote_count": len(remote_items),
+                    "asset": asset_value, "remote_count": len(converted),
                 })
                 if not allow_empty_kind:
                     continue
-            for remote in remote_items:
-                envelope = handler.to_envelope(remote)
-                if envelope is None:
-                    continue
+            for remote, envelope in converted:
                 env_id = envelope.get("id")
                 if not env_id:
                     continue

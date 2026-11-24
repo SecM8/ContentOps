@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **202** files, **2467** test functions. Integration: **13** files, **18** test functions.
+Unit: **202** files, **2472** test functions. Integration: **13** files, **18** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -321,10 +321,10 @@ Unit: **202** files, **2467** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_apply_push_state.py` | 3 |
 | `tests/v2/test_apply_safeguards.py` | 5 |
 | `tests/v2/test_apply_support.py` | 48 |
-| `tests/v2/test_apply_verify_analytic.py` | 3 |
+| `tests/v2/test_apply_verify_analytic.py` | 4 |
 | `tests/v2/test_apply_verify_defender.py` | 11 |
 | `tests/v2/test_apply_verify_hunting.py` | 3 |
-| `tests/v2/test_apply_verify_watchlist.py` | 14 |
+| `tests/v2/test_apply_verify_watchlist.py` | 16 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
 | `tests/v2/test_arm_name_matching.py` | 11 |
 | `tests/v2/test_asset_modes.py` | 13 |
@@ -396,7 +396,7 @@ Unit: **202** files, **2467** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_doctor_output.py` | 3 |
 | `tests/v2/test_doctor_sentinel_health.py` | 6 |
 | `tests/v2/test_drift.py` | 16 |
-| `tests/v2/test_drift_authored_envelopes.py` | 11 |
+| `tests/v2/test_drift_authored_envelopes.py` | 12 |
 | `tests/v2/test_drift_field_diff.py` | 10 |
 | `tests/v2/test_drift_pr_body.py` | 8 |
 | `tests/v2/test_drift_resolve.py` | 8 |
@@ -455,7 +455,7 @@ Unit: **202** files, **2467** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_product_filter_enum.py` | 3 |
 | `tests/v2/test_production_promotion_detector.py` | 10 |
 | `tests/v2/test_production_promotion_gate_workflow.py` | 3 |
-| `tests/v2/test_prune.py` | 24 |
+| `tests/v2/test_prune.py` | 25 |
 | `tests/v2/test_refresh_attack_matrix.py` | 3 |
 | `tests/v2/test_registry_and_handler.py` | 6 |
 | `tests/v2/test_registry_close.py` | 5 |

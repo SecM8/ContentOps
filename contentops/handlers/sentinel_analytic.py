@@ -363,14 +363,23 @@ class SentinelAnalyticHandler:
                 "Failed to deploy sentinel rule %s: %s %s",
                 loaded.envelope.id, response.status_code, response.text,
             )
+            detail = response.text[:200]
+            if response.status_code == 409 and "recently deleted" in response.text:
+                # Sentinel holds back the id of a rule deleted recently (one
+                # to three hours in a test workspace). The file is fine.
+                detail = (
+                    "Sentinel does not yet allow re-creating this rule under its "
+                    "id: it was deleted recently. Nothing is wrong with the file; "
+                    "run retry-failed.yml (or deploy again) later."
+                )
             return ActionResult(
                 asset_id=loaded.envelope.id,
                 asset_kind=self.asset.value,
                 action=PlanAction.UPDATE,
                 status=f"error-{response.status_code}",
-                detail=response.text[:200],
+                detail=detail,
                 verified=False,
-                error=response.text[:200],
+                error=detail,
             )
 
         action = PlanAction.UPDATE

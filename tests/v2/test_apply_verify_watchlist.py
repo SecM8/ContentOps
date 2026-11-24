@@ -151,6 +151,46 @@ def test_apply_verifies_although_the_service_does_not_return_content_type() -> N
     assert result.verified is True, result.error
 
 
+def test_apply_waits_for_the_items_of_a_new_watchlist(monkeypatch) -> None:
+    """The workspace ingests ``rawContent`` in the background (the PUT
+    answers "Uploading"), so the item count read right after a create can
+    still be 0. The check reported a mismatch for a watchlist that had its
+    item a few seconds later. Seen against a workspace."""
+    from contentops.handlers import sentinel_watchlist as module
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_: None)
+    reads = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/watchlistItems" in str(request.url):
+            reads["n"] += 1
+            return httpx.Response(200, json=_items(0 if reads["n"] < 3 else 2))
+        return httpx.Response(200, json=_matching_remote())
+
+    provider = _provider_with(httpx.MockTransport(handler))
+    result = SentinelWatchlistHandler(lambda: provider).apply(_loaded())
+    assert result.verified is True, result.error
+    assert reads["n"] == 3
+
+
+def test_apply_counts_items_on_every_page() -> None:
+    """The items list is paged (``nextLink``); counting the first page
+    only made a larger watchlist fail its check on every deploy."""
+    page2 = "https://management.azure.com/watchlist-items-page2"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == page2:
+            return httpx.Response(200, json=_items(1))
+        if request.method == "GET" and "/watchlistItems" in url:
+            return httpx.Response(200, json={**_items(1), "nextLink": page2})
+        return httpx.Response(200, json=_matching_remote())
+
+    provider = _provider_with(httpx.MockTransport(handler))
+    result = SentinelWatchlistHandler(lambda: provider).apply(_loaded())
+    assert result.verified is True, result.error
+
+
 def test_apply_hash_mismatch() -> None:
     state = {"phase": "pre"}
 

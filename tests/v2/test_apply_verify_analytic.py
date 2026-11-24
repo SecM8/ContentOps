@@ -135,6 +135,26 @@ def test_apply_hash_mismatch_marks_unverified() -> None:
     assert result.is_failure
 
 
+def test_a_rule_id_sentinel_still_holds_back_after_a_delete_says_to_retry_later() -> None:
+    """Sentinel refuses to re-create a rule under an id deleted recently
+    (409 "was recently deleted ... try again later"); seen against a
+    workspace after prune + restore, for one to three hours. The raw 409
+    did not say that nothing is wrong with the file or what to do."""
+    body = ('{"error":{"code":"Conflict","message":"The rule with id \'x\' was recently '
+            'deleted. You need to allow some time before re-using the same id. Please try again later."}}')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(404)
+        return httpx.Response(409, text=body)
+
+    client = _client_with(httpx.MockTransport(handler))
+    result = SentinelAnalyticHandler(lambda: client).apply(_loaded())
+    assert result.status == "error-409"
+    assert "retry-failed" in (result.error or "")
+    assert result.is_failure
+
+
 def test_apply_412_etag_conflict() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":

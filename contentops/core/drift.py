@@ -110,6 +110,12 @@ _SERVICE_FILLED: dict[Asset, frozenset[str]] = {
         "sourceType", "watchlistCategory", "watchlistKind", "watchlistType",
     }),
     Asset.SENTINEL_PLAYBOOK: frozenset({"identity", "location"}),
+    # Dotted paths name nested fields.
+    Asset.DEFENDER_CUSTOM_DETECTION: frozenset({
+        "schedule.lookback",
+        "detectionAction.alertTemplate.eventGroupingKind",
+        "detectionAction.incidentConfiguration",
+    }),
 }
 # Fields a deploy sends that the tenant never returns. The import keeps
 # them from the file; they are not compared.
@@ -195,8 +201,32 @@ def _comparable(local: dict, remote: dict, asset: Asset | None) -> tuple[dict, d
     deploy_only = _DEPLOY_ONLY.get(asset, frozenset())
     service = _SERVICE_FILLED.get(asset, frozenset())
     local = {k: v for k, v in local.items() if not (k in deploy_only and k not in remote)}
-    remote = {k: v for k, v in remote.items() if not (k in service and k not in local)}
+    for path in service:
+        if not _has_path(local, path):
+            remote = _without_path(remote, path)
     return local, remote
+
+
+def _has_path(payload: dict, dotted: str) -> bool:
+    node: Any = payload
+    for key in dotted.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return False
+        node = node[key]
+    return True
+
+
+def _without_path(payload: dict, dotted: str) -> dict:
+    """A copy of ``payload`` without the field at ``dotted`` (if any)."""
+    head, _, rest = dotted.partition(".")
+    if head not in payload:
+        return payload
+    if not rest:
+        return {k: v for k, v in payload.items() if k != head}
+    child = payload[head]
+    if not isinstance(child, dict):
+        return payload
+    return {**payload, head: _without_path(child, rest)}
 
 
 def _remote_names(envelope: Any) -> list[str]:
