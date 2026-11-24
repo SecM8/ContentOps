@@ -49,3 +49,54 @@ def test_the_crud_rule_cannot_raise_an_alert() -> None:
     assert body["status"] == "disabled"
     assert "isEnabled" not in body
     assert body["queryCondition"]["queryText"] == QUERY
+
+
+class _LaggingGraph:
+    """Graph whose list serves a new rule a few calls after it was created
+    (seen in the lab: the create, read and update were done in 5 s and the
+    list did not have the rule yet)."""
+
+    def __init__(self, list_lag: int) -> None:
+        self.rules: dict[str, dict] = {}
+        self.list_lag = list_lag
+
+    def create_rule(self, body: dict):
+        rule = {**body, "id": "28770"}
+        self.rules["28770"] = rule
+        return _Response(201, rule)
+
+    def get_rule(self, graph_id: str):
+        return self.rules.get(graph_id)
+
+    def update_rule(self, graph_id: str, body: dict):
+        self.rules[graph_id] = {**self.rules[graph_id], **body}
+        return _Response(200, self.rules[graph_id])
+
+    def list_rules(self):
+        if self.list_lag:
+            self.list_lag -= 1
+            return []
+        return list(self.rules.values())
+
+    def delete_rule(self, graph_id: str):
+        self.rules.pop(graph_id, None)
+        return _Response(204, None)
+
+
+class _Response:
+    def __init__(self, code: int, body) -> None:
+        self.status_code = code
+        self._body = body
+        self.text = ""
+
+    def json(self):
+        return self._body
+
+
+def test_the_crud_test_waits_for_the_list_as_for_the_other_reads(monkeypatch) -> None:
+    import tests.integration.test_defender_custom_detection_crud as crud
+
+    monkeypatch.setattr(crud.time, "sleep", lambda *_: None)
+    created: list[str] = []
+    crud.test_defender_custom_detection_full_crud(_LaggingGraph(list_lag=2), "zz-itest-1", created)
+    assert created == []  # deleted and released

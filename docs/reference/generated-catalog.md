@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **213** files, **2607** test functions. Integration: **13** files, **19** test functions.
+Unit: **213** files, **2608** test functions. Integration: **13** files, **19** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -439,7 +439,7 @@ Unit: **213** files, **2607** test functions. Integration: **13** files, **19** 
 | `tests/v2/test_lint_strict_dotnet.py` | 5 |
 | `tests/v2/test_lint_strict_take_limit.py` | 13 |
 | `tests/v2/test_live_collect_roundtrip_guard.py` | 2 |
-| `tests/v2/test_live_defender_guard.py` | 3 |
+| `tests/v2/test_live_defender_guard.py` | 4 |
 | `tests/v2/test_live_kill_switch.py` | 6 |
 | `tests/v2/test_load_errors_stop_runs.py` | 4 |
 | `tests/v2/test_lock_unlock_retry.py` | 12 |

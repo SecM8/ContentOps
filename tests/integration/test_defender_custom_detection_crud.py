@@ -94,9 +94,13 @@ def test_defender_custom_detection_full_crud(confirmed_defender_client, integrat
         what="updated displayName",
     ), f"updated displayName not visible {_READ_CONVERGE_TIMEOUT_S}s after PATCH"
 
-    # LIST contains it
-    listed_ids = {r["id"] for r in defender_client.list_rules()}
-    assert graph_id in listed_ids
+    # LIST contains it. The list lags behind the writes like the reads do
+    # (lab, 2026-11-24: create, read and update took 5 s and the list did
+    # not have the new rule yet), so wait for it as for the update.
+    assert _wait_for(
+        lambda: graph_id in {r["id"] for r in defender_client.list_rules()},
+        what="listed rule",
+    ), f"created rule not listed {_READ_CONVERGE_TIMEOUT_S}s after its create"
 
     # DELETE
     delete_resp = defender_client.delete_rule(graph_id)
