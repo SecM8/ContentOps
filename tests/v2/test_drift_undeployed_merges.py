@@ -128,7 +128,8 @@ def test_drift_marks_the_entry_in_its_report_and_output(tmp_path: Path, monkeypa
     assert result.exit_code == 0, result.output
     assert "changed in the repository after its last deploy" in result.output
     entries = json.loads((repo / "drift_report.json").read_text(encoding="utf-8"))["entries"]
-    assert entries == [{"asset": "sentinel_analytic", "id": "edited", "kind": "changed", "undeployed": True}]
+    assert entries == [{"asset": "sentinel_analytic", "id": "edited", "kind": "changed", "undeployed": True,
+                        "changed_since": deployed}]
 
 
 def test_the_pr_body_warns_before_the_lists() -> None:
@@ -164,3 +165,34 @@ def test_a_rule_whose_last_deploy_failed_is_named(tmp_path: Path) -> None:
     assert changed_since_last_deploy([_changed("edited", edited)], state, repo=repo) == {
         ("sentinel_analytic", "edited"),
     }
+
+
+def test_each_flagged_rule_names_the_changed_since_to_deploy_it(tmp_path: Path) -> None:
+    """The PR told the operator to set ``changed_since`` to "the commit before
+    the merge (HEAD~1 when the merge is the newest commit)". In the lab a
+    scheduled bot commit landed after the merge, HEAD~1 selected nothing and
+    the change stayed undeployed. The state records the commit each rule was
+    last deployed from: that is the exact ``changed_since`` to use (after a
+    failed deploy, the commit before it)."""
+    from contentops.undeployed import deploy_bases
+
+    repo, deployed, edited, untouched = _repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    state = EnvState(env="t")
+    state.remember("sentinel_analytic", "edited", sha=deployed)
+    state.remember("sentinel_analytic", "untouched", sha=head, status="failed")
+    assert deploy_bases(
+        [_changed("edited", edited), _changed("untouched", untouched)], state, repo=repo,
+    ) == {("sentinel_analytic", "edited"): deployed, ("sentinel_analytic", "untouched"): f"{head}~1"}
+
+
+def test_the_pr_body_names_changed_since_per_rule() -> None:
+    report = parse_report({"tenant": "t", "workspace": "w", "run_id": "1", "entries": [
+        {"asset": "sentinel_analytic", "id": "edited", "kind": "changed", "undeployed": True,
+         "changed_since": "0123456789abcdef0123456789abcdef01234567"},
+    ]})
+    body = render_pr_body(report, id_to_owner={})
+    section = body.split("after the last deploy", 1)[1].split("### New", 1)[0]
+    assert "`changed_since`" in section
+    assert "`0123456789ab`" in section
+    assert "HEAD~1" not in body

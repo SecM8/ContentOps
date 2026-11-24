@@ -104,18 +104,23 @@ def _changed_between(repo: Path, sha: str, paths: list[Path]) -> bool:
     return result.returncode == 1
 
 
-def changed_since_last_deploy(entries, state: EnvState, *, repo: Path) -> set[tuple[str, str]]:
-    """``(asset kind, drift id)`` of the changed drift entries whose local
-    file (or playbook sidecar) changed in git after the commit the rule was
-    last applied from (its state entry's ``last_applied_sha``).
+def deploy_bases(entries, state: EnvState, *, repo: Path) -> dict[tuple[str, str], str]:
+    """``(asset kind, drift id) -> changed_since`` for the changed drift
+    entries whose local file (or playbook sidecar) changed in git after the
+    commit the rule was last applied from (its state entry's
+    ``last_applied_sha``).
 
     Such drift is usually a merged change the tenant has not received yet
     (a repository that deploys by hand): merging the drift PR would undo
-    the merge. A rule whose last apply failed is named too (the tenant
-    kept an older version). No state entry, no recorded commit, or a
-    commit this clone does not have flags nothing.
+    the merge. The value is the ``changed_since`` a deploy needs to send
+    it: the recorded commit, or the commit before it when that apply failed
+    (the tenant kept an older version; ``""`` when no commit is recorded).
+    "The commit before the merge" is not enough: scheduled jobs commit to
+    main, so ``HEAD~1`` can select nothing. No state entry, no recorded
+    commit (after a success), or a commit this clone does not have flags
+    nothing.
     """
-    flagged: set[tuple[str, str]] = set()
+    flagged: dict[tuple[str, str], str] = {}
     for entry in entries:
         path = getattr(entry, "local_path", None)
         if path is None:
@@ -124,18 +129,23 @@ def changed_since_last_deploy(entries, state: EnvState, *, repo: Path) -> set[tu
         kind = entry.asset.value
         local_id = _file_id(path) or entry.asset_id
         recorded = (state.managed_assets.get(kind) or {}).get(local_id)
+        sha = recorded.last_applied_sha if recorded is not None else ""
         if recorded is not None and recorded.status == "failed":
             # The last apply of this file was rejected: the tenant still
             # holds an older version, whatever commit the state records.
-            flagged.add((kind, entry.asset_id))
+            flagged[(kind, entry.asset_id)] = f"{sha}~1" if sha else ""
             continue
-        sha = recorded.last_applied_sha if recorded is not None else ""
         if not sha:
             continue
         paths = [path, *sorted(path.parent.glob(f"{path.stem}.*.json"))]
         if _changed_between(repo, sha, paths):
-            flagged.add((kind, entry.asset_id))
+            flagged[(kind, entry.asset_id)] = sha
     return flagged
+
+
+def changed_since_last_deploy(entries, state: EnvState, *, repo: Path) -> set[tuple[str, str]]:
+    """The entries ``deploy_bases`` names, as a set."""
+    return set(deploy_bases(entries, state, repo=repo))
 
 
 def render_markdown(report: UndeployedReport) -> str:
@@ -208,6 +218,7 @@ __all__ = [
     "UndeployedRule",
     "UndeployedReport",
     "changed_since_last_deploy",
+    "deploy_bases",
     "find_undeployed",
     "render_markdown",
     "render_json",

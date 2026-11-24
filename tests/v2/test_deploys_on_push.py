@@ -72,3 +72,19 @@ def test_the_emergency_pr_body_uses_the_check() -> None:
 ])
 def test_every_hint_to_deploy_by_hand_names_changed_since(path: str) -> None:
     assert "changed_since" in (REPO_ROOT / path).read_text(encoding="utf-8"), path
+
+
+@pytest.mark.parametrize("path", [
+    ".github/workflows/emergency-disable.yml",
+    "docs/emergency-disable-workflow.md",
+    "docs/operations/team-routine.md",
+    "contentops/upstream/drift_pr.py",
+])
+def test_no_hint_says_head_1_is_the_commit_before_a_merge(path: str) -> None:
+    """In the lab a scheduled bot commit landed right after a merge; the
+    advised ``changed_since=HEAD~1`` then selected nothing and the change
+    stayed undeployed. Hints name the merge commit's parent, or (drift) the
+    commit the rule was last deployed from."""
+    text = (REPO_ROOT / path).read_text(encoding="utf-8").replace("\\`", "`")
+    assert "`HEAD~1` when" not in text, path
+    assert "the commit before the merge (" not in text, path

@@ -197,7 +197,7 @@ jobs:
           if python scripts/deploys_on_push.py; then
             AFTER="After merge, \`deploy.yml\` deploys the change to the tenant on the push to main."
           else
-            AFTER="This repository does not deploy on push: after merge, run **Deploy to production** on \`main\` with \`changed_since\` set to the commit before the merge (\`HEAD~1\` when the merge is the newest commit on main). An empty \`changed_since\` re-applies every detection. Until it runs, the rule stays enabled in the tenant."
+            AFTER="This repository does not deploy on push: after merge, run **Deploy to production** on \`main\` with \`changed_since\` set to the merge commit's parent (\`<merge commit>~1\`; not \`HEAD~1\`, which is wrong once a scheduled job commits to main after the merge). An empty \`changed_since\` re-applies every detection. Until it runs, the rule stays enabled in the tenant."
           fi
           {
             echo "Emergency disable triggered via workflow_dispatch by @${ACTOR}."

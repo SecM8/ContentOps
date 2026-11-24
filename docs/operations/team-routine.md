@@ -32,9 +32,9 @@ it and decide per rule:
   last deploy"** — the difference is most likely a merge the tenant has
   not received (a repository that deploys by hand). Do not merge that
   file: the repository wins over drift. Run **Deploy to production** on
-  `main` with `changed_since` set to the commit before that merge (an
-  empty `changed_since` re-applies every detection), and the next drift
-  run reports the rule in sync. After a rollback the tenant holds the
+  `main` with the `changed_since` the PR shows for the rule (the commit
+  it was last deployed from; an empty `changed_since` re-applies every
+  detection), and the next drift run reports the rule in sync. After a rollback the tenant holds the
   older version on purpose: revert the change in git instead.
 
 Merging a `drift/*` PR **never deploys**: `deploy.yml` skips any merge

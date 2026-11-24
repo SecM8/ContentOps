@@ -38,8 +38,10 @@ class DriftEntrySummary:
     id: str
     kind: str  # "new" or "changed"
     # Changed entries whose file changed in git after the rule was last
-    # deployed (``contentops.undeployed.changed_since_last_deploy``).
+    # deployed (``contentops.undeployed.deploy_bases``), and the
+    # ``changed_since`` a deploy needs to send them.
     undeployed: bool = False
+    changed_since: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,7 @@ def parse_report(raw: dict) -> DriftReportSummary:
             id=str(e.get("id") or ""),
             kind=str(e.get("kind") or ""),
             undeployed=bool(e.get("undeployed")),
+            changed_since=str(e.get("changed_since") or ""),
         )
         for e in raw.get("entries") or []
     ]
@@ -197,15 +200,17 @@ def render_pr_body(
             "The tenant may simply not have that merge yet (a repository that "
             "deploys by hand). If so, merging this PR would undo the merge: "
             "leave these files out, run **Deploy to production** on `main` with "
-            "`changed_since` set to the commit before that merge (empty "
-            "re-applies every detection), and let the next drift run confirm "
-            "them in sync. After a rollback, the tenant holds the rolled-back "
-            "version on purpose: revert the change in git instead of deploying."
+            "the `changed_since` shown below (the commit the rule was last "
+            "deployed from; an empty `changed_since` re-applies every "
+            "detection), and let the next drift run confirm them in sync. "
+            "After a rollback, the tenant holds the rolled-back version on "
+            "purpose: revert the change in git instead of deploying."
         )
-        lines.append("| Asset | ID |")
-        lines.append("| --- | --- |")
+        lines.append("| Asset | ID | `changed_since` |")
+        lines.append("| --- | --- | --- |")
         for e in sorted(undeployed, key=lambda r: (r.asset, r.id)):
-            lines.append(f"| `{e.asset}` | `{e.id}` |")
+            base = f"`{e.changed_since[:12]}{e.changed_since[40:]}`" if e.changed_since else "unknown"
+            lines.append(f"| `{e.asset}` | `{e.id}` | {base} |")
         lines.append("")
 
     _section("New", new)

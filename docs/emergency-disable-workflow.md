@@ -11,9 +11,10 @@ It opens a pull request that flips one detection envelope's `status:` to
 > `push` trigger of `deploy.yml` switched off. There a merged disable
 > does **not** reach the tenant until someone runs **Deploy to
 > production** on `main`; until then the rule keeps alerting. Set
-> `changed_since` to the commit before the merge (`HEAD~1` when the merge
-> is the newest commit on main): an empty `changed_since` re-applies
-> every detection, mid-incident. The PR body
+> `changed_since` to the merge commit's parent (`<merge commit>~1`; not
+> `HEAD~1`, which selects nothing once a scheduled job has committed to
+> main after the merge): an empty `changed_since` re-applies every
+> detection, mid-incident. The PR body
 > says which case applies (`scripts/deploys_on_push.py` reads the
 > trigger), and the next drift run flags the rule as changed in the
 > repository after its last deploy.
@@ -133,7 +134,7 @@ To re-enable a rule that was emergency-disabled:
    value (`production`, `test`, etc.) and removes `disableReason:`.
 2. Merge through the normal review process.
 3. `deploy.yml` re-deploys on push-to-main (or run it on `main` with
-   `changed_since` set to the commit before the merge, in a repository
+   `changed_since` set to the merge commit's parent, in a repository
    that deploys by hand).
 
 The emergency workflow does **not** have a re-enable mode by design —

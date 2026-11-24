@@ -220,9 +220,11 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
         click.echo(
             f"\n[drift] {len(undeployed)} changed rule(s) were changed in the "
             "repository after their last deploy: the tenant may not have that "
-            "merge yet. Deploy main (changed_since covering that merge) rather "
-            "than accepting drift that undoes it."
+            "merge yet. Deploy main with the changed_since shown for each "
+            "rather than accepting drift that undoes it:"
         )
+        for (kind, rule_id), base in sorted(undeployed.items()):
+            click.echo(f"  {kind:30} {rule_id}  changed_since={base or '(unknown)'}")
     if unused_suppressions:
         click.echo(
             f"\n[suppression-unused] {len(unused_suppressions)} entry/entries in "
@@ -258,7 +260,9 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
             "run_id": os.getenv("GITHUB_RUN_ID") or "",
             "entries": [
                 {"asset": e.asset.value, "id": e.asset_id, "kind": e.kind,
-                 **({"undeployed": True} if (e.asset.value, e.asset_id) in undeployed else {})}
+                 **({"undeployed": True,
+                     "changed_since": undeployed[(e.asset.value, e.asset_id)]}
+                    if (e.asset.value, e.asset_id) in undeployed else {})}
                 for e in (report.new + report.changed)
             ],
             # Error entries surface separately so downstream consumers
@@ -298,20 +302,21 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
         sys.exit(2)
 
 
-def _changed_since_last_deploy(report) -> set[tuple[str, str]]:
+def _changed_since_last_deploy(report) -> dict[tuple[str, str], str]:
     """Changed entries whose file changed in git after the rule's last
-    deploy (per the state file). Empty when there is no tenant.yml or no
-    state; never fails the drift run."""
+    deploy (per the state file), with the ``changed_since`` that deploys
+    them. Empty when there is no tenant.yml or no state; never fails the
+    drift run."""
     if not report.changed:
-        return set()
+        return {}
     try:
         from contentops.config import load_tenant_config
         from contentops.state import load_state
-        from contentops.undeployed import changed_since_last_deploy
+        from contentops.undeployed import deploy_bases
         state = load_state(env=load_tenant_config().name)
-        return changed_since_last_deploy(report.changed, state, repo=Path.cwd())
+        return deploy_bases(report.changed, state, repo=Path.cwd())
     except Exception:  # noqa: BLE001 — an advisory flag
-        return set()
+        return {}
 
 
 @click.command("drift-resolve")

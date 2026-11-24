@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **214** files, **2613** test functions. Integration: **13** files, **19** test functions.
+Unit: **214** files, **2616** test functions. Integration: **13** files, **19** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -379,7 +379,7 @@ Unit: **214** files, **2613** test functions. Integration: **13** files, **19** 
 | `tests/v2/test_defender_rule_status.py` | 14 |
 | `tests/v2/test_defender_shape_probe.py` | 38 |
 | `tests/v2/test_dependencies.py` | 9 |
-| `tests/v2/test_deploys_on_push.py` | 4 |
+| `tests/v2/test_deploys_on_push.py` | 5 |
 | `tests/v2/test_detect_production_promotions.py` | 9 |
 | `tests/v2/test_detection_docs.py` | 15 |
 | `tests/v2/test_detection_health.py` | 50 |
@@ -405,7 +405,7 @@ Unit: **214** files, **2613** test functions. Integration: **13** files, **19** 
 | `tests/v2/test_drift_resolve.py` | 8 |
 | `tests/v2/test_drift_roundtrip.py` | 12 |
 | `tests/v2/test_drift_suppressions.py` | 17 |
-| `tests/v2/test_drift_undeployed_merges.py` | 7 |
+| `tests/v2/test_drift_undeployed_merges.py` | 9 |
 | `tests/v2/test_emergency_disable_workflow.py` | 10 |
 | `tests/v2/test_enable_pattern.py` | 17 |
 | `tests/v2/test_entity_mappings_cap.py` | 4 |
