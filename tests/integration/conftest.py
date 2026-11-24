@@ -186,6 +186,22 @@ def defender_client(integration_credential):
     client.close()
 
 
+@pytest.fixture
+def confirmed_defender_client(request):
+    """The Defender client, only after the operator confirmed that this
+    run may write to the production tenant.
+
+    Defender is tenant-wide, so a live Defender test always hits the real
+    tenant, and ``defender_client`` sweeps test rules when it is torn
+    down. The confirmation is therefore checked BEFORE the client fixture
+    is requested: an unconfirmed run never creates it and makes no call.
+    """
+    from tests.integration.defender_shape_probe import require_confirmation
+
+    require_confirmation()
+    return request.getfixturevalue("defender_client")
+
+
 def _sweep_sentinel(client) -> None:
     """Delete any Sentinel rule whose name starts with the test prefix."""
     try:

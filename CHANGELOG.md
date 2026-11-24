@@ -181,6 +181,37 @@ from the commit history.
 
 ### Changed
 
+- **Defender deploy sends and compares the current Graph properties.**
+  Graph deprecated `schedule.period`, `alertTemplate.category`,
+  `mitreTechniques`, `impactedAssets`, `responseActions` and
+  `scopeType` / `scopeNames` in favour of `frequency`, `tactics`,
+  `entityMappings`, `automatedActions` and `deviceGroups`, and rejects a
+  property it does not know.
+  - A request carries one key per pair: the new key when it has content,
+    otherwise the old key as written. A filled old value is never dropped
+    for an empty new one (`contentops/defender/rule_shape.py`).
+  - "Changed or not" and the check after a write compare field by field
+    (`contentops/defender/rule_compare.py`) instead of hashing seven
+    paths. An edit to the description, tactics, entity mappings,
+    automated actions, scope, custom details, recommended actions or
+    lookback is now deployed; it used to be reported as "no change".
+  - After an update, a field the update did not set out to change must be
+    the same before and after, or the deploy reports a mismatch that
+    names the field. Messages name fields, never values.
+  - A dry run reads each selected Defender rule through a client that
+    cannot write and reports "no change", "would update (fields)" or
+    "would create", followed by one line of totals.
+  - A file that is empty where the tenant holds a value is reported and
+    left as it is: which empty form clears a field is not documented.
+    An update sends the tenant's own value back for such a field, so an
+    empty scope, description or action list in a file can never clear
+    what the tenant holds.
+  - Coverage, the Navigator layer and lint rules PAYLOAD003 / PAYLOAD006
+    read the same key deploy sends. New warning `PAYLOAD015` lists the
+    deprecated keys a rule still carries.
+  - `contentops new defender_custom_detection` scaffolds the current
+    properties.
+
 - **Lint policy rules KQL101, KQLOVERRIDE001 and KQL010 are warnings.**
   All three used to emit `error` and therefore failed the default
   `validate` gate; a deployment fork's first collect snapshot showed

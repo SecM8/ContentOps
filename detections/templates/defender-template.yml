@@ -4,10 +4,15 @@
 #
 # This is a reference document. Copy it, fill in what you need, delete the rest.
 # Only include fields that have actual values — the pipeline handles defaults.
+#
+# Written on the current Graph properties. The deprecated ones (period,
+# category, mitreTechniques, impactedAssets, responseActions, scopeType,
+# scopeNames) are still read, but a deploy leaves an old key out whenever its
+# replacement is filled, and lint PAYLOAD015 warns on them.
 # =============================================================================
 
 id: ""                            # Slug ID (required, e.g., defender-encoded-powershell-001)
-version: "1.0.1"                  # Semver (required)
+version: "1.1.0"                  # Semver (required)
 platform: defender                # Fixed value
 status: experimental              # experimental | test | production | deprecated
 
@@ -25,57 +30,49 @@ defender:
       // IdentityLogonEvents    CloudAppEvents
 
   schedule:
-    period: "1H"                  # "0" (NRT) | "1H" | "3H" | "12H" | "24H"
+    frequency: PT1H               # ISO 8601 days/hours/minutes, 5 minutes to 14 days;
+                                  # PT0S = continuous (NRT). Weeks (P1W) are refused by Graph.
+    # lookback: PT4H              # Optional; at least the frequency. Under 1 hour: < 48 hours;
+                                  # under 1 day: up to 14 days; from 1 day: up to 30 days.
+                                  # Not used for a continuous rule.
 
   detectionAction:
     alertTemplate:
-      title: ""                   # Required
+      title: ""                   # Required; unique in the tenant
       description: ""
       severity: medium            # informational | low | medium | high
-      category: ""                # MITRE tactic (Execution, Persistence, etc.)
       recommendedActions: ""
-      mitreTechniques: []         # T1059.001, T1027
 
-      impactedAssets:             # At least one required
-        # Device:
-        - "@odata.type": "#microsoft.graph.security.impactedDeviceAsset"
-          identifier: deviceId    # deviceId deviceName remoteDeviceName
-                                  # targetDeviceName destinationDeviceName
-        # User:
-        - "@odata.type": "#microsoft.graph.security.impactedUserAsset"
-          identifier: accountName # accountObjectId accountSid accountUpn
-                                  # accountName accountDomain
-                                  # initiatingAccountSid targetAccountUpn
-        # Mailbox (email tables only):
-        - "@odata.type": "#microsoft.graph.security.impactedMailboxAsset"
-          identifier: recipientEmailAddress
-                                  # recipientEmailAddress senderFromAddress
-                                  # accountUpn
+      tactics:                    # MITRE tactics, each with its techniques
+        - tactic: Execution       # Execution, Persistence, DefenseEvasion, ...
+          techniques:
+            - technique: T1059
+              subTechniques: [T1059.001]
 
-    organizationalScope: null     # null = all, or:
-    # scopeType: deviceGroup
-    # scopeNames: ["Group Name"]
+      entityMappings:             # At least one column required; columns of the query
+        hosts:
+          - deviceIdColumn: DeviceId
+        # accounts:
+        #   - nameColumn: AccountName
+        #     ntDomainColumn: AccountDomain
+        #     sidColumn: AccountSid
+        #     aadUserIdColumn: AccountObjectId
+        # Other collections: ips, files, processes, cloudApplications, dns,
+        # azureResources, amazonResources, googleCloudResources,
+        # registryValues, securityGroups, oAuthApplications, urls,
+        # mailboxes, mailMessages, mailClusters.
 
-    responseActions: []
-    # ── Device ──
-    # isolateDeviceResponseAction         identifier: deviceId  isolationType: full|selective
-    # collectInvestigationPackageResponseAction  identifier: deviceId
-    # runAntivirusScanResponseAction      identifier: deviceId
-    # restrictAppExecutionResponseAction  identifier: deviceId
-    # initiateInvestigationResponseAction identifier: deviceId
-    #
-    # ── File ──
-    # stopAndQuarantineFileResponseAction identifier: sha1
-    # blockFileResponseAction             identifier: sha256
-    #
-    # ── User ──
-    # disableUserResponseAction           identifier: accountSid
-    # forceUserPasswordResetResponseAction identifier: accountSid
-    # markUserAsCompromisedResponseAction  identifier: accountObjectId
-    #
-    # ── Email (email tables only) ──
-    # hardDeleteResponseAction            identifier: networkMessageId
-    # softDeleteResponseAction            identifier: networkMessageId
-    # moveToJunkResponseAction            identifier: networkMessageId
-    #
-    # All @odata.type values prefixed: #microsoft.graph.security.
+    organizationalScope: null     # null = all devices, or:
+    # organizationalScope:
+    #   deviceGroups: ["Group Name"]
+
+    automatedActions: {}          # Optional; each action lists the query columns it acts on:
+    # automatedActions:
+    #   collectInvestigationPackages:
+    #     - deviceIdColumn: DeviceId
+    # Device: isolateDevices, collectInvestigationPackages, runAntivirusScans,
+    #         restrictAppExecutions, initiateInvestigations
+    # File:   stopAndQuarantineFiles, blockFiles, allowFiles
+    # User:   disableUsers, forceUserPasswordResets, markUsersAsCompromised
+    # Email:  hardDeleteEmails, softDeleteEmails, moveEmailsToInbox,
+    #         moveEmailsToDeletedItems, moveEmailsToJunk

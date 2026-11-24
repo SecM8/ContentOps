@@ -122,6 +122,18 @@ def test_parser_scaffold_query_is_the_function_body(tmp_path: Path) -> None:
     assert payload["functionParameters"] == ""
 
 
+def test_defender_scaffold_uses_no_deprecated_graph_key(tmp_path: Path) -> None:
+    """A new rule must start on the current properties: deploy leaves an
+    old key out whenever its replacement is filled, so a template that
+    teaches the old ones teaches keys that are no longer sent."""
+    from contentops.defender.rule_shape import legacy_keys
+
+    written = scaffold("defender_custom_detection", "new-defender-rule", out=tmp_path / "rule.yml")
+    payload = yaml.safe_load(written.read_text(encoding="utf-8"))["payload"]
+    assert legacy_keys(payload) == []
+    assert payload["schedule"] == {"frequency": "PT1H"}
+
+
 def test_scaffold_rejects_bad_id(tmp_path: Path) -> None:
     with pytest.raises(ScaffoldError) as exc:
         scaffold(

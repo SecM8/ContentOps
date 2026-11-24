@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from contentops.core.asset import Asset
+from contentops.defender.rule_shape import entity_columns, legacy_keys, source_of, technique_ids
 from contentops.lint.kql import LintFinding
 from contentops.utils.slug import _SLUG_MAX_LEN
 
@@ -143,17 +144,15 @@ def _check_empty_mitre(
                 "shows up under the ATT&CK heatmap.",
             ))
     elif asset is Asset.DEFENDER_CUSTOM_DETECTION:
-        alert_template = (
-            payload.get("detectionAction", {}) or {}
-        ).get("alertTemplate", {}) or {}
-        mitre = alert_template.get("mitreTechniques")
-        if not mitre:
+        # Read through rule_shape: techniques under ``tactics``, or the
+        # deprecated ``mitreTechniques`` where ``tactics`` has no content.
+        if not technique_ids(payload):
             findings.append(LintFinding(
                 "PAYLOAD003", "warning",
-                "payload.detectionAction.alertTemplate.mitreTechniques is "
-                "empty; map this rule to at least one MITRE ATT&CK "
-                "technique ID so the Defender portal can show it under "
-                "the ATT&CK heatmap.",
+                "no MITRE ATT&CK technique is mapped; list at least one "
+                "technique under payload.detectionAction.alertTemplate.tactics "
+                "(tactics[].techniques[].technique) so the Defender portal "
+                "can show the rule under the ATT&CK heatmap.",
             ))
 
     return findings
@@ -290,12 +289,27 @@ def _check_unprojected_entity_columns(
     # validator loses schema visibility, so the entity column must be
     # (re)projected there to survive the save.
     after_invoke = query[invoke.end():]
+    findings: list[LintFinding] = []
+    if source_of(payload, "entities") == "new":
+        # ``entityMappings`` names query columns directly.
+        for col in entity_columns(payload):
+            if not re.search(rf"\b{re.escape(col)}\b", after_invoke):
+                findings.append(LintFinding(
+                    "PAYLOAD006", "warning",
+                    f"entity mapping column `{col}` is not re-projected after "
+                    f"`invoke FileProfile(...)` — the validator loses schema "
+                    f"visibility across FileProfile, so the save 400s with "
+                    f'"Entity mappings reference ... not projected". Re-project it '
+                    f'after the invoke (e.g. `column_ifexists("{col}", ...)`). '
+                    f"See docs/operations/defender-fileprofile-detections.md.",
+                ))
+        return findings
+    # Deprecated ``impactedAssets``: identifiers, mapped to column names.
     detection_action = payload.get("detectionAction")
     alert = detection_action.get("alertTemplate") if isinstance(detection_action, dict) else None
     impacted = alert.get("impactedAssets") if isinstance(alert, dict) else None
     if not isinstance(impacted, list):
         return []
-    findings: list[LintFinding] = []
     seen: set[str] = set()
     for entry in impacted:
         if not isinstance(entry, dict):
@@ -321,6 +335,49 @@ def _check_unprojected_entity_columns(
     return findings
 
 
+def _check_legacy_graph_keys(
+    payload: dict[str, Any], *, asset: Asset,
+) -> list[LintFinding]:
+    """PAYLOAD015 — a Defender rule carries a deprecated Graph property.
+
+    Graph deprecates ``period``, ``category``, ``mitreTechniques``,
+    ``impactedAssets``, ``responseActions``, ``scopeType`` / ``scopeNames``
+    and ``isEnabled``. One warning per rule, never an error: one old key
+    must not fail validation for a whole repository. The message says per
+    key whether it is ignored (its new key has content, so a deploy does
+    not send it) or is the one a deploy sends (its new key is empty), and
+    calls out an ignored key whose value says something else than the new
+    key, because that edit is not deployed.
+    """
+    if asset is not Asset.DEFENDER_CUSTOM_DETECTION or not isinstance(payload, dict):
+        return []
+    keys = legacy_keys(payload)
+    if not keys:
+        return []
+    ignored = [key for key in keys if not key.sent]
+    sent = [key for key in keys if key.sent]
+    differing = [key for key in ignored if key.differs]
+    parts = ["the payload carries Graph properties Microsoft has deprecated."]
+    if ignored:
+        parts.append(
+            "Properties that are ignored because the new property is set: "
+            + ", ".join(f"`{key.path}`" for key in ignored) + "."
+        )
+    if differing:
+        parts.append(
+            "Of those, the value differs from the new property and is NOT deployed for: "
+            + ", ".join(f"`{key.path}` (edit `{key.replacement}`)" for key in differing) + "."
+        )
+    if sent:
+        parts.append(
+            "Properties that are still sent because the new property is empty: "
+            + ", ".join(f"`{key.path}` (use `{key.replacement}`)" for key in sent)
+            + ". Such a rule stops deploying when Microsoft removes the old properties."
+        )
+    parts.append("Edit the new properties only; the next import from the tenant drops the old ones.")
+    return [LintFinding("PAYLOAD015", "warning", " ".join(parts))]
+
+
 def lint_payload(
     payload: dict[str, Any], *, asset: Asset,
 ) -> list[LintFinding]:
@@ -334,6 +391,7 @@ def lint_payload(
     findings.extend(_check_null_recommended_actions(payload, asset=asset))
     findings.extend(_check_fileprofile_output_filter(payload, asset=asset))
     findings.extend(_check_unprojected_entity_columns(payload, asset=asset))
+    findings.extend(_check_legacy_graph_keys(payload, asset=asset))
     return findings
 
 

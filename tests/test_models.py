@@ -278,7 +278,6 @@ class TestDefender:
         [
             {"frequency": "PT5M", "lookback": "PT1H"},
             {"frequency": "P14D", "lookback": "P14D"},
-            {"frequency": "P2W", "lookback": "P14D"},
             {"frequency": "PT30M", "lookback": "PT47H59M"},
             {"frequency": "PT1H", "lookback": "P14D"},
             {"frequency": "PT23H", "lookback": "P14D"},
@@ -288,7 +287,6 @@ class TestDefender:
             {"frequency": "PT0S"},
             {"frequency": "PT0S", "lookback": None},
             {"frequency": "P1DT12H", "lookback": "P2DT6H"},
-            {"frequency": "P1W", "lookback": "P1W"},
             # null means "not set", exactly like an absent key.
             {"period": "1H", "frequency": None},
             {"frequency": "PT1H", "lookback": None},
@@ -333,6 +331,10 @@ class TestDefender:
             ({"period": "3H", "lookback": "PT1H"}, "lookback must be at least the frequency"),
             ({"period": "0", "lookback": "PT1H"}, "lookback is not supported for continuous"),
             ({"period": "1H", "lookback": "4H"}, "lookback must be an ISO 8601 duration"),
+            # Graph rejects weeks (`P1W` is not an Edm.Duration; checked against a
+            # tenant), so a rule written in weeks would pass here and fail at deploy.
+            ({"frequency": "P2W", "lookback": "P14D"}, "frequency in weeks is not accepted by Graph; write P14D"),
+            ({"frequency": "P1D", "lookback": "P1W"}, "lookback in weeks is not accepted by Graph; write P7D"),
             # The week form stands alone: weeks are not combined with other units.
             ({"frequency": "P1W1D"}, "frequency must be an ISO 8601 duration"),
             ({"frequency": "P1WT1H"}, "frequency must be an ISO 8601 duration"),

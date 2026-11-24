@@ -196,6 +196,39 @@ def test_defender_extractor_reads_mitre_techniques() -> None:
     assert all(h.display_name == "Mailbox Forwarding Anomaly" for h in hits)
 
 
+def test_defender_extractor_reads_techniques_from_tactics() -> None:
+    client = _StubDefenderClient([
+        {
+            "id": "1",
+            "displayName": "Mailbox Forwarding Anomaly",
+            "detectionAction": {"alertTemplate": {"tactics": [
+                {"tactic": "Collection", "techniques": [
+                    {"technique": "T1114", "subTechniques": ["T1114.003"]},
+                ]},
+            ]}},
+        },
+    ])
+    hits = extract_defender_rule_techniques(client)
+    assert {h.technique_id for h in hits} == {"T1114", "T1114.003"}
+
+
+def test_defender_extractor_reads_tactics_before_mitre_techniques() -> None:
+    client = _StubDefenderClient([
+        {
+            "id": "1",
+            "displayName": "Both shapes",
+            "detectionAction": {"alertTemplate": {
+                "mitreTechniques": ["T1018"],
+                "tactics": [{"tactic": "Collection", "techniques": [
+                    {"technique": "T1114", "subTechniques": []},
+                ]}],
+            }},
+        },
+    ])
+    hits = extract_defender_rule_techniques(client)
+    assert {h.technique_id for h in hits} == {"T1114"}
+
+
 def test_defender_extractor_handles_missing_alert_template() -> None:
     client = _StubDefenderClient([
         {"id": "1", "displayName": "Empty"},  # no detectionAction

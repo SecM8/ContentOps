@@ -141,6 +141,25 @@ pytest `
   -q
 ```
 
+### Defender rule shape probe
+
+Writes to the Defender tenant (tenant-wide, so always production): it
+creates disabled `zz_itest_` rules with a query that cannot return a row,
+asks how Graph treats them, and deletes them. It skips unless the run is
+confirmed. Name a device group when no rule in the tenant is scoped:
+
+```powershell
+$env:RUN_LIVE_TESTS = "1"
+$env:I_UNDERSTAND_THIS_IS_PRODUCTION = "yes"
+$env:DEFENDER_PROBE_DEVICE_GROUP = "<device group name>"
+pytest tests/integration/test_defender_rule_shape_probe.py -q -rs
+```
+
+The answers are in `defender-shape-report.md`. In CI, run
+`integration.yml` with `tests` set to that file, `i-know-this-hits-prod`
+set, and the repository variable `DEFENDER_PROBE_DEVICE_GROUP`; the
+report is uploaded as an artifact. An empty `tests` runs the whole suite.
+
 ### Whole directory
 
 PowerShell passes the directory through fine — only file globs break:

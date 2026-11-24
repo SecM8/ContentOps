@@ -139,11 +139,14 @@ def extract_defender_rule_techniques(
     rules/detectionRules`` with the App Registration's
     ``CustomDetection.Read.All`` (or ``ReadWrite.All``) scope.
 
-    The Defender side carries MITRE techniques on the
-    ``detectionAction.alertTemplate.mitreTechniques`` path. Disabled
-    rules (``status`` disabled / autoDisabled) are skipped unless
+    The Defender side carries MITRE techniques under
+    ``detectionAction.alertTemplate.tactics`` (and, where that has no
+    content, on the deprecated ``mitreTechniques``); both are read
+    through ``contentops.defender.rule_shape``. Disabled rules
+    (``status`` disabled / autoDisabled) are skipped unless
     ``include_disabled``.
     """
+    from contentops.defender.rule_shape import technique_ids
     from contentops.defender.rule_status import is_enabled
 
     try:
@@ -159,9 +162,7 @@ def extract_defender_rule_techniques(
         if not include_disabled and not is_enabled(rule):
             continue
         display = rule.get("displayName") or rule.get("id") or "(unnamed Defender rule)"
-        action = rule.get("detectionAction") or {}
-        template = action.get("alertTemplate") or {}
-        for tech in _current_ids(_as_list(template.get("mitreTechniques")), matrix):
+        for tech in _current_ids(technique_ids(rule), matrix):
             out.append(TechniqueHit(
                 technique_id=tech, display_name=str(display), source="deployed",
             ))

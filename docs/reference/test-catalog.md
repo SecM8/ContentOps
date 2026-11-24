@@ -175,6 +175,7 @@ These hit a real tenant. See the ceremony callout above.
 sentinel_ti_indicator handler was deleted in the asset-taxonomy
 reduction (six supported kinds), and so was its live CRUD test. -->
 | [`test_defender_custom_detection_crud.py`](../../tests/integration/test_defender_custom_detection_crud.py) | defender_custom_detection | Graph beta CRUD; displayName-based upsert. |
+| [`test_defender_rule_shape_probe.py`](../../tests/integration/test_defender_rule_shape_probe.py) | defender_custom_detection | Asks Graph how it treats a rule sent with the current property names only (create, edits, clearing, schedules, scope, automated actions); disabled `zz_itest_` rules only, deleted afterwards. Writes `defender-shape-report.md` (yes/no answers, no tenant values). Needs `I_UNDERSTAND_THIS_IS_PRODUCTION=yes`; set `DEFENDER_PROBE_DEVICE_GROUP` to a device group when no rule in the tenant is scoped. Safety rules unit-tested in `tests/v2/test_defender_shape_probe.py`. |
 | [`test_collect_live_roundtrip.py`](../../tests/integration/test_collect_live_roundtrip.py) | every drift-capable handler | `contentops collect → drift` returns no NEW or CHANGED entries (the round-trip contract). |
 <!-- ``test_collect_drift_roundtrip.py`` row removed -- the lower-level
 roundtrip test was retired alongside the deleted handlers in the

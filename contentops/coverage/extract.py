@@ -21,8 +21,10 @@ Sources, unioned:
      ``techniques`` and ``subTechniques`` (Sentinel stores sub-techniques
      in their own field); ``severity`` (analytics only).
    * ``defender_custom_detection``: ``detectionAction.alertTemplate``
-     ``mitreTechniques``, ``severity``, and ``category`` -- used as the
-     rule's tactic when it names one.
+     ``tactics`` (every tactic it names, and the techniques and
+     sub-techniques under them) and ``severity``. Where ``tactics`` has
+     no content the deprecated ``category`` and ``mitreTechniques`` are
+     read instead (see ``contentops.defender.rule_shape``).
 
 Normalisation:
 
@@ -32,7 +34,7 @@ Normalisation:
 * Ids MITRE revoked are replaced by their successor (``remapped_ids``);
   deprecated and unknown ids are reported but never counted.
 * Tactics are the rule's claimed tactics (metadata + payload; Defender's
-  category). Only a rule that claims none gets tactics inferred from its
+  ``tactics``). Only a rule that claims none gets tactics inferred from its
   techniques (``tactics_inferred``).
 * A technique is attributed to a tactic only when the ATT&CK matrix says
   it belongs there (``tactic_techniques``). Techniques outside every
@@ -47,6 +49,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from contentops.core.asset import Asset
 from contentops.core.envelope import EnvelopeV2
+from contentops.defender.rule_shape import tactic_names, technique_ids
 from contentops.coverage.matrix import (
     ALL_TACTICS,
     AttackMatrix,
@@ -158,12 +161,16 @@ def _defender_payload(payload: Mapping[str, Any]) -> _ReaderResult:
         candidate = detection_action.get("alertTemplate")
         if isinstance(candidate, Mapping):
             alert = candidate
-    # Defender has no tactics field; its alert ``category`` names the
-    # tactic the author chose when it is one (e.g. "Execution"). Other
-    # categories ("Malware", "SuspiciousActivity") claim no tactic.
+    # ``tactics`` (and, where it has no content, the deprecated
+    # ``category`` / ``mitreTechniques``) is read through rule_shape so
+    # coverage counts exactly what a deploy sends. Every tactic the rule
+    # names is claimed; values that are alert categories rather than
+    # ATT&CK tactics ("Malware", "SuspiciousActivity") claim none, but the
+    # techniques listed under them still count.
+    source = payload if isinstance(payload, dict) else dict(payload)
     return (
-        _tactics([alert.get("category")]),
-        _str_list(alert.get("mitreTechniques")),
+        _tactics(tactic_names(source)),
+        _str_list(technique_ids(source)),
         _normalise_severity(alert.get("severity")),
     )
 

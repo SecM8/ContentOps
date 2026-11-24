@@ -154,9 +154,7 @@ def defender_roundtrip_diff_cmd(
     from contentops.defender.client import DefenderClient
     from contentops.defender.deploy import build_display_name_map
     from contentops.defender_roundtrip import diff_bodies, render_diff
-    from contentops.handlers.defender_custom_detection import (
-        _HASHED_FIELDS, _strip_server_fields,
-    )
+    from contentops.handlers.defender_custom_detection import _strip_server_fields
     from contentops.utils.auth import get_credential
 
     # 1. Find the local envelope.
@@ -176,7 +174,15 @@ def defender_roundtrip_diff_cmd(
         )
         sys.exit(1)
 
-    local_body = local.payload  # to_defender_body is a pass-through.
+    # The body apply would send: one key per old/new pair.
+    from dataclasses import replace
+
+    from contentops.defender import rule_compare
+    from contentops.utils.yaml_io import to_defender_body
+
+    local_body = to_defender_body(
+        local.payload, deprecated=local.envelope.status == "deprecated",
+    )
     display_name = local_body.get("displayName")
 
     # 2. Fetch the live remote via the rule's Graph id (looked up by displayName).
@@ -202,14 +208,21 @@ def defender_roundtrip_diff_cmd(
         sys.exit(1)
 
     # 3. Diff + render. By default apply the same strip the apply
-    # path uses for hash verification, so the diagnostic mirrors what
-    # apply sees. --raw skips the strip and shows the literal API
-    # response (the "is there a new server-managed field?" mode).
+    # path uses for its check, so the diagnostic mirrors what apply
+    # sees. --raw skips the strip and shows the literal API response
+    # (the "is there a new server-managed field?" mode).
     if show_raw:
         remote_for_diff = remote
     else:
         remote_for_diff = _strip_server_fields(remote)
-    diffs = diff_bodies(local_body, remote_for_diff, _HASHED_FIELDS)
+    # The verdict per field is apply's own (``rule_compare``): a short
+    # hand-written value equals the tenant's expanded form, an empty
+    # value equals another empty one. ``diff_bodies`` only renders.
+    changed = set(rule_compare.diff_rule(local_body, remote_for_diff).changed)
+    diffs = [
+        replace(d, differs=d.field in changed)
+        for d in diff_bodies(local_body, remote_for_diff, rule_compare.compared_fields(local_body))
+    ]
     sys.stdout.write(
         render_diff(
             diffs,
@@ -526,7 +539,7 @@ def defender_patch_probe_cmd(
     Each PATCH below re-sends the rule's CURRENT remote value, so a 200 is a
     true no-op and a 400 mutates nothing - the live rule is never changed:
       A. full local body (what `apply` sends)  -> expect 400 (reproduce)
-      B. only schedule.period                  -> expect 200 (partial works)
+      B. only schedule.frequency (or .period)  -> expect 200 (partial works)
       C. only queryCondition.queryText         -> expect 400 (query rejected)
       D. only detectionAction.alertTemplate.severity -> expect 200
 
@@ -603,7 +616,11 @@ def defender_patch_probe_cmd(
             sys.exit(1)
 
         # 3. Build the probe bodies from CURRENT remote values (non-mutating).
-        r_sched = (remote.get("schedule") or {}).get("period")
+        # ``period`` is deprecated: send the current key when the tenant
+        # returns one, the old key only for a rule that has nothing else.
+        r_schedule = remote.get("schedule") or {}
+        sched_key = "frequency" if r_schedule.get("frequency") else "period"
+        r_sched = r_schedule.get(sched_key)
         r_query = (remote.get("queryCondition") or {}).get("queryText")
         r_sev = (
             ((remote.get("detectionAction") or {}).get("alertTemplate") or {})
@@ -614,8 +631,8 @@ def defender_patch_probe_cmd(
             ("A full-local-body", to_defender_body(local_body), "400"),
         ]
         if r_sched is not None:
-            probes.append(("B schedule.period-only",
-                           {"schedule": {"period": r_sched}}, "200"))
+            probes.append((f"B schedule.{sched_key}-only",
+                           {"schedule": {sched_key: r_sched}}, "200"))
         if r_query is not None:
             probes.append(("C queryText-only",
                            {"queryCondition": {"queryText": r_query}}, "400"))

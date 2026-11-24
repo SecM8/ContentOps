@@ -70,6 +70,9 @@ config/tenant.*.yml
 /.snapshot/
 /.test-export/
 /drift-report.json
+# Written by the live Defender shape probe (tests/integration); the CI job
+# uploads it as an artifact.
+/defender-shape-report.md
 /.e2e-results.json
 /alerts-reports/
 # `coverage*.md/json` + `coverage-navigator.json` — ad-hoc on-demand

@@ -107,6 +107,54 @@ def test_payload006_quiet_when_reprojected_after_invoke() -> None:
     assert "PAYLOAD006" not in _ids(payload)
 
 
+def _defender_mapped(query: str, mappings: dict, identifiers: list[str] | None = None) -> dict:
+    template: dict = {"entityMappings": mappings}
+    if identifiers is not None:
+        template["impactedAssets"] = [{"identifier": i} for i in identifiers]
+    return {"queryCondition": {"queryText": query}, "detectionAction": {"alertTemplate": template}}
+
+
+def test_payload006_fires_for_an_entity_mapping_column_dropped_after_invoke() -> None:
+    payload = _defender_mapped(
+        "DeviceEvents\n| invoke FileProfile(SHA1,1000)\n| distinct SHA1",
+        {"hosts": [{"deviceIdColumn": "DeviceId", "nameColumn": ""}], "files": [{"sha1Column": "SHA1"}]},
+    )
+    messages = [f.message for f in lint_payload(payload, asset=D) if f.rule_id == "PAYLOAD006"]
+    assert len(messages) == 1
+    assert "`DeviceId`" in messages[0]
+
+
+def test_payload006_quiet_when_every_mapped_column_is_reprojected() -> None:
+    payload = _defender_mapped(
+        "DeviceEvents\n| invoke FileProfile(SHA1,1000)\n"
+        '| extend DeviceId = column_ifexists("DeviceId", "")\n| project DeviceId, SHA1',
+        {"hosts": [{"deviceIdColumn": "DeviceId"}], "files": [{"sha1Column": "SHA1"}]},
+    )
+    assert "PAYLOAD006" not in _ids(payload)
+
+
+def test_payload006_does_not_take_an_odata_annotation_for_a_column() -> None:
+    payload = _defender_mapped(
+        "DeviceEvents\n| invoke FileProfile(SHA1,1000)\n| project DeviceId, SHA1",
+        {"hosts": [{
+            "@odata.type": "#microsoft.graph.security.hostEntityMapping",
+            "deviceIdColumn": "DeviceId",
+        }]},
+    )
+    assert "PAYLOAD006" not in _ids(payload)
+
+
+def test_payload006_reads_entity_mappings_before_impacted_assets() -> None:
+    # The mapped column is re-projected; the old identifier is not, but the
+    # old key is ignored once entityMappings has content.
+    payload = _defender_mapped(
+        "DeviceEvents\n| invoke FileProfile(SHA1,1000)\n| project DeviceName, SHA1",
+        {"hosts": [{"nameColumn": "DeviceName"}]},
+        identifiers=["deviceId"],
+    )
+    assert "PAYLOAD006" not in _ids(payload)
+
+
 def test_payload006_quiet_without_fileprofile() -> None:
     # Non-FileProfile reshaping query: the validator resolves columns from
     # the real table schema, so dropping DeviceId is not our failure mode.

@@ -322,6 +322,7 @@ _RULE_REGISTRY: tuple[tuple[str, str, str], ...] = (
     ("PAYLOAD004", "warning", "contentops.lint.payload"),
     ("PAYLOAD005", "warning", "contentops.lint.payload"),
     ("PAYLOAD006", "warning", "contentops.lint.payload"),
+    ("PAYLOAD015", "warning", "contentops.lint.payload"),
     # Support-asset rules (automation rules / playbooks) in
     # contentops.lint.support_assets. PAYLOAD014 is error for an
     # unconditioned close rule and warning for an unscoped one; the

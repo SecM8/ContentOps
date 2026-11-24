@@ -16,12 +16,26 @@ from contentops.utils.yaml_io import to_defender_body
 logger = logging.getLogger(__name__)
 
 
-def build_rule_index(client: DefenderClient) -> tuple[dict[str, str], set[str]]:
+def alert_title(rule: dict) -> str:
+    """``detectionAction.alertTemplate.title`` of a rule or payload, or ""."""
+    action = rule.get("detectionAction") if isinstance(rule, dict) else None
+    template = action.get("alertTemplate") if isinstance(action, dict) else None
+    title = template.get("title") if isinstance(template, dict) else None
+    return str(title) if title else ""
+
+
+def build_rule_index(
+    client: DefenderClient, *, titles: dict[str, str] | None = None,
+) -> tuple[dict[str, str], set[str]]:
     """GET all rules once; return (displayName -> Graph ID map, set of Graph IDs).
 
     The id set lets apply match a YAML by its ``metadata.arm_name`` (the
     Graph id collect records) before falling back to displayName, so a
     rule renamed in YAML is PATCHed in place instead of re-created.
+
+    ``titles``, when given, is filled with alert title -> Graph id. Graph
+    keeps titles unique, so a rule deploy created (no id recorded in its
+    file yet) and then renamed is still found by its title.
 
     Fails fast if duplicate displayNames are found.
     """
@@ -35,6 +49,8 @@ def build_rule_index(client: DefenderClient) -> tuple[dict[str, str], set[str]]:
         graph_id = str(rule.get("id", ""))
         if graph_id:
             graph_ids.add(graph_id)
+            if titles is not None and alert_title(rule):
+                titles[alert_title(rule)] = graph_id
         if display_name in name_map:
             duplicates.append(display_name)
         else:
@@ -74,6 +90,17 @@ def resolve_graph_id(
     if arm_name and graph_ids is not None and arm_name in graph_ids:
         return arm_name
     return name_map.get(display_name) or None
+
+
+def title_conflict_message(title: str, graph_id: str) -> str:
+    """Why a create is not sent when another rule has its alert title."""
+    return (
+        f"not created: rule {graph_id} already has the alert title {title!r}, "
+        "and Graph keeps titles unique (it answers 409). If this file is that "
+        "rule renamed, record its id as `metadata.arm_name: "
+        f"'{graph_id}'` (collect does this) and deploy again; otherwise give "
+        "this rule its own title"
+    )
 
 
 def record_graph_id(

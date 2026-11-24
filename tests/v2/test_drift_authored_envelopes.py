@@ -148,6 +148,77 @@ def test_importing_keeps_the_status_of_a_rule_deployed_disabled(tmp_path: Path) 
     assert doc["status"] == "production"
 
 
+def test_a_deprecated_analytic_is_compared_as_switched_off(tmp_path: Path) -> None:
+    """Deploy switches a ``deprecated`` analytic off whatever its payload
+    says (emergency disable only flips the status). The tenant then
+    reports ``enabled: false``, which is what the repo asked for; drift
+    reported it as a change. A production rule that is off is still one."""
+    payload = {"displayName": "zz", "kind": "Scheduled", "enabled": True, "query": "T", "severity": "Low"}
+    _write(tmp_path, Asset.SENTINEL_ANALYTIC, "zz-retired", payload, status="deprecated")
+    _write(tmp_path, Asset.SENTINEL_ANALYTIC, "zz-live", payload)
+    served = {**payload, "enabled": False}
+    tenant = _Tenant(Asset.SENTINEL_ANALYTIC, [
+        _collected("zz-retired", Asset.SENTINEL_ANALYTIC, served, status="deprecated"),
+        _collected("zz-live", Asset.SENTINEL_ANALYTIC, served, status="deprecated"),
+    ])
+    kinds = {e.asset_id: e.kind for e in detect_drift([tenant], tmp_path).entries}
+    assert kinds == {"zz-retired": "in-sync", "zz-live": "changed"}
+
+
+def test_old_defender_keys_the_tenant_mirrors_are_not_drift(tmp_path: Path) -> None:
+    """Graph returns every rule with the deprecated keys filled in next to
+    the current ones (``scopeNames`` / ``scopeType`` next to
+    ``deviceGroups``, ``responseActions`` next to ``automatedActions``).
+    A file that holds the current keys only was reported as changed right
+    after a verified deploy. Seen against a tenant. Both sides are now
+    compared in the current shape; a real change still is drift."""
+    payload = {
+        "displayName": "zz rule", "status": "disabled",
+        "queryCondition": {"queryText": "DeviceProcessEvents | take 1"},
+        "schedule": {"frequency": "PT1H"},
+        "detectionAction": {
+            "organizationalScope": {"deviceGroups": ["group-a"]},
+            "automatedActions": {"runAntivirusScans": [{"deviceIdColumn": "DeviceId"}]},
+        },
+    }
+    served = {
+        **payload,
+        "schedule": {"frequency": "PT1H", "period": "1H"},
+        "detectionAction": {
+            "organizationalScope": {"deviceGroups": ["group-a"], "scopeType": "deviceGroup",
+                                    "scopeNames": ["group-a"]},
+            "automatedActions": {"runAntivirusScans": [{"deviceIdColumn": "DeviceId"}]},
+            "responseActions": [{"@odata.type": "#microsoft.graph.security.runAntivirusScanResponseAction",
+                                 "identifier": "deviceId"}],
+        },
+    }
+    _write(tmp_path, Asset.DEFENDER_CUSTOM_DETECTION, "zz-rule", payload)
+    tenant = _Tenant(Asset.DEFENDER_CUSTOM_DETECTION, [
+        _collected("zz-rule", Asset.DEFENDER_CUSTOM_DETECTION, served, name="42")])
+    assert [e.kind for e in detect_drift([tenant], tmp_path).entries] == ["in-sync"]
+
+    renamed = {**served, "displayName": "renamed in the portal"}
+    tenant = _Tenant(Asset.DEFENDER_CUSTOM_DETECTION, [
+        _collected("zz-rule", Asset.DEFENDER_CUSTOM_DETECTION, renamed, name="42")])
+    assert [e.kind for e in detect_drift([tenant], tmp_path).entries] == ["changed"]
+
+
+def test_importing_keeps_the_status_of_a_defender_rule_deployed_disabled(tmp_path: Path) -> None:
+    """A Defender rule says it is off with ``payload.status: disabled``; the
+    tenant then lists it as ``deprecated``. An unrelated import must not
+    retire a ``production`` file (same rule as for analytics)."""
+    payload = {"displayName": "zz rule", "status": "disabled",
+               "queryCondition": {"queryText": "DeviceProcessEvents | take 1"}}
+    path = _write(tmp_path, Asset.DEFENDER_CUSTOM_DETECTION, "zz-rule", payload)
+    tenant = _Tenant(Asset.DEFENDER_CUSTOM_DETECTION, [_collected(
+        "zz-rule", Asset.DEFENDER_CUSTOM_DETECTION, {**payload, "displayName": "renamed"},
+        name="42", status="deprecated")])
+    write_drift(detect_drift([tenant], tmp_path), tmp_path)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert doc["payload"]["displayName"] == "renamed"
+    assert doc["status"] == "production"
+
+
 def test_the_default_label_type_is_not_drift_on_either_side(tmp_path: Path) -> None:
     """The tenant returns every label with ``labelType: User``, the
     default. A file that adds a label does not say so; a collected file

@@ -31,13 +31,13 @@ payload:
   category: Function
   functionAlias: GetFailedLogons
   functionParameters: ""
+  # The query is the function body. Do not wrap it in `let <name> = (...) {...}`:
+  # a default such as `start:datetime=ago(1h)` is not a literal, and the
+  # workspace rejects that form. Parameters go in `functionParameters`.
   query: |
-    let GetFailedLogons = (start:datetime=ago(1h), end:datetime=now()) {
-        SecurityEvent
-        | where TimeGenerated between (start .. end)
-        | where EventID == 4625
-    };
-    GetFailedLogons
+    SecurityEvent
+    | where TimeGenerated > ago(1h)
+    | where EventID == 4625
   version: 2
 ```
 

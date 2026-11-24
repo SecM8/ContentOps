@@ -28,6 +28,11 @@ on:
         required: false
         default: false
         type: boolean
+      tests:
+        description: "Optional: one live test file to run instead of the whole suite, e.g. tests/integration/test_defender_rule_shape_probe.py. Empty runs the whole suite."
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [labeled]
 
@@ -60,6 +65,10 @@ jobs:
       INTEGRATION_WORKSPACE_NAME: ${{ secrets.INTEGRATION_WORKSPACE_NAME }}
       INTEGRATION_WORKSPACE_LOCATION: ${{ secrets.INTEGRATION_WORKSPACE_LOCATION }}
       I_UNDERSTAND_THIS_IS_PRODUCTION: ${{ inputs.i-know-this-hits-prod && 'yes' || '' }}
+      # Device group the Defender shape probe puts on its disabled test
+      # rule; without it the probe copies one from an existing scoped rule
+      # or skips the scope questions. Never written to the report.
+      DEFENDER_PROBE_DEVICE_GROUP: ${{ vars.DEFENDER_PROBE_DEVICE_GROUP }}
     steps:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -80,11 +89,34 @@ jobs:
       - name: Run integration suite
         # sweep-only: select just the sweep test; its session fixtures
         # delete leftover test resources and nothing is created.
+        # tests: one named live test file instead of the whole suite. The
+        # value reaches the shell through env and must name a plain test
+        # file under tests/integration; anything else stops here.
+        # -rs prints why a test skipped (missing env, no confirmation).
         env:
           SWEEP_ONLY: ${{ inputs.sweep-only }}
+          INPUT_TESTS: ${{ inputs.tests }}
         run: |
+          set -euo pipefail
           if [ "$SWEEP_ONLY" = "true" ]; then
-            pytest -q tests/integration -k sweep_leftover
+            pytest -q -rs tests/integration -k sweep_leftover
+          elif [ -n "$INPUT_TESTS" ]; then
+            if ! printf '%s' "$INPUT_TESTS" | grep -Eq '^tests/integration/test_[a-z0-9_]+\.py$' || [ ! -f "$INPUT_TESTS" ]; then
+              echo "::error::The tests input must name one file tests/integration/test_<name>.py that exists. Nothing was run."
+              exit 1
+            fi
+            pytest -q -rs "$INPUT_TESTS"
           else
-            pytest -q tests/integration
+            pytest -q -rs tests/integration
           fi
+
+      - name: Upload the shape report
+        # Written by the Defender shape probe: synthetic values and yes/no
+        # answers only, never a value read from the tenant.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: defender-shape-report-${{ github.run_id }}
+          path: defender-shape-report.md
+          if-no-files-found: ignore
+          retention-days: 30

@@ -117,6 +117,69 @@ def test_defender_orphan_technique_is_surfaced() -> None:
     assert cov.tactics == ()
 
 
+def test_defender_reads_every_tactic_from_tactics() -> None:
+    """``tactics`` replaces ``category`` and can name several tactics;
+    every one of them is claimed, with the techniques under them."""
+    cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {
+        "detectionAction": {"alertTemplate": {
+            "severity": "low",
+            "tactics": [
+                {"tactic": "Persistence", "techniques": [
+                    {"technique": "T1098", "subTechniques": ["T1098.007"]},
+                ]},
+                {"tactic": "PrivilegeEscalation", "techniques": [
+                    {"technique": "T1098", "subTechniques": ["T1098.007"]},
+                ]},
+            ],
+        }},
+    })
+    assert cov.tactics == ("Persistence", "PrivilegeEscalation")
+    assert "T1098" in cov.techniques and "T1098.007" in cov.techniques
+    assert cov.tactics_inferred is False
+    assert cov.severity == "low"
+
+
+def test_defender_new_keys_win_over_the_old_ones() -> None:
+    cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {
+        "detectionAction": {"alertTemplate": {
+            "category": "Discovery",
+            "mitreTechniques": ["T1018"],
+            "tactics": [{"tactic": "Execution", "techniques": [
+                {"technique": "T1059", "subTechniques": []},
+            ]}],
+        }},
+    })
+    assert cov.tactics == ("Execution",)
+    assert "T1059" in cov.techniques
+    assert "T1018" not in cov.techniques
+
+
+def test_defender_technique_under_a_non_attack_tactic_still_counts() -> None:
+    """Defender also uses alert categories such as SuspiciousActivity as
+    a tactic value. They claim no ATT&CK tactic, but the techniques
+    listed under them count."""
+    cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {
+        "detectionAction": {"alertTemplate": {
+            "tactics": [{"tactic": "SuspiciousActivity", "techniques": [
+                {"technique": "T1018", "subTechniques": []},
+            ]}],
+        }},
+    })
+    assert "T1018" in cov.techniques
+    assert cov.tactics == ("Discovery",)
+    assert cov.tactics_inferred is True
+
+
+def test_defender_old_keys_are_read_when_tactics_is_empty() -> None:
+    cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {
+        "detectionAction": {"alertTemplate": {
+            "tactics": [], "category": "Discovery", "mitreTechniques": ["T1018"],
+        }},
+    })
+    assert cov.tactics == ("Discovery",)
+    assert "T1018" in cov.techniques
+
+
 def test_defender_handles_missing_alert_template_gracefully() -> None:
     """A malformed / partial payload must not raise; returns an empty triple."""
     cov = extract_mitre(_envelope(Asset.DEFENDER_CUSTOM_DETECTION), {})

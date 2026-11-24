@@ -40,6 +40,10 @@ def is_enabled(rule: dict[str, Any]) -> bool:
 def to_wire_body(payload: dict[str, Any], *, deprecated: bool = False) -> dict[str, Any]:
     """Build the Graph request body from an authored payload.
 
+    * One key per deprecated/current pair is sent, never both (see
+      ``rule_shape.to_current_shape``): the new key when it has content,
+      otherwise the old key as written. The service rejects a property
+      it no longer knows, so an old key that is not needed is left out.
     * ``isEnabled`` is never sent (removed from the API); its value is
       folded into ``status`` when the payload has no ``status``.
     * ``deprecated`` envelopes are always sent as ``status: disabled``.
@@ -48,7 +52,9 @@ def to_wire_body(payload: dict[str, Any], *, deprecated: bool = False) -> dict[s
 
     Returns a new dict; ``payload`` is not mutated.
     """
-    body = dict(payload)
+    from contentops.defender.rule_shape import to_current_shape
+
+    body = to_current_shape(payload)
     body.pop("isEnabled", None)
     status = rule_status(payload)
     if deprecated:

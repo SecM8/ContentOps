@@ -184,6 +184,20 @@ def test_send_builds_nondestructive_partial_bodies(detections_dir: Path, patched
     assert len(query_only) == 1
 
 
+def test_schedule_probe_sends_the_current_key_when_the_tenant_returns_it(
+    detections_dir: Path, patched_client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``schedule.period`` is deprecated. When the tenant returns a
+    ``frequency`` the schedule-only probe must send that, and only that."""
+    remote = {**_REMOTE, "schedule": {"period": "1H", "frequency": "PT1H", "lookback": "PT4H"}}
+    monkeypatch.setitem(globals(), "_REMOTE", remote)
+    result = _run(detections_dir, "--send")
+    assert result.exit_code == 0, result.output
+    patches = [body for m, _, body in patched_client if m == "PATCH"]
+    schedule_only = [b for b in patches if set(b) == {"schedule"}]
+    assert schedule_only == [{"schedule": {"frequency": "PT1H"}}]
+
+
 def test_replicate_surfaces_graph_reason_and_cleans_up(detections_dir: Path, patched_client) -> None:
     result = _run(detections_dir, "--send", "--replicate")
     assert result.exit_code == 0, result.output

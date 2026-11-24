@@ -39,17 +39,20 @@ payload:
       DeviceProcessEvents
       | where Timestamp > ago(1h)
       | take 100
+  # ISO 8601 duration: PT0S (continuous), PT1H, PT3H, PT12H, P1D.
   schedule:
-    period: "1H"
+    frequency: PT1H
   detectionAction:
     alertTemplate:
       title: "${display_name}"
       description: TODO describe what this detection finds and recommended response.
       severity: medium
-      category: Discovery
-      mitreTechniques:
-        - T1083
-      impactedAssets:
-        - "@odata.type": "#microsoft.graph.security.impactedDeviceAsset"
-          identifier: deviceId
-    responseActions: []
+      tactics:
+        - tactic: Discovery
+          techniques:
+            - technique: T1083
+              subTechniques: []
+      # Each value names a column the query returns.
+      entityMappings:
+        hosts:
+          - deviceIdColumn: DeviceId

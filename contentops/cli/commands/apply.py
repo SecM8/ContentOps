@@ -46,6 +46,33 @@ from contentops.core.asset import Asset
 from contentops.core.result import ActionResult, PlanAction
 
 
+def _defender_dry_run_totals(results: list[ActionResult]) -> str | None:
+    """One line of totals for the Defender rules of a dry run.
+
+    A dry run reads each selected Defender rule and compares it with its
+    file, so the totals say how many rules a real deploy would touch.
+    ``None`` when the run held no Defender rule.
+    """
+    rows = [
+        r for r in results
+        if r.asset_kind == Asset.DEFENDER_CUSTOM_DETECTION.value and r.status == "dry-run"
+    ]
+    if not rows:
+        return None
+    # Each row counts once. "Not compared" comes first: such a row keeps
+    # the label it would have had, but nothing is known about its rule.
+    compared = [r for r in rows if not (r.detail or "").startswith("not compared")]
+    not_compared = len(rows) - len(compared)
+    unchanged = sum(1 for r in compared if r.action == PlanAction.NOOP)
+    creates = sum(1 for r in compared if r.action == PlanAction.CREATE)
+    updates = len(compared) - unchanged - creates
+    return (
+        f"Defender dry run: {len(rows)} rule(s) checked against the tenant: "
+        f"{unchanged} no change, {updates} would update, {creates} would create, "
+        f"{not_compared} not compared."
+    )
+
+
 @click.command("plan")
 @click.option(
     "--path", "detections_path",
@@ -361,6 +388,10 @@ def apply_cmd(
     )
     for r in results:
         click.echo(r.as_row())
+    if dry_run:
+        totals = _defender_dry_run_totals(results)
+        if totals:
+            click.echo(f"\n{totals}")
 
     audit_path: Path | None = None
     audit_first_line: int | None = None

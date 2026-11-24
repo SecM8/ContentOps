@@ -69,10 +69,17 @@ def test_render_all_includes_index() -> None:
 
 
 def test_render_emits_one_file_per_envelope() -> None:
+    """One page per detection envelope, plus the index. Automation rules
+    and playbooks get no page (``render_all`` leaves support assets out),
+    so they are not counted; counting them failed in every deployment
+    repo that holds one, never in this source repo, which holds none."""
+    from contentops.core.asset import NON_DETECTION_ASSETS
+
     envelopes = _load_repo_envelopes()
     rendered = render_all(envelopes, repo_root=REPO_ROOT)
+    detections = [la for la in envelopes if la.envelope.asset not in NON_DETECTION_ASSETS]
     # +1 for the index file.
-    assert len(rendered) == len(envelopes) + 1
+    assert len(rendered) == len(detections) + 1
 
 
 def test_render_detection_ends_with_single_newline() -> None:

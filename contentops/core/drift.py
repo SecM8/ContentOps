@@ -164,9 +164,21 @@ def _without_default_label_type(payload: dict) -> dict:
     return {**payload, "actions": out}
 
 
+def _defender_current_shape(payload: dict) -> dict:
+    """Defender rules: Graph returns the deprecated keys filled in next to
+    the current ones (``scopeNames`` next to ``deviceGroups``,
+    ``responseActions`` next to ``automatedActions``, ...). Compared in
+    the current shape (one key per old/new pair), a file that holds the
+    current keys only is in sync with the tenant."""
+    from contentops.defender.rule_shape import to_current_shape
+
+    return to_current_shape(payload)
+
+
 # Per-kind canonical form, applied to both sides before comparing.
 _CANONICAL = {
     Asset.SENTINEL_AUTOMATION_RULE: _without_default_label_type,
+    Asset.DEFENDER_CUSTOM_DETECTION: _defender_current_shape,
 }
 
 
@@ -235,7 +247,18 @@ def _local_index(detections_root: Path, asset: Asset) -> dict[str, tuple[Path, d
             continue
         if loaded.envelope.asset != asset:
             continue
-        entry = (path, loaded.payload)
+        payload = loaded.payload
+        if (
+            asset is Asset.SENTINEL_ANALYTIC
+            and loaded.envelope.status == "deprecated"
+            and isinstance(payload, dict)
+            and payload.get("enabled") is not False
+        ):
+            # Deploy switches a deprecated analytic off whatever the
+            # payload says (emergency disable flips only the status), so
+            # the tenant's ``enabled: false`` is what the repo asked for.
+            payload = {**payload, "enabled": False}
+        entry = (path, payload)
         # Fallback key: envelope id (handlers w/o arm_name).
         out[loaded.envelope.id] = entry
         # Primary key: the authoritative remote name when known.
@@ -537,11 +560,14 @@ def _preserve_authored(envelope: dict, local_path: Path, asset: Asset) -> dict:
     for key, value in local.items():
         if key not in _ENVELOPE_KEYS_FROM_TENANT and key not in envelope:
             envelope[key] = value
+    def _off(p: Any) -> bool:
+        # Analytic: ``enabled: false``. Defender: ``status: disabled``.
+        return isinstance(p, dict) and (p.get("enabled") is False or p.get("status") == "disabled")
+
     if (
         envelope.get("status") == "deprecated"
         and local.get("status") not in (None, "deprecated")
-        and local_payload.get("enabled") is False
-        and isinstance(payload, dict) and payload.get("enabled") is False
+        and _off(local_payload) and _off(payload)
     ):
         envelope["status"] = local["status"]
     return envelope

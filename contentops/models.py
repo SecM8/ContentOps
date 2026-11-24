@@ -461,6 +461,13 @@ def _parse_schedule_duration(value: str, *, field: str) -> timedelta:
     if match is None or all(part is None for part in match.groups()):
         raise error
     weeks, days, hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    if match.group(1) is not None:
+        # ISO 8601 has a week form, but Graph rejects it for a rule
+        # schedule (400, "not an Edm.Duration"; checked against a tenant).
+        raise ValueError(
+            f"schedule.{field} in weeks is not accepted by Graph; write P{weeks * 7}D "
+            f"instead of {value!r}"
+        )
     try:
         return timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds)
     except OverflowError:

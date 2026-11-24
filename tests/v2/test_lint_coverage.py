@@ -225,6 +225,7 @@ _EXPECTED_SEVERITIES: dict[str, str] = {
     "PAYLOAD004": "warning", # Defender recommendedActions is null
     "PAYLOAD005": "warning", # FileProfile output column filtered w/o column_ifexists
     "PAYLOAD006": "warning", # entity column not re-projected after FileProfile
+    "PAYLOAD015": "warning", # deprecated Graph property on a Defender rule
     # Support-asset rules in contentops/lint/support_assets.py
     "PAYLOAD007": "error",   # dangling playbook: / analytic: reference
     "PAYLOAD008": "warning", # automation rule already expired
@@ -324,6 +325,12 @@ def _all_emitted_severities() -> dict[str, set[str]]:
             "DeviceEvents | invoke FileProfile(SHA1,1000) | distinct SHA1"},
          "detectionAction": {"alertTemplate": {
              "impactedAssets": [{"identifier": "deviceId"}]}}},
+        asset=Asset.DEFENDER_CUSTOM_DETECTION,
+    ))
+
+    # PAYLOAD015 -- deprecated Graph property on a Defender rule
+    _record(lint_payload(
+        {"schedule": {"period": "1H", "frequency": "PT1H"}},
         asset=Asset.DEFENDER_CUSTOM_DETECTION,
     ))
 

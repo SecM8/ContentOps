@@ -245,6 +245,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 | `PAYLOAD010` | warning | `contentops.lint.support_assets` |
 | `PAYLOAD012` | warning | `contentops.lint.support_assets` |
 | `PAYLOAD014` | error | `contentops.lint.support_assets` |
+| `PAYLOAD015` | warning | `contentops.lint.payload` |
 
 ## Handlers
 
@@ -301,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **197** files, **2327** test functions. Integration: **12** files, **17** test functions.
+Unit: **202** files, **2467** test functions. Integration: **13** files, **18** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -361,23 +362,27 @@ Unit: **197** files, **2327** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_coverage.py` | 25 |
 | `tests/v2/test_coverage_corpus.py` | 11 |
 | `tests/v2/test_coverage_d3fend.py` | 12 |
-| `tests/v2/test_coverage_extract.py` | 23 |
+| `tests/v2/test_coverage_extract.py` | 27 |
 | `tests/v2/test_coverage_gaps.py` | 23 |
 | `tests/v2/test_coverage_matrix.py` | 6 |
 | `tests/v2/test_coverage_sources.py` | 11 |
 | `tests/v2/test_daily_store.py` | 8 |
+| `tests/v2/test_defender_apply_new_values.py` | 26 |
 | `tests/v2/test_defender_dry_run_resolve.py` | 4 |
 | `tests/v2/test_defender_extensions_probe.py` | 9 |
 | `tests/v2/test_defender_no_duplicate_create.py` | 8 |
-| `tests/v2/test_defender_patch_probe.py` | 5 |
+| `tests/v2/test_defender_patch_probe.py` | 6 |
 | `tests/v2/test_defender_roundtrip.py` | 10 |
+| `tests/v2/test_defender_rule_compare.py` | 21 |
+| `tests/v2/test_defender_rule_shape.py` | 29 |
 | `tests/v2/test_defender_rule_status.py` | 14 |
+| `tests/v2/test_defender_shape_probe.py` | 38 |
 | `tests/v2/test_dependencies.py` | 7 |
 | `tests/v2/test_detect_production_promotions.py` | 9 |
 | `tests/v2/test_detection_docs.py` | 15 |
 | `tests/v2/test_detection_health.py` | 50 |
 | `tests/v2/test_devex_doctor.py` | 9 |
-| `tests/v2/test_devex_scaffold.py` | 11 |
+| `tests/v2/test_devex_scaffold.py` | 12 |
 | `tests/v2/test_disable.py` | 5 |
 | `tests/v2/test_disable_pattern.py` | 12 |
 | `tests/v2/test_discovery.py` | 4 |
@@ -391,7 +396,7 @@ Unit: **197** files, **2327** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_doctor_output.py` | 3 |
 | `tests/v2/test_doctor_sentinel_health.py` | 6 |
 | `tests/v2/test_drift.py` | 16 |
-| `tests/v2/test_drift_authored_envelopes.py` | 8 |
+| `tests/v2/test_drift_authored_envelopes.py` | 11 |
 | `tests/v2/test_drift_field_diff.py` | 10 |
 | `tests/v2/test_drift_pr_body.py` | 8 |
 | `tests/v2/test_drift_resolve.py` | 8 |
@@ -419,9 +424,10 @@ Unit: **197** files, **2327** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_lint_advisory_severities.py` | 4 |
 | `tests/v2/test_lint_coverage.py` | 6 |
 | `tests/v2/test_lint_graduated_strict.py` | 10 |
-| `tests/v2/test_lint_new_rules.py` | 21 |
+| `tests/v2/test_lint_legacy_graph_keys.py` | 7 |
+| `tests/v2/test_lint_new_rules.py` | 23 |
 | `tests/v2/test_lint_payload002_slug_truncation.py` | 13 |
-| `tests/v2/test_lint_payload_defender.py` | 10 |
+| `tests/v2/test_lint_payload_defender.py` | 14 |
 | `tests/v2/test_lint_query_length.py` | 8 |
 | `tests/v2/test_lint_strict.py` | 13 |
 | `tests/v2/test_lint_strict_config.py` | 13 |
@@ -435,7 +441,7 @@ Unit: **197** files, **2327** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_migrate_tenant_config.py` | 4 |
 | `tests/v2/test_multi_workspace_config.py` | 28 |
 | `tests/v2/test_multi_workspace_targeting.py` | 15 |
-| `tests/v2/test_navigator_extract.py` | 21 |
+| `tests/v2/test_navigator_extract.py` | 23 |
 | `tests/v2/test_navigator_render.py` | 10 |
 | `tests/v2/test_optional_engines.py` | 14 |
 | `tests/v2/test_plan_against_tenant.py` | 4 |
@@ -496,7 +502,7 @@ Unit: **197** files, **2327** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
 | `tests/v2/test_url_path_safety.py` | 8 |
 | `tests/v2/test_watchlist_model.py` | 10 |
-| `tests/v2/test_workflow_hardening.py` | 18 |
+| `tests/v2/test_workflow_hardening.py` | 20 |
 | `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
 | `tests/v2/test_workspace_kql.py` | 30 |
 | `tests/v2/test_workspace_kql_emulator.py` | 3 |
@@ -512,6 +518,7 @@ Unit: **197** files, **2327** test functions. Integration: **12** files, **17** 
 | `tests/integration/test_alerts_collect.py` | 2 |
 | `tests/integration/test_collect_live_roundtrip.py` | 1 |
 | `tests/integration/test_defender_custom_detection_crud.py` | 1 |
+| `tests/integration/test_defender_rule_shape_probe.py` | 1 |
 | `tests/integration/test_detection_health_live.py` | 1 |
 | `tests/integration/test_prune_live.py` | 2 |
 | `tests/integration/test_rollback_drill_live.py` | 2 |

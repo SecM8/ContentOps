@@ -115,7 +115,30 @@ def test_payload003_defender_empty_mitre_techniques_warns() -> None:
     findings = lint_payload(payload, asset=Asset.DEFENDER_CUSTOM_DETECTION)
     p003 = [f for f in findings if f.rule_id == "PAYLOAD003"]
     assert len(p003) == 1
-    assert "mitreTechniques" in p003[0].message
+    # The message points at the key authors should use now.
+    assert "alertTemplate.tactics" in p003[0].message
+
+
+def test_payload003_defender_techniques_under_tactics_silent() -> None:
+    payload = {
+        "detectionAction": {"alertTemplate": {"tactics": [
+            {"tactic": "Execution", "techniques": [
+                {"technique": "T1059", "subTechniques": ["T1059.001"]},
+            ]},
+        ]}},
+    }
+    findings = lint_payload(payload, asset=Asset.DEFENDER_CUSTOM_DETECTION)
+    assert [f for f in findings if f.rule_id == "PAYLOAD003"] == []
+
+
+def test_payload003_defender_tactic_without_technique_warns() -> None:
+    payload = {
+        "detectionAction": {"alertTemplate": {"tactics": [
+            {"tactic": "Execution", "techniques": []},
+        ]}},
+    }
+    findings = lint_payload(payload, asset=Asset.DEFENDER_CUSTOM_DETECTION)
+    assert len([f for f in findings if f.rule_id == "PAYLOAD003"]) == 1
 
 
 def test_payload003_defender_with_mitre_silent() -> None:

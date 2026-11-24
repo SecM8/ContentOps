@@ -345,3 +345,44 @@ def test_retry_failed_fetches_the_deploy_audit_artefact() -> None:
     # artefact (deploy job skipped on a push that changed no detection).
     assert 'actions/runs/$id/artifacts' in fetch["run"] and 'grep -qx "audit-$id"' in fetch["run"]
 
+
+
+def _integration_step() -> tuple[dict, dict, str]:
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "integration.yml")
+    job = wf["jobs"]["integration"]
+    step = next(s for s in job["steps"] if s.get("name") == "Run integration suite")
+    return wf, step, str(step["run"])
+
+
+def test_integration_runs_the_whole_live_suite_unless_one_test_is_named() -> None:
+    """The default stays the whole live suite. The optional ``tests`` input
+    runs one file under tests/integration instead; the value reaches the
+    shell through env, must name a plain test file, and anything else
+    stops the job before pytest starts."""
+    wf, step, script = _integration_step()
+    inputs = wf.get("on", wf.get(True))["workflow_dispatch"]["inputs"]
+    assert inputs["tests"]["required"] is False
+    assert inputs["tests"].get("default", "") == ""
+    assert step["env"]["INPUT_TESTS"] == "${{ inputs.tests }}"
+    assert "${{ inputs.tests }}" not in script
+
+    assert "pytest -q -rs tests/integration\n" in script + "\n"
+    assert 'pytest -q -rs "$INPUT_TESTS"' in script
+    assert "^tests/integration/test_[a-z0-9_]+\\.py$" in script
+    named = script.index('elif [ -n "$INPUT_TESTS" ]')
+    refuse = script.index("exit 1", named)
+    assert refuse < script.index('pytest -q -rs "$INPUT_TESTS"')
+    assert script.index('if [ "$SWEEP_ONLY" = "true" ]') < named
+
+
+def test_integration_passes_the_probe_device_group_and_keeps_the_report() -> None:
+    """The live Defender probe puts a named device group on its disabled
+    test rule (a tenant may have no scoped rule to copy one from). Its
+    report is uploaded whatever the outcome."""
+    wf, _step, _script = _integration_step()
+    job = wf["jobs"]["integration"]
+    assert job["env"]["DEFENDER_PROBE_DEVICE_GROUP"] == "${{ vars.DEFENDER_PROBE_DEVICE_GROUP }}"
+    upload = next(s for s in job["steps"] if s.get("name") == "Upload the shape report")
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == "defender-shape-report.md"
+    assert upload["with"]["if-no-files-found"] == "ignore"
