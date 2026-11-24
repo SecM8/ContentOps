@@ -27,6 +27,29 @@ def _csv_payload(**overrides):
     return base
 
 
+def test_arm_body_names_the_source_type_of_inline_content() -> None:
+    """Without ``sourceType`` the workspace accepts the PUT and ingests
+    no item from ``rawContent``: the watchlist exists and stays empty.
+    Checked against a workspace with four variants; only the two that
+    sent ``sourceType: Local`` got their row."""
+    body = to_watchlist_arm_body(_csv_payload())
+    assert body["properties"]["sourceType"] == "Local"
+    assert body["properties"]["source"] == "Local file"
+
+
+def test_arm_body_names_the_source_type_of_a_sas_upload() -> None:
+    sas = "https://acct.blob.core.windows.net/c/w.csv?sv=x&sig=y"
+    body = to_watchlist_arm_body(_csv_payload(rawContent=None, sasUri=sas))
+    assert body["properties"]["sourceType"] == "AzureStorage"
+
+
+def test_arm_body_keeps_an_authored_source_type() -> None:
+    body = to_watchlist_arm_body(_csv_payload(sourceType="Local"))
+    assert body["properties"]["sourceType"] == "Local"
+    body = to_watchlist_arm_body({"displayName": "x", "itemsSearchKey": "k"})
+    assert "sourceType" not in body["properties"]
+
+
 def test_valid_csv_watchlist() -> None:
     p = SentinelWatchlistPayload(**_csv_payload())
     assert p.itemsSearchKey == "AssetName"
@@ -62,7 +85,7 @@ def test_oversize_raw_content_rejected() -> None:
 
 def test_to_watchlist_arm_body_wraps_in_properties() -> None:
     body = to_watchlist_arm_body({"displayName": "x", "rawContent": "h\nv"})
-    assert body == {"properties": {"displayName": "x", "rawContent": "h\nv"}}
+    assert body == {"properties": {"displayName": "x", "rawContent": "h\nv", "sourceType": "Local"}}
 
 
 def test_json_content_type_now_rejected() -> None:

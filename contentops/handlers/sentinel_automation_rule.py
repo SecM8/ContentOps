@@ -77,6 +77,7 @@ from contentops.handlers.sentinel_automation_rule_models import (
     analytic_rule_resource_id,
     envelope_id_to_guid,
     is_expired,
+    logic_app_name_from_resource_id,
     logic_app_resource_id,
     normalize_expiration,
     playbook_id_from_resource_id,
@@ -176,6 +177,8 @@ class SentinelAutomationRuleHandler:
         self._tenant_id = tenant_id
         self._detections_root = detections_root
         self._analytic_index: dict[str, str] | None = None
+        self._playbook_index: set[str] | None = None
+        self._managed_workflows: dict[str, bool] = {}
 
     def _provider_or_create(self) -> SentinelArmProvider | None:
         if self._provider is None:
@@ -195,6 +198,42 @@ class SentinelAutomationRuleHandler:
                     index[la.envelope.id] = la.envelope.arm_name or la.envelope.id
             self._analytic_index = index
         return self._analytic_index
+
+    def _playbooks(self) -> set[str]:
+        """Envelope ids of every local ``sentinel_playbook``."""
+        if self._playbook_index is None:
+            from contentops.core.discovery import iter_loaded_assets
+            root = self._detections_root or Path("detections")
+            self._playbook_index = {
+                la.envelope.id for la in iter_loaded_assets(root)
+                if la.envelope.asset is Asset.SENTINEL_PLAYBOOK
+            }
+        return self._playbook_index
+
+    def _is_managed_playbook(self, provider: SentinelArmProvider, envelope_id: str, name: str) -> bool:
+        """True when ``envelope_id`` is a playbook envelope in the repo, or
+        the workflow ``name`` carries the ContentOps managed tag (so the
+        same collect writes its envelope). Any read failure counts as not
+        managed: the rule then names the Logic App with ``logicApp:``,
+        which deploys the same way and needs no envelope."""
+        if envelope_id in self._playbooks():
+            return True
+        cache = self._managed_workflows
+        if name not in cache:
+            from contentops.handlers.sentinel_playbook_models import (
+                LOGIC_API_VERSION, LOGIC_NAMESPACE, WORKFLOWS, is_managed_workflow,
+            )
+            url = provider.resource_group_resource_url(
+                provider.config.effective_playbooks_resource_group,
+                LOGIC_NAMESPACE, WORKFLOWS, name, api_version=LOGIC_API_VERSION,
+            )
+            try:
+                resp = provider.request("GET", url)
+                cache[name] = resp.status_code == 200 and is_managed_workflow(resp.json())
+            except Exception as exc:  # noqa: BLE001 -- unreadable: not managed
+                logger.warning("could not read Logic App %s: %s", name, exc)
+                cache[name] = False
+        return cache[name]
 
     def _resolve_playbook(self, playbook_id: str) -> tuple[str, str | None]:
         provider = self._provider_or_create()
@@ -414,14 +453,22 @@ class SentinelAutomationRuleHandler:
         provider = self._provider_or_create()
         if rid and provider is not None:
             cfgw = provider.config
-            pid = playbook_id_from_resource_id(
-                str(rid),
-                subscription_id=cfgw.subscriptionId,
-                resource_group=cfgw.effective_playbooks_resource_group,
-            )
-            if pid:
+            where = {
+                "subscription_id": cfgw.subscriptionId,
+                "resource_group": cfgw.effective_playbooks_resource_group,
+            }
+            name = logic_app_name_from_resource_id(str(rid), **where)
+            if name:
+                # ``playbook:`` names an envelope (lint and the dependency
+                # check hold it to one); a Logic App ContentOps does not
+                # manage keeps its exact name under ``logicApp:``. Either
+                # way the subscription GUID stays out of the file.
+                pid = playbook_id_from_resource_id(str(rid), **where)
                 cfg.pop("logicAppResourceId", None)
-                cfg["playbook"] = pid
+                if pid and self._is_managed_playbook(provider, pid, name):
+                    cfg["playbook"] = pid
+                else:
+                    cfg["logicApp"] = name
                 if self._tenant_id and str(cfg.get("tenantId", "")).lower() == self._tenant_id.lower():
                     cfg.pop("tenantId", None)
         action["actionConfiguration"] = cfg

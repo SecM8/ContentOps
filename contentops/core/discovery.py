@@ -47,12 +47,15 @@ def discover_assets(base: Path) -> list[Path]:
 def load_asset(path: Path) -> LoadedAsset:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     envelope, payload = parse_envelope(raw)
+    sidecars: tuple[Path, ...] = ()
     if envelope.asset is Asset.SENTINEL_PLAYBOOK:
-        _inline_playbook_sidecar(path, payload)
-    return LoadedAsset(path=path, envelope=envelope, payload=payload, raw=raw)
+        sidecar = _inline_playbook_sidecar(path, payload)
+        if sidecar is not None:
+            sidecars = (sidecar,)
+    return LoadedAsset(path=path, envelope=envelope, payload=payload, raw=raw, sidecars=sidecars)
 
 
-def _inline_playbook_sidecar(path: Path, payload: dict) -> None:
+def _inline_playbook_sidecar(path: Path, payload: dict) -> Path | None:
     """Replace ``payload.definitionFile`` with the sidecar's JSON as
     ``payload.definition`` (in place, so ``raw["payload"]`` sees it too).
 
@@ -64,10 +67,10 @@ def _inline_playbook_sidecar(path: Path, payload: dict) -> None:
     can never read outside its own directory.
     """
     if not isinstance(payload, dict):
-        return
+        return None
     sidecar = payload.get("definitionFile")
     if not sidecar:
-        return
+        return None
     if "definition" in payload:
         raise ValueError(
             f"{path}: payload has both `definition` and `definitionFile`; keep one"
@@ -91,6 +94,7 @@ def _inline_playbook_sidecar(path: Path, payload: dict) -> None:
         raise ValueError(f"{sidecar_path}: expected a JSON object (the workflow definition)")
     payload.pop("definitionFile", None)
     payload["definition"] = definition
+    return sidecar_path
 
 
 def iter_loaded_assets(

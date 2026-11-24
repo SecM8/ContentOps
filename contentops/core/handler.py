@@ -23,12 +23,17 @@ class LoadedAsset:
     the strict envelope model dropped -- e.g. ATT&CK tags in a metadata
     block that failed strict validation. ``None`` when the asset was built
     in memory.
+
+    ``sidecars`` are the other files the asset was loaded from (a
+    playbook's ``.workflow.json``), so a change to one of them counts as
+    a change to the asset.
     """
 
     path: Path
     envelope: EnvelopeV2
     payload: dict[str, Any]
     raw: dict[str, Any] | None = None
+    sidecars: tuple[Path, ...] = ()
 
 
 @runtime_checkable

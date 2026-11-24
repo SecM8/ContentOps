@@ -195,7 +195,7 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
                 click.echo(f"    [diff] could not load local YAML: {exc}")
                 continue
             remote_payload = (entry.envelope or {}).get("payload", {})
-            diffs = field_diff(local_payload, remote_payload)
+            diffs = field_diff(local_payload, remote_payload, entry.asset)
             if not diffs:
                 click.echo(
                     "    [diff] (no field-level diffs surfaced — "

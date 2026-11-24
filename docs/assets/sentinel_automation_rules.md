@@ -82,14 +82,20 @@ Two pieces of sugar keep subscription and tenant GUIDs out of
 | Where | Write | Resolved at apply to |
 |---|---|---|
 | `RunPlaybook` action | `playbook: <sentinel_playbook id>` | `/subscriptions/<sub>/resourceGroups/<playbooksResourceGroup>/providers/Microsoft.Logic/workflows/<id>` + `tenantId` |
+| `RunPlaybook` action, Logic App ContentOps does not manage | `logicApp: <workflow name>` | the same path, with the Logic App's exact name |
 | `IncidentRelatedAnalyticRuleIds` / `AlertAnalyticRuleIds` value | `analytic:<sentinel_analytic id>` | `<workspace>/providers/Microsoft.SecurityInsights/alertRules/<that envelope's arm_name>` |
 
-`collect` reverses both when the id falls inside the configured
-workspace / playbook resource group; foreign ids stay raw. gitleaks
-(`azure-guid-in-support-asset-envelope`) fails CI on a real GUID in
-this directory. Dangling references are errors at lint time
-(PAYLOAD007) and at plan time (dependency check), so apply never sends
-a rule ARM would reject with 400.
+`collect` reverses these when the id falls inside the configured
+workspace / playbook resource group; foreign ids stay raw. A Logic App
+in the playbook resource group becomes `playbook:` when a playbook
+envelope with that id exists or the Logic App carries the ContentOps
+managed tag (so the same collect writes its envelope), and `logicApp:`
+otherwise. gitleaks (`azure-guid-in-support-asset-envelope`) fails CI
+on a real GUID in this directory. Dangling `playbook:` and `analytic:`
+references are errors at lint time (PAYLOAD007) and at plan time
+(dependency check), so apply never sends a rule ARM would reject with
+400. `logicApp:` names a Logic App outside the repo, so neither check
+applies to it; a wrong name surfaces as ARM's 400 at deploy.
 
 ## Validation and lint
 
@@ -97,7 +103,7 @@ a rule ARM would reject with 400.
 |---|---|---|
 | `displayName` ≤ 500, `order` 1..1000, unique action `order`, `expirationTimeUtc` parses | model | validate error |
 | `triggersOn: Alerts` ⇒ `triggersWhen: Created` and only `RunPlaybook` actions | model | validate error |
-| `RunPlaybook` has exactly one of `playbook` / `logicAppResourceId` | model | validate error |
+| `RunPlaybook` has exactly one of `playbook` / `logicApp` / `logicAppResourceId` | model | validate error |
 | `status: Closed` ⇔ `classification` set | model | validate error |
 | **Close action with zero conditions** (would auto-close every incident) | model + PAYLOAD014 | validate error / lint error |
 | Close action not scoped to analytics / custom-detection rules | PAYLOAD014 | warning |

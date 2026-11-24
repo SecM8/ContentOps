@@ -82,6 +82,46 @@ def test_each_template_validates_and_lints_clean(tmp_path: Path, asset: str) -> 
         assert at_or_above(target.findings, "error") == [], target.findings
 
 
+@pytest.mark.parametrize(
+    ("envelope_id", "kql_name"),
+    [
+        ("my-parser-01", "my_parser_01"),
+        ("parser", "parser"),
+        ("1st-parser", "f_1st_parser"),
+    ],
+)
+def test_parser_scaffold_names_its_function_with_a_valid_kql_identifier(
+    tmp_path: Path, envelope_id: str, kql_name: str,
+) -> None:
+    """An envelope id is lower-case words joined by hyphens. A KQL
+    identifier cannot hold a hyphen, so a parser that used the id as its
+    function name was invalid KQL and failed as soon as it was run
+    against a workspace."""
+    import re
+
+    written = scaffold("sentinel_parser", envelope_id, out=tmp_path / "parser.yml")
+    payload = yaml.safe_load(written.read_text(encoding="utf-8"))["payload"]
+    assert payload["functionAlias"] == kql_name
+    assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", payload["functionAlias"])
+    assert envelope_id == kql_name or envelope_id not in payload["query"]
+
+
+def test_parser_scaffold_query_is_the_function_body(tmp_path: Path) -> None:
+    """The ``query`` of a saved function is its body; parameters belong
+    in ``functionParameters``. The old scaffold wrapped the body in
+    ``let <id> = (start:datetime=ago(1h), ...) {...}; <id>``, which the
+    Log Analytics query API rejects twice over: the hyphen in the name,
+    and a default value that is not a literal. Checked against a
+    workspace: the plain body is accepted."""
+    written = scaffold("sentinel_parser", "my-parser-01", out=tmp_path / "parser.yml")
+    payload = yaml.safe_load(written.read_text(encoding="utf-8"))["payload"]
+    query = payload["query"]
+    assert "let " not in query
+    assert "=ago(" not in query.replace(" ", "")
+    assert query.strip().splitlines()[0].strip() == "SecurityEvent"
+    assert payload["functionParameters"] == ""
+
+
 def test_scaffold_rejects_bad_id(tmp_path: Path) -> None:
     with pytest.raises(ScaffoldError) as exc:
         scaffold(

@@ -31,22 +31,24 @@ def delete_result_from_response(
 ) -> ActionResult:
     """Normalise a delete response into an ActionResult.
 
-    200 / 204 = deleted; 404 = already gone (also success — prune is
-    idempotent). Anything else is an error.
+    200 / 204 = deleted; 202 = accepted, deleted in the background (a
+    watchlist DELETE answers this way); 404 = already gone (also
+    success — prune is idempotent). Anything else is an error.
     """
-    if response.status_code in (200, 204, 404):
+    if response.status_code in (200, 202, 204, 404):
         return ActionResult(
             asset_id=remote_id,
             asset_kind=asset.value,
             action=PlanAction.DELETE,
             status="success",
-            detail=(
-                "already absent (404)"
-                if response.status_code == 404
-                else "deleted"
-            ),
+            detail={
+                404: "already absent (404)",
+                202: "delete accepted (202); the service removes it in the background",
+            }.get(response.status_code, "deleted"),
         )
     body = response.text[:200] if hasattr(response, "text") else ""
+    if not body.strip():
+        body = f"HTTP {response.status_code} with an empty body"
     return ActionResult(
         asset_id=remote_id,
         asset_kind=asset.value,

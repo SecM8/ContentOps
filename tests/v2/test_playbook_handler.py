@@ -232,6 +232,36 @@ def test_apply_puts_connections_before_workflow_in_playbooks_rg() -> None:
     h.close()
 
 
+def test_apply_prints_the_command_for_a_missing_role(capsys: pytest.CaptureFixture[str]) -> None:
+    """The deploy log is where the operator reads the result. The command
+    that grants a missing role was only in the result's detail, which the
+    apply summary does not print, so it was seen in a JSON report only."""
+    tenant = _Tenant()
+    h = _handler(tenant)
+    r = h.apply(_loaded())
+    assert r.extra["missingRoleAssignments"]
+    out = capsys.readouterr().out
+    assert "missing declared role" in out
+    assert r.extra["missingRoleAssignments"][0] in out
+    h.close()
+
+
+def test_apply_tells_logic_apps_each_connection_authenticates_with_the_managed_identity() -> None:
+    """A Consumption workflow whose API connection is managed-identity
+    shaped must say so in its ``$connections`` entry; Logic Apps rejects
+    the PUT otherwise (400 WorkflowManagedIdentityConfigurationInvalid:
+    "the connection parameter is either missing 'authentication'
+    property in connection properties or authentication type is not
+    'ManagedServiceIdentity'"). Seen against a real workspace."""
+    tenant = _Tenant()
+    h = _handler(tenant)
+    h.apply(_loaded())
+    wf_put = [p for m, p in tenant.calls if m == "PUT" and "Microsoft.Logic/workflows" in p][0]
+    ref = tenant.bodies[wf_put]["properties"]["parameters"]["$connections"]["value"]["azuresentinel"]
+    assert ref["connectionProperties"] == {"authentication": {"type": "ManagedServiceIdentity"}}
+    h.close()
+
+
 def test_apply_reports_roles_present_and_unverifiable() -> None:
     r = _handler(_Tenant(role_present=True)).apply(_loaded())
     assert "missingRoleAssignments" not in r.extra and r.detail == "declared role assignments present"
@@ -365,6 +395,20 @@ def test_adopt_patches_managed_tag() -> None:
     assert tenant.patched_tags == {"team": "soc", MANAGED_TAG: "true"}
     assert remote["tags"][MANAGED_TAG] == "true"
     assert [m for m, p in tenant.calls if p == path] == ["GET", "PATCH", "GET"]
+
+
+def test_a_logic_app_adopted_in_this_run_is_listed_although_the_tag_index_lags() -> None:
+    """``collect --adopt`` tags the Logic App and then lists the tagged
+    ones. ARM's tag-filtered resource list lags a tag just written, so
+    the adopted Logic App was missing and a second collect was needed.
+    Seen against a workspace."""
+    tenant = _Tenant()
+    path = "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/legacy"
+    tenant.store[path] = {"name": "legacy", "tags": {}, "properties": {"definition": _definition()}}
+    tenant.managed_workflows = []  # the index does not show the new tag yet
+    h = _handler(tenant)
+    h.adopt("legacy")
+    assert [i["name"] for i in h.list_remote()] == ["legacy"]
 
 
 def test_to_envelope_emits_connections_and_strips_canonical_param_and_server_fields() -> None:

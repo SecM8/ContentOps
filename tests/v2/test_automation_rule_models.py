@@ -137,6 +137,32 @@ def test_run_playbook_requires_exactly_one_of_playbook_or_resource_id() -> None:
     }))
 
 
+def test_run_playbook_accepts_an_unmanaged_logic_app_by_name() -> None:
+    def _with(cfg: dict) -> dict:
+        return _payload(actions=[{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": cfg}])
+
+    SentinelAutomationRulePayload(**_with({"logicApp": "Notify_SOC.Teams"}))
+    with pytest.raises(ValidationError, match="exactly one"):
+        SentinelAutomationRulePayload(**_with({"logicApp": "a", "playbook": "a"}))
+    with pytest.raises(ValidationError, match="logicApp"):
+        SentinelAutomationRulePayload(**_with({"logicApp": "rg/providers/x"}))
+
+
+def test_to_arm_body_resolves_an_unmanaged_logic_app_like_a_playbook() -> None:
+    payload = _payload(actions=[{
+        "order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"logicApp": "test"},
+    }])
+    body = to_automation_rule_arm_body(
+        payload,
+        resolve_playbook=lambda name: (f"/subscriptions/s/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/{name}", "tenant-guid"),
+        resolve_analytic=lambda _: (_ for _ in ()).throw(AssertionError("not called")),
+    )
+    assert body["properties"]["actions"][0]["actionConfiguration"] == {
+        "logicAppResourceId": "/subscriptions/s/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/test",
+        "tenantId": "tenant-guid",
+    }
+
+
 def test_closed_status_requires_classification_and_vice_versa() -> None:
     with pytest.raises(ValidationError, match="classification"):
         SentinelAutomationRulePayload(**_payload(
@@ -218,6 +244,8 @@ def test_reference_extractors() -> None:
         {"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"playbook": "a"}},
         {"order": 2, "actionType": "RunPlaybook",
          "actionConfiguration": {"logicAppResourceId": "/subscriptions/s/resourceGroups/r/providers/Microsoft.Logic/workflows/b"}},
+        # Not managed, so not a reference lint or the dependency check can hold to an envelope.
+        {"order": 3, "actionType": "RunPlaybook", "actionConfiguration": {"logicApp": "c"}},
     ])
     assert playbook_refs(payload) == ["a"]
     assert analytic_refs(payload) == ["my-rule"]

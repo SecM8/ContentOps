@@ -222,6 +222,81 @@ def test_deploy_fetches_an_operator_supplied_changed_since_ref() -> None:
     assert 'ARGS+=( "--changed-since" "$INPUT_CHANGED_SINCE" )' not in text
 
 
+def _deploy_push_branch() -> str:
+    """The part of the apply step that runs for a push (not a dispatch)."""
+    text = (REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    start = text.index("# A push deploys what that push changed, never more.")
+    return text[start:text.index('contentops apply "${ARGS[@]}"')]
+
+
+def test_push_deploy_never_falls_back_to_a_full_apply() -> None:
+    """A push must deploy what that push changed, or nothing. When the
+    commit before the push is unknown the step stops; applying every
+    detection is a decision for a person, through a manual run."""
+    text = (REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    assert "running full apply" not in text
+    branch = _deploy_push_branch()
+    unknown = branch.index('[ -z "$EVENT_BEFORE" ] || [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ]')
+    assert "exit 1" in branch[unknown:unknown + 400]
+    assert 'ARGS+=( "--changed-since" "$SINCE" )' in branch
+    assert 'ARGS+=( "--changed-since" "$EVENT_BEFORE" )' not in text
+
+
+def test_push_deploy_fetches_a_baseline_outside_the_shallow_checkout() -> None:
+    """After a rebase merge of several commits the commit before the push
+    is not in the two-commit-deep checkout. It is fetched; if it still
+    does not resolve, the step stops before anything is applied."""
+    branch = _deploy_push_branch()
+    verify = 'git rev-parse --verify --quiet "${EVENT_BEFORE}^{commit}"'
+    first = branch.index(verify)
+    fetch = branch.index('git fetch --no-tags --depth=1 origin "$EVENT_BEFORE"')
+    second = branch.index(verify, fetch)
+    assert first < fetch < second
+    assert "exit 1" in branch[second:second + 400]
+
+
+def test_a_failed_push_deploy_opens_a_pipeline_alert() -> None:
+    """A deploy that fails after a merge leaves the merged change out of
+    the tenant, and the next drift import proposes to undo it. That must
+    not stay a red mark on a commit: a separate job opens an issue. It is
+    a separate job so the deploy job's token gains nothing."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "deploy.yml")
+    job = wf["jobs"]["notify-failure"]
+    assert "deploy" in job["needs"]
+    condition = " ".join(str(job["if"]).split())
+    assert "github.event_name == 'push'" in condition
+    assert "needs.deploy.result == 'failure'" in condition
+    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    assert "environment" not in job
+    uses = [s.get("uses") for s in job["steps"]]
+    assert "./.github/actions/notify-workflow-failure" in uses
+    notify = next(s for s in job["steps"] if s.get("uses") == "./.github/actions/notify-workflow-failure")
+    assert notify["with"]["trigger"] == "push"
+    # The deploy job and the workflow default keep their permissions.
+    assert "issues" not in (wf.get("permissions") or {})
+    assert "permissions" not in wf["jobs"]["deploy"]
+
+
+def test_notify_action_names_the_trigger_and_keeps_the_scheduled_title() -> None:
+    """Callers that do not say what started the run keep the issue title
+    they always had, so an open alert is still found and commented on."""
+    action = _load(REPO_ROOT / ".github" / "actions" / "notify-workflow-failure" / "action.yml")
+    assert action["inputs"]["trigger"]["default"] == "scheduled"
+    script = action["runs"]["steps"][0]["run"]
+    assert 'TITLE="[pipeline-alert] ${WORKFLOW_NAME} ${TRIGGER} run failed"' in script
+    assert action["runs"]["steps"][0]["env"]["TRIGGER"] == "${{ inputs.trigger }}"
+
+
+def test_validate_checks_the_mitre_ids_of_changed_rules() -> None:
+    """Sentinel rejects a sub-technique id under ``techniques`` at deploy.
+    The pull request gate checks the rules a pull request adds or changes."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "validate.yml")
+    steps = wf["jobs"]["validate"]["steps"]
+    step = next(s for s in steps if "check_mitre_ids.py" in str(s.get("run", "")))
+    assert 'python scripts/check_mitre_ids.py "origin/$BASE_REF"' in step["run"]
+    assert step["env"]["BASE_REF"] == "${{ github.base_ref }}"
+
+
 def test_deploy_passes_only_a_verified_commit_as_changed_since() -> None:
     """The baseline of a manual deploy decides what is applied, so the
     step must never guess it.

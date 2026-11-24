@@ -85,6 +85,18 @@ def _yaml_safe(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _kql_name(id_: str) -> str:
+    """A KQL identifier derived from an envelope id.
+
+    An id is lower-case words joined by hyphens; a KQL identifier may hold
+    letters, digits and underscores only and may not start with a digit.
+    Used wherever a template needs the id as a name inside a query, such
+    as a parser's function name.
+    """
+    name = re.sub(r"[^A-Za-z0-9_]", "_", id_)
+    return f"f_{name}" if name[0].isdigit() else name
+
+
 def _default_out_path(asset: Asset, id_: str) -> Path:
     return Path("detections") / asset.value / f"{id_}.yml"
 
@@ -122,6 +134,7 @@ def scaffold(
     template_src = _template_text(parsed)
     rendered = Template(template_src).safe_substitute(
         id=id,
+        kql_name=_kql_name(id),
         asset=parsed.value,
         display_name=_yaml_safe(display_name or id),
     )

@@ -257,6 +257,52 @@ def test_attack_section_reads_payload_tags_of_a_collected_rule(tmp_path: Path) -
     assert "- `x/'y` is not a technique id" in section
 
 
+def test_overview_shows_the_lifecycle_stage(tmp_path: Path) -> None:
+    """``lifecycleStage`` is a plain string. The renderer read ``.value``
+    from it and raised for every envelope that sets the field, which is
+    every envelope ``contentops new`` writes."""
+    body = render_detection(_loaded(tmp_path, (
+        "id: staged-rule\nversion: 0.1.0\nasset: sentinel_analytic\nstatus: experimental\n"
+        "lifecycleStage: concept\n"
+        "payload:\n  displayName: Staged\n  query: SecurityEvent | take 1\n"
+    )))
+    assert "| `lifecycleStage` | `concept` |" in body
+
+
+@pytest.mark.parametrize(
+    "asset",
+    [
+        "sentinel_analytic", "sentinel_hunting", "sentinel_parser", "sentinel_watchlist",
+        "sentinel_automation_rule", "sentinel_playbook", "defender_custom_detection",
+    ],
+)
+def test_a_freshly_scaffolded_envelope_renders(tmp_path: Path, asset: str) -> None:
+    """A deployment repo renders a page for every envelope it holds, so an
+    envelope straight from ``contentops new`` must render."""
+    from contentops.devex.scaffold import scaffold
+
+    written = scaffold(asset, "scaffolded-object", out=tmp_path / asset / "scaffolded-object.yml")
+    body = render_detection(load_asset(written))
+    assert body.startswith("# ")
+    assert "| `id` | `scaffolded-object` |" in body
+
+
+@pytest.mark.parametrize("asset", ["sentinel_automation_rule", "sentinel_playbook"])
+def test_a_support_asset_page_has_no_empty_detection_fields(tmp_path: Path, asset: str) -> None:
+    """Automation rules and playbooks carry the lighter metadata: no
+    severity, no expected alert volume, no false-positive handling. The
+    page must leave those out, not print ``None`` or fail on them."""
+    from contentops.devex.scaffold import scaffold
+
+    written = scaffold(asset, "support-object", out=tmp_path / asset / "support-object.yml")
+    body = render_detection(load_asset(written))
+    assert "`None`" not in body
+    assert "| `severity` |" not in body
+    assert "| `expectedAlertsPerDay` |" not in body
+    assert "## False-positive handling" not in body
+    assert "| `owner` |" in body
+
+
 def test_attack_section_absent_without_tags(tmp_path: Path) -> None:
     body = render_detection(_loaded(tmp_path, (
         "id: no-tags\nversion: 1.0.0\nasset: sentinel_analytic\nstatus: test\n"

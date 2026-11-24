@@ -87,6 +87,22 @@ def test_delete_result_500_is_error() -> None:
     assert "boom" in (r.error or "")
 
 
+def test_delete_result_202_is_success() -> None:
+    """A watchlist DELETE answers 202 Accepted (the service deletes it in
+    the background). Prune reported that as a failure with an empty
+    message although the watchlist was gone. Seen against a workspace."""
+    r = delete_result_from_response("wl", Asset.SENTINEL_WATCHLIST, _Resp(202))
+    assert r.status == "success"
+    assert not r.is_failure
+    assert "accepted" in r.detail
+
+
+def test_delete_error_without_a_body_names_the_status() -> None:
+    r = delete_result_from_response("rid-1", Asset.SENTINEL_ANALYTIC, _Resp(409))
+    assert r.status == "error-409"
+    assert "409" in (r.error or "")
+
+
 def test_delete_result_from_exception() -> None:
     r = delete_result_from_exception(
         "rid-1", Asset.SENTINEL_ANALYTIC, RuntimeError("kaboom"),

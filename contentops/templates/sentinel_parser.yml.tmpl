@@ -37,13 +37,13 @@ payload:
     TODO: describe what this parser/function returns and which data sources
     it joins. Parsers expose reusable KQL via the functionAlias below.
   category: Function
-  functionAlias: ${id}
+  functionAlias: ${kql_name}
   functionParameters: ""
+  # The query is the body of the saved function. Other queries call it by
+  # its functionAlias. Parameters, if any, go in functionParameters; their
+  # default values must be literals.
   query: |
-    let ${id} = (start:datetime=ago(1h), end:datetime=now()) {
-        SecurityEvent
-        | where TimeGenerated between (start .. end)
-        | take 100
-    };
-    ${id}
+    SecurityEvent
+    | where TimeGenerated > ago(1h)
+    | take 100
   version: 2

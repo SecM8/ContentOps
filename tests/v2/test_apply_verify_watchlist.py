@@ -130,6 +130,27 @@ def test_apply_happy_path_verifies_items_and_sends_ifmatch() -> None:
     assert seen.get("if-match") == 'W/"wl-etag"'
 
 
+def test_apply_verifies_although_the_service_does_not_return_content_type() -> None:
+    """``contentType`` describes the upload, like ``rawContent``; a
+    workspace GET returns it as null. Hashing it made every deploy of a
+    watchlist report a post-apply mismatch. Seen against a workspace."""
+    def _as_served() -> dict:
+        remote = _matching_remote()
+        remote["properties"]["contentType"] = None
+        return remote
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/watchlistItems" in str(request.url):
+            return httpx.Response(200, json=_items(2))
+        return httpx.Response(200, json=_as_served())
+
+    provider = _provider_with(httpx.MockTransport(handler))
+    result = SentinelWatchlistHandler(lambda: provider).apply(_loaded())
+
+    assert result.status == "success"
+    assert result.verified is True, result.error
+
+
 def test_apply_hash_mismatch() -> None:
     state = {"phase": "pre"}
 

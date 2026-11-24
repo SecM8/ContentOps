@@ -240,14 +240,30 @@ jobs:
               ARGS+=( "--dry-run" )
             fi
           else
-            # github.event.before is the all-zero SHA on the first push to
-            # a branch (no prior commit to diff against). Diffing against
-            # it would break; fall back to a full apply in that case.
-            if [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$EVENT_BEFORE" ]; then
-              echo '::warning::EVENT_BEFORE is zero SHA (first push); running full apply'
-            else
-              ARGS+=( "--changed-since" "$EVENT_BEFORE" )
+            # A push deploys what that push changed, never more. The
+            # baseline is the commit the branch pointed at before the
+            # push (github.event.before). The checkout is shallow
+            # (fetch-depth 2): after a merge commit or a squash merge the
+            # baseline is in it; after a rebase merge of several commits
+            # it is not, so it is fetched.
+            #
+            # When the baseline cannot be determined (an empty or
+            # all-zero value, a commit the remote no longer has) the
+            # step stops. It never falls back to applying every
+            # detection: a full apply is a manual decision
+            # (workflow_dispatch with an empty changed_since).
+            if [ -z "$EVENT_BEFORE" ] || [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "::error::This push has no previous commit to compare with. Nothing was applied. Start the workflow by hand to choose what to deploy."
+              exit 1
             fi
+            if ! SINCE="$(git rev-parse --verify --quiet "${EVENT_BEFORE}^{commit}" 2>/dev/null)"; then
+              git fetch --no-tags --depth=1 origin "$EVENT_BEFORE" 2>/dev/null || true
+              if ! SINCE="$(git rev-parse --verify --quiet "${EVENT_BEFORE}^{commit}" 2>/dev/null)"; then
+                echo "::error::The commit before this push could not be fetched. Nothing was applied. Start the workflow by hand with changed_since."
+                exit 1
+              fi
+            fi
+            ARGS+=( "--changed-since" "$SINCE" )
           fi
           contentops apply "${ARGS[@]}" --json-report apply-report.json
 
@@ -409,6 +425,31 @@ jobs:
               echo "- Audit files written: $count"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A deploy that fails after a merge leaves the merged change out of the
+  # tenant, and the next drift import then proposes to undo it. That must
+  # not stay a red mark on a commit: open (or comment on) a pipeline-alert
+  # issue. Push runs only; a manual run is watched by whoever started it.
+  # SEPARATE job so `issues: write` never widens the prod apply job's
+  # token. It runs no repository code beyond the local composite action.
+  notify-failure:
+    needs: deploy
+    if: ${{ always() && github.event_name == 'push' && needs.deploy.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (loads the local composite action below)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Open or update the pipeline-alert issue
+        uses: ./.github/actions/notify-workflow-failure
+        with:
+          workflow-name: ${{ github.workflow }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          trigger: push
 
   # Notarise the audit-chain head with a GitHub Artifact Attestation
   # (Sigstore-backed, recorded in the public Rekor transparency log).

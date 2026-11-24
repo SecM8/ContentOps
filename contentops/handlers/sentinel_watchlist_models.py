@@ -163,5 +163,15 @@ def to_watchlist_arm_body(payload: dict) -> dict:
     Validation is the handler's responsibility (via ``validate(loaded)``);
     this function is a pass-through so the existing call sites keep
     working with partial / lower-level dicts.
+
+    One addition: ``sourceType`` follows from the ingestion path when the
+    envelope does not set it. Without it the workspace accepts the PUT
+    and ingests no item, so the watchlist exists and stays empty.
     """
-    return {"properties": payload}
+    props = dict(payload)
+    if not props.get("sourceType"):
+        if props.get("rawContent"):
+            props["sourceType"] = "Local"
+        elif props.get("sasUri"):
+            props["sourceType"] = "AzureStorage"
+    return {"properties": props}

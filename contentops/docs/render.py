@@ -141,12 +141,18 @@ def render_detection(loaded: LoadedAsset, *, repo_root: object | None = None) ->
     lines.append(f"| `asset` | `{_safe(env.asset.value)}` |")
     lines.append(f"| `status` | `{_safe(env.status)}` |")
     if env.lifecycleStage is not None:
-        lines.append(f"| `lifecycleStage` | `{_safe(env.lifecycleStage.value)}` |")
+        # ``LifecycleStage`` is a ``Literal`` of strings, not an enum.
+        lines.append(f"| `lifecycleStage` | `{_safe(env.lifecycleStage)}` |")
     if meta is not None:
-        lines.append(f"| `severity` | `{_safe(meta.severity)}` |")
+        # Support kinds (automation rules, playbooks) use the lighter
+        # metadata: severity, expected alert volume and false-positive
+        # handling are optional there and are left out when not set.
+        if meta.severity is not None:
+            lines.append(f"| `severity` | `{_safe(meta.severity)}` |")
         lines.append(f"| `owner` | {_safe(meta.owner)} |")
         lines.append(f"| `runbookUrl` | <{_safe(meta.runbookUrl)}> |")
-        lines.append(f"| `expectedAlertsPerDay` | `{_safe(meta.expectedAlertsPerDay)}` |")
+        if meta.expectedAlertsPerDay is not None:
+            lines.append(f"| `expectedAlertsPerDay` | `{_safe(meta.expectedAlertsPerDay)}` |")
         if meta.cohort:
             lines.append(f"| `cohort` | {_safe(meta.cohort)} |")
         if meta.lastValidatedAt:
@@ -176,10 +182,11 @@ def render_detection(loaded: LoadedAsset, *, repo_root: object | None = None) ->
     lines.append("")
 
     if meta is not None:
-        lines.append("## False-positive handling")
-        lines.append("")
-        lines.append(meta.fpHandling.rstrip())
-        lines.append("")
+        if meta.fpHandling:
+            lines.append("## False-positive handling")
+            lines.append("")
+            lines.append(meta.fpHandling.rstrip())
+            lines.append("")
         if meta.falsePositives:
             lines.append("### Known false-positive scenarios")
             lines.append("")

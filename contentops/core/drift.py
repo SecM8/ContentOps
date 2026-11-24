@@ -93,6 +93,114 @@ class DriftReport:
         return bool(self.errors)
 
 
+# What a file may leave out or hold beyond what the tenant returns.
+#
+# A collected file holds every field the tenant returns, so for it these
+# sets change nothing. A file written by hand (``contentops new``) holds
+# what its author declared: it leaves the fields below to the service,
+# and it carries fields a deploy sends that the tenant never returns.
+# Without these sets every authored object was "changed" right after a
+# successful deploy, and importing the report emptied a watchlist.
+#
+# Fields the service fills in: only the tenant has them when the file
+# leaves them out, and that alone is not drift.
+_SERVICE_FILLED: dict[Asset, frozenset[str]] = {
+    Asset.SENTINEL_ANALYTIC: frozenset({"incidentConfiguration"}),
+    Asset.SENTINEL_WATCHLIST: frozenset({
+        "sourceType", "watchlistCategory", "watchlistKind", "watchlistType",
+    }),
+    Asset.SENTINEL_PLAYBOOK: frozenset({"identity", "location"}),
+}
+# Fields a deploy sends that the tenant never returns. The import keeps
+# them from the file; they are not compared.
+_DEPLOY_ONLY: dict[Asset, frozenset[str]] = {
+    Asset.SENTINEL_WATCHLIST: frozenset({
+        "rawContent", "sasUri", "contentType", "numberOfLinesToSkip",
+    }),
+    Asset.SENTINEL_PLAYBOOK: frozenset({"roleAssignments"}),
+}
+# Top-level envelope keys the tenant knows nothing about; the import
+# keeps them from the file.
+_ENVELOPE_KEYS_FROM_TENANT = frozenset({"id", "version", "asset", "status", "metadata", "payload"})
+
+
+def _is_empty(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _drop_empty(value: Any) -> Any:
+    """``value`` with every key whose value is empty removed, at any
+    depth: for drift an empty value and an absent key are the same."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            v = _drop_empty(v)
+            if not _is_empty(v):
+                out[k] = v
+        return out
+    if isinstance(value, list):
+        return [_drop_empty(v) for v in value]
+    return value
+
+
+def _without_default_label_type(payload: dict) -> dict:
+    """Automation rules: the tenant returns each label with ``labelType:
+    User``, the default, which a file that adds a label leaves out."""
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        return payload
+    out = []
+    for action in actions:
+        cfg = action.get("actionConfiguration") if isinstance(action, dict) else None
+        labels = cfg.get("labels") if isinstance(cfg, dict) else None
+        if isinstance(labels, list):
+            cfg = {**cfg, "labels": [
+                {k: v for k, v in lab.items() if not (k == "labelType" and v == "User")}
+                if isinstance(lab, dict) else lab
+                for lab in labels
+            ]}
+            action = {**action, "actionConfiguration": cfg}
+        out.append(action)
+    return {**payload, "actions": out}
+
+
+# Per-kind canonical form, applied to both sides before comparing.
+_CANONICAL = {
+    Asset.SENTINEL_AUTOMATION_RULE: _without_default_label_type,
+}
+
+
+def _comparable(local: dict, remote: dict, asset: Asset | None) -> tuple[dict, dict]:
+    """The two payloads as drift compares them (see ``_SERVICE_FILLED``,
+    ``_DEPLOY_ONLY``, ``_CANONICAL``)."""
+    local = _drop_empty(local) if isinstance(local, dict) else local
+    remote = _drop_empty(remote) if isinstance(remote, dict) else remote
+    if asset is None or not isinstance(local, dict) or not isinstance(remote, dict):
+        return local, remote
+    canonical = _CANONICAL.get(asset)
+    if canonical is not None:
+        local, remote = canonical(local), canonical(remote)
+    deploy_only = _DEPLOY_ONLY.get(asset, frozenset())
+    service = _SERVICE_FILLED.get(asset, frozenset())
+    local = {k: v for k, v in local.items() if not (k in deploy_only and k not in remote)}
+    remote = {k: v for k, v in remote.items() if not (k in service and k not in local)}
+    return local, remote
+
+
+def _remote_names(envelope: Any) -> list[str]:
+    """Names the tenant may know a local envelope by, besides its id.
+
+    ``metadata.arm_name`` when the file records one; otherwise the name a
+    deploy gives an object it creates, where that is derived from the
+    envelope id (automation rules: ``envelope_id_to_guid``)."""
+    if envelope.arm_name:
+        return [str(envelope.arm_name)]
+    if envelope.asset is Asset.SENTINEL_AUTOMATION_RULE:
+        from contentops.handlers.sentinel_automation_rule_models import envelope_id_to_guid
+        return [envelope_id_to_guid(envelope.id)]
+    return []
+
+
 def _local_index(detections_root: Path, asset: Asset) -> dict[str, tuple[Path, dict]]:
     """Map ``key -> (path, payload)`` for every local YAML of ``asset``.
 
@@ -131,13 +239,12 @@ def _local_index(detections_root: Path, asset: Asset) -> dict[str, tuple[Path, d
         # Fallback key: envelope id (handlers w/o arm_name).
         out[loaded.envelope.id] = entry
         # Primary key: the authoritative remote name when known.
-        arm_name = loaded.envelope.arm_name
-        if arm_name:
-            out[str(arm_name)] = entry
+        for name in _remote_names(loaded.envelope):
+            out[name] = entry
     return out
 
 
-def _payloads_match(local: dict, remote: dict) -> bool:
+def _payloads_match(local: dict, remote: dict, asset: Asset | None = None) -> bool:
     """Stable comparison of two payload dicts.
 
     Normalises strings the same way the YAML dumper does (strips
@@ -145,8 +252,10 @@ def _payloads_match(local: dict, remote: dict) -> bool:
     a remote string ending each line in two trailing spaces would
     diff against the on-disk version every time, because PyYAML's
     literal-block scalar style can't represent trailing whitespace
-    so the dumper strips it before writing.
+    so the dumper strips it before writing. With ``asset``, the
+    per-kind rules of ``_comparable`` apply as well.
     """
+    local, remote = _comparable(local, remote, asset)
     return _normalize(local) == _normalize(remote)
 
 
@@ -192,7 +301,7 @@ def _diff_walk(local: Any, remote: Any, *, prefix: str) -> list[FieldDiff]:
                       _short_repr(local), _short_repr(remote))]
 
 
-def field_diff(local: Any, remote: Any) -> list[FieldDiff]:
+def field_diff(local: Any, remote: Any, asset: Asset | None = None) -> list[FieldDiff]:
     """Return per-key differences between two payloads.
 
     Both sides are normalised (same rules as ``_payloads_match``)
@@ -201,6 +310,7 @@ def field_diff(local: Any, remote: Any) -> list[FieldDiff]:
     report ``changed`` without it being obvious which field is
     triggering the comparison.
     """
+    local, remote = _comparable(local, remote, asset)
     return _diff_walk(_normalize(local), _normalize(remote), prefix="")
 
 
@@ -288,7 +398,7 @@ def detect_drift(
                 ))
                 continue
             local_path, local_payload = match
-            if _payloads_match(local_payload, new_payload):
+            if _payloads_match(local_payload, new_payload, asset):
                 report.entries.append(DriftEntry(
                     asset=asset, asset_id=asset_id, kind="in-sync",
                     local_path=local_path,
@@ -401,6 +511,42 @@ def _preserve_local_metadata(envelope: dict, local_path: Path) -> dict:
     return envelope
 
 
+def _preserve_authored(envelope: dict, local_path: Path, asset: Asset) -> dict:
+    """Keep what the tenant cannot say anything about when re-importing.
+
+    * payload fields a deploy sends that the tenant never returns
+      (``_DEPLOY_ONLY``: a watchlist's CSV, a playbook's declared roles);
+    * top-level envelope keys the tenant has no notion of
+      (``lifecycleStage``, ``legacy``, ``lifecycle``, ...);
+    * the file's ``status`` when the rule is off on both sides: a rule
+      authored as ``production`` with ``enabled: false`` is collected as
+      ``deprecated``, and an unrelated import must not retire it.
+    """
+    try:
+        local = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+    except Exception:
+        return envelope
+    if not isinstance(local, dict):
+        return envelope
+    local_payload = local.get("payload") if isinstance(local.get("payload"), dict) else {}
+    payload = envelope.get("payload")
+    if isinstance(payload, dict):
+        for key in _DEPLOY_ONLY.get(asset, frozenset()):
+            if key in local_payload and key not in payload:
+                payload[key] = local_payload[key]
+    for key, value in local.items():
+        if key not in _ENVELOPE_KEYS_FROM_TENANT and key not in envelope:
+            envelope[key] = value
+    if (
+        envelope.get("status") == "deprecated"
+        and local.get("status") not in (None, "deprecated")
+        and local_payload.get("enabled") is False
+        and isinstance(payload, dict) and payload.get("enabled") is False
+    ):
+        envelope["status"] = local["status"]
+    return envelope
+
+
 def write_drift(report: DriftReport, out_dir: Path) -> list[Path]:
     """Write `new` and `changed` envelopes to `out_dir/<asset>/<id>.yml`.
 
@@ -419,6 +565,7 @@ def write_drift(report: DriftReport, out_dir: Path) -> list[Path]:
         entry.envelope, sidecars = split_sidecar_files(entry.envelope)
         if entry.local_path is not None:
             target = entry.local_path
+            entry.envelope = _preserve_authored(entry.envelope, target, entry.asset)
             entry.envelope = _preserve_local_metadata(
                 entry.envelope, target,
             )

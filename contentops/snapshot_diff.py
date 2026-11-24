@@ -103,6 +103,16 @@ def index_archive(archive: Path) -> dict[tuple[str, str], IndexedAsset]:
             "(expected .tar.gz / .tgz from `contentops collect`)"
         )
 
+    # A playbook's Logic App definition lives in a ``.workflow.json`` next
+    # to its envelope; it is part of the payload that is compared.
+    with tarfile.open(archive, mode="r:gz") as tar:
+        sidecars: dict[str, bytes] = {}
+        for member in tar.getmembers():
+            if member.isfile() and member.name.endswith(".workflow.json"):
+                f = tar.extractfile(member)
+                if f is not None:
+                    sidecars[member.name] = f.read()
+
     out: dict[tuple[str, str], IndexedAsset] = {}
     for name, body in _iter_yaml_members(archive):
         try:
@@ -128,6 +138,11 @@ def index_archive(archive: Path) -> dict[tuple[str, str], IndexedAsset]:
         payload = raw.get("payload")
         if payload is None and platform:
             payload = raw.get(platform)
+        if isinstance(payload, dict) and payload.get("definitionFile"):
+            folder = name.rsplit("/", 1)[0] if "/" in name else ""
+            sidecar = f"{folder}/{payload['definitionFile']}" if folder else str(payload["definitionFile"])
+            if sidecar in sidecars:
+                payload = {**payload, "definition": sidecars[sidecar].decode("utf-8", "replace")}
         out[(asset, envelope_id)] = IndexedAsset(
             asset=asset,
             envelope_id=envelope_id,

@@ -18,8 +18,12 @@ from contentops.core.asset import Asset
 @click.option(
     "--out", "target",
     type=click.Path(path_type=Path),
-    default=Path("detections"),
-    help="Destination directory (default: detections/).",
+    # The archive holds ``detections/`` at its root, so the repository
+    # root is where its files go back to. (The old default
+    # ``detections/`` wrote ``detections/detections/...``.)
+    default=Path("."),
+    help="Directory the archive's detections/ folder is restored into "
+         "(default: the current directory, i.e. the repository root).",
 )
 @click.option(
     "--force", is_flag=True, default=False,

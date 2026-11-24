@@ -663,8 +663,9 @@ def lifecycle_promote_cmd(
       * status_is_experimental - current status must be experimental.
       * recent_validation - metadata.lastValidatedAt within
         --max-validation-age-days (default 30).
-      * live_test_pass - live when a workspace is set (--role /
-        --workspace-id) and --no-workspace-query is unset. Executes
+      * live_test_pass - live unless --no-workspace-query is set. The
+        workspace is --workspace-id, or else the prod workspace of
+        tenant.yml (this command has no --role option). Executes
         the rule's KQL against the workspace via the Log Analytics
         Query API (the rule-test path); a server-side parse/schema
         error or 403 blocks the promotion. Fail-closed on workspace

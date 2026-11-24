@@ -75,20 +75,28 @@ class RunPlaybookConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     playbook: str | None = None
+    # A Logic App in the configured playbook resource group that ContentOps
+    # does not manage (no envelope in the repo), by its exact name.
+    logicApp: str | None = None
     logicAppResourceId: str | None = None
     tenantId: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> "RunPlaybookConfig":
-        has_sugar = bool(self.playbook)
-        has_raw = bool(self.logicAppResourceId)
-        if has_sugar == has_raw:
+        targets = [bool(self.playbook), bool(self.logicApp), bool(self.logicAppResourceId)]
+        if sum(targets) != 1:
             raise ValueError(
                 "RunPlaybook actionConfiguration needs exactly one of "
-                "`playbook: <sentinel_playbook envelope id>` or "
+                "`playbook: <sentinel_playbook envelope id>`, "
+                "`logicApp: <name of a Logic App in the playbook resource group>` or "
                 "`logicAppResourceId: /subscriptions/.../Microsoft.Logic/workflows/<name>`"
             )
-        if has_raw and not _LOGIC_APP_ID_RE.match(self.logicAppResourceId or ""):
+        if self.logicApp and "/" in self.logicApp:
+            raise ValueError(
+                f"logicApp {self.logicApp!r} must be the Logic App's name, not a path; "
+                "use logicAppResourceId for a Logic App outside the playbook resource group"
+            )
+        if self.logicAppResourceId and not _LOGIC_APP_ID_RE.match(self.logicAppResourceId):
             raise ValueError(
                 f"logicAppResourceId {self.logicAppResourceId!r} is not a "
                 "Microsoft.Logic/workflows resource id"
@@ -322,6 +330,21 @@ def playbook_id_from_resource_id(
     return slug or None
 
 
+def logic_app_name_from_resource_id(
+    resource_id: str, *, subscription_id: str, resource_group: str,
+) -> str | None:
+    """The workflow name of a Logic App id inside the configured
+    subscription + playbook RG, exactly as ARM has it; else None."""
+    m = _LOGIC_APP_ID_RE.match(resource_id or "")
+    if m is None:
+        return None
+    if m.group("sub").lower() != subscription_id.lower():
+        return None
+    if m.group("rg").lower() != resource_group.lower():
+        return None
+    return m.group("name")
+
+
 def analytic_rule_resource_id(workspace_path: str, arm_name: str) -> str:
     """``<workspace>/providers/Microsoft.SecurityInsights/alertRules/<arm_name>``.
 
@@ -378,8 +401,11 @@ def to_automation_rule_arm_body(
     for action in payload.get("actions") or []:
         action = dict(action)
         cfg = dict(action.get("actionConfiguration") or {})
-        if action.get("actionType") == "RunPlaybook" and cfg.get("playbook"):
-            resource_id, tenant_id = resolve_playbook(str(cfg.pop("playbook")))
+        sugar = next((k for k in ("playbook", "logicApp") if cfg.get(k)), None)
+        if action.get("actionType") == "RunPlaybook" and sugar:
+            # Both name a workflow in the playbook resource group; a
+            # managed playbook's workflow is named after its envelope id.
+            resource_id, tenant_id = resolve_playbook(str(cfg.pop(sugar)))
             cfg["logicAppResourceId"] = resource_id
             if tenant_id and not cfg.get("tenantId"):
                 cfg["tenantId"] = tenant_id
@@ -462,6 +488,7 @@ __all__ = [
     "closes_incidents",
     "envelope_id_to_guid",
     "is_expired",
+    "logic_app_name_from_resource_id",
     "logic_app_resource_id",
     "normalize_expiration",
     "parse_expiration",

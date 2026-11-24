@@ -166,6 +166,24 @@ def test_diff_content_change_shows_as_updated(tmp_path: Path) -> None:
     assert old.payload_hash != new.payload_hash
 
 
+def test_diff_sees_a_change_to_a_playbook_definition(tmp_path: Path) -> None:
+    """A playbook's Logic App definition lives in ``<id>.workflow.json``;
+    only the envelope YAML was hashed, so a change to the definition was
+    reported as unchanged."""
+    envelope = ("id: pb-x\nversion: 1.0.0\nasset: sentinel_playbook\nstatus: production\n"
+                "payload:\n  definitionFile: pb-x.workflow.json\n")
+    a = _make_archive(tmp_path / "a.tar.gz", {
+        "detections/sentinel_playbook/pb-x.yml": envelope,
+        "detections/sentinel_playbook/pb-x.workflow.json": '{"actions": {"a": {"inputs": "v1"}}}',
+    })
+    b = _make_archive(tmp_path / "b.tar.gz", {
+        "detections/sentinel_playbook/pb-x.yml": envelope,
+        "detections/sentinel_playbook/pb-x.workflow.json": '{"actions": {"a": {"inputs": "v2"}}}',
+    })
+    rep = diff_archives(a, b)
+    assert len(rep.updated) == 1
+
+
 def test_diff_only_in_b_is_created(tmp_path: Path) -> None:
     a = _make_archive(tmp_path / "a.tar.gz", {})
     b = _make_archive(tmp_path / "b.tar.gz", {

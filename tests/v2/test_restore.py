@@ -143,6 +143,49 @@ def test_restore_unrecognised_extension_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+_PLAYBOOK_YAML = b"""\
+id: pb-x
+version: 1.0.0
+asset: sentinel_playbook
+status: production
+payload:
+  definitionFile: pb-x.workflow.json
+"""
+
+
+def test_restore_keeps_a_playbook_definition(tmp_path: Path) -> None:
+    """A playbook's Logic App definition lives in ``<id>.workflow.json``
+    next to the envelope. Restore wrote only YAML, so a restored playbook
+    pointed at a file that was not there and did not load."""
+    archive = _make_archive(tmp_path / "snap.tar.gz", {
+        "detections/sentinel_playbook/pb-x.yml": _PLAYBOOK_YAML,
+        "detections/sentinel_playbook/pb-x.workflow.json": b'{"triggers": {}, "actions": {}}',
+    })
+    target = tmp_path / "out"
+    restore_from_archive(archive, target=target)
+    from contentops.core.discovery import load_asset
+    loaded = load_asset(target / "detections/sentinel_playbook/pb-x.yml")
+    assert loaded.payload["definition"] == {"triggers": {}, "actions": {}}
+
+
+def test_cli_restore_by_default_puts_files_back_where_they_were(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The archive holds ``detections/`` at its root. With the old default
+    target ``detections/`` a restore from the repository root wrote
+    ``detections/detections/<kind>/...``, where nothing reads it."""
+    archive = _make_archive(tmp_path / "snap.tar.gz", {
+        "detections/sentinel_analytic/rule-x.yml": _RULE_YAML,
+    })
+    repo = tmp_path / "repo"
+    (repo / "detections" / "sentinel_analytic").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    result = CliRunner().invoke(cli, ["restore", str(archive), "--force"])
+    assert result.exit_code == 0, result.output
+    assert (repo / "detections/sentinel_analytic/rule-x.yml").exists()
+    assert not (repo / "detections/detections").exists()
+
+
 def test_cli_restore_happy_path(tmp_path: Path) -> None:
     archive = _make_archive(tmp_path / "snap.tar.gz", {
         "detections/sentinel_analytic/rule-x.yml": _RULE_YAML,

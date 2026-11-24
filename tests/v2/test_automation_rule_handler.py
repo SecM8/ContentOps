@@ -374,12 +374,21 @@ def test_to_envelope_falls_back_to_name_when_displayname_unsluggable() -> None:
     assert h.to_envelope({"properties": {"displayName": "x"}}) is None
 
 
+def _write_playbook_envelope(root: Path, envelope_id: str) -> None:
+    (root / "sentinel_playbook").mkdir(exist_ok=True)
+    (root / "sentinel_playbook" / f"{envelope_id}.yml").write_text(yaml.safe_dump({
+        "id": envelope_id, "version": "1.0.0", "asset": "sentinel_playbook", "status": "production",
+        "payload": {"definition": {"triggers": {}, "actions": {}}},
+    }), encoding="utf-8")
+
+
 def test_to_envelope_reverse_maps_playbook_and_analytic_sugar(tmp_path: Path) -> None:
     (tmp_path / "sentinel_analytic").mkdir()
     (tmp_path / "sentinel_analytic" / "my-rule.yml").write_text(yaml.safe_dump({
         "id": "my-rule", "version": "1.0.0", "asset": "sentinel_analytic", "status": "production",
         "metadata": {"arm_name": "1840b991"}, "payload": {"displayName": "x", "kind": "Scheduled", "query": "T"},
     }), encoding="utf-8")
+    _write_playbook_envelope(tmp_path, "notify-soc")
     provider = _provider_with(httpx.MockTransport(lambda r: httpx.Response(404)))
     h = SentinelAutomationRuleHandler(lambda: provider, tenant_id="TENANT-GUID", detections_root=tmp_path)
     remote = _remote(
@@ -405,6 +414,43 @@ def test_to_envelope_reverse_maps_playbook_and_analytic_sugar(tmp_path: Path) ->
     assert actions[1]["actionConfiguration"]["tenantId"] == "t2"
     values = env["payload"]["triggeringLogic"]["conditions"][0]["conditionProperties"]["propertyValues"]
     assert values == ["analytic:my-rule", "/elsewhere/alertRules/zzz"]
+    h.close()
+
+
+def test_to_envelope_names_an_unmanaged_logic_app_without_its_resource_id(tmp_path: Path) -> None:
+    """A rule in the tenant may run a Logic App that ContentOps does not
+    manage. ``playbook:`` means a playbook envelope in the repo, so lint
+    (PAYLOAD007) and the plan's dependency check rejected the collected
+    file and every later pull request was red. The raw resource id is no
+    way out: it holds the subscription GUID, which gitleaks blocks in
+    this directory. Collect writes ``logicApp: <name>`` instead, the
+    Logic App's exact name in the configured playbook resource group."""
+    provider = _provider_with(httpx.MockTransport(lambda r: httpx.Response(404)))
+    h = SentinelAutomationRuleHandler(lambda: provider, tenant_id="TENANT-GUID", detections_root=tmp_path)
+    remote = _remote(actions=[{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {
+        "logicAppResourceId": "/subscriptions/SUB/resourceGroups/RG-PB/providers/Microsoft.Logic/workflows/Notify_SOC.Teams",
+        "tenantId": "tenant-guid"}}])
+    env = h.to_envelope(remote)
+    assert env is not None
+    assert env["payload"]["actions"][0]["actionConfiguration"] == {"logicApp": "Notify_SOC.Teams"}
+    h.close()
+
+
+def test_apply_resolves_an_unmanaged_logic_app_into_playbooks_rg_and_tenant() -> None:
+    echo = _Echo()
+    payload = _payload(actions=[{
+        "order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"logicApp": "Notify_SOC.Teams"},
+    }])
+    h = SentinelAutomationRuleHandler(
+        lambda: _provider_with(httpx.MockTransport(echo)), tenant_id="tenant-guid",
+    )
+    r = h.apply(_loaded(payload=payload))
+    assert r.verified is True
+    cfg = echo.calls[1][2]["properties"]["actions"][0]["actionConfiguration"]
+    assert cfg == {
+        "logicAppResourceId": "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/Notify_SOC.Teams",
+        "tenantId": "tenant-guid",
+    }
     h.close()
 
 

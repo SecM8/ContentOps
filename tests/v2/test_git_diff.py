@@ -84,3 +84,36 @@ def test_a_path_name_is_not_accepted_as_a_ref(tmp_path: Path) -> None:
 
     with pytest.raises(GitDiffError):
         changed_paths("detections", repo=repo)
+
+
+def test_a_change_to_a_playbook_definition_alone_selects_the_playbook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A playbook keeps its Logic App definition in a ``.workflow.json``
+    next to the envelope. ``--changed-since`` compared only envelope
+    paths, so an edit to the definition alone was never deployed. Seen in
+    a deployment repo: six of seven edited objects were selected."""
+    import json
+
+    import yaml
+
+    from contentops.cli.commands._shared import _filter_changed_since
+    from contentops.core.discovery import iter_loaded_assets
+
+    repo = _init_repo(tmp_path)
+    pb = repo / "detections" / "sentinel_playbook"
+    pb.mkdir(parents=True)
+    definition = {"triggers": {"t": {"type": "Request"}}, "actions": {"a": {"type": "Compose", "inputs": "v1"}}}
+    (pb / "pb.workflow.json").write_text(json.dumps(definition), encoding="utf-8")
+    (pb / "pb.yml").write_text(yaml.safe_dump({
+        "id": "pb", "version": "1.0.0", "asset": "sentinel_playbook", "status": "production",
+        "payload": {"definitionFile": "pb.workflow.json"},
+    }), encoding="utf-8")
+    _run(["git", "add", "."], repo)
+    _run(["git", "commit", "-q", "-m", "add a playbook"], repo)
+    definition["actions"]["a"]["inputs"] = "v2"
+    (pb / "pb.workflow.json").write_text(json.dumps(definition), encoding="utf-8")
+
+    monkeypatch.chdir(repo)
+    loaded = list(iter_loaded_assets(Path("detections")))
+    assert [la.envelope.id for la in _filter_changed_since(loaded, "HEAD")] == ["pb"]

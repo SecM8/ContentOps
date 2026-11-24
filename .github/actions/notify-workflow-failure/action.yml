@@ -45,6 +45,13 @@ inputs:
   github-token:
     description: 'Token with `issues: write` scope (GITHUB_TOKEN is sufficient)'
     required: true
+  trigger:
+    description: >
+      What started the failing run, as one lowercase word for the issue
+      title: 'scheduled' (default) or 'push'. Callers that do not pass it
+      keep the title they always had, so an open alert is still found.
+    required: false
+    default: scheduled
 
 runs:
   using: composite
@@ -61,13 +68,14 @@ runs:
         GH_REPO: ${{ github.repository }}
         WORKFLOW_NAME: ${{ inputs.workflow-name }}
         RUN_URL: ${{ inputs.run-url }}
+        TRIGGER: ${{ inputs.trigger }}
       run: |
         set -euo pipefail
 
-        TITLE="[pipeline-alert] ${WORKFLOW_NAME} scheduled run failed"
+        TITLE="[pipeline-alert] ${WORKFLOW_NAME} ${TRIGGER} run failed"
         TS="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         BODY=$(cat <<EOF
-        Scheduled run of \`${WORKFLOW_NAME}\` failed at ${TS}.
+        ${TRIGGER^} run of \`${WORKFLOW_NAME}\` failed at ${TS}.
 
         - Run: ${RUN_URL}
         - Workflow file: \`.github/workflows/${WORKFLOW_NAME}.yml\` (best guess; see the run link for the canonical path)
@@ -80,6 +88,11 @@ runs:
           Environment names.
         - \`silent-rules\` failure → verify \`PIPELINE_WORKSPACE_ID\` is set
           and the Log Analytics Query API is reachable.
+        - \`Deploy to production\` failure after a merge → the merged change
+          is not (or not fully) in the tenant. Open the run for the rule
+          and the reason, fix the cause, then start the workflow by hand
+          with \`changed_since\` set to the commit before that merge. Until
+          then, do not merge a drift pull request that undoes the change.
 
         Close this issue once the next scheduled run is green; reopen
         if it goes red again. New failures of the same workflow comment

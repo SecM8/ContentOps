@@ -202,13 +202,17 @@ def _load_all(detections_path: Path):
 
 
 def _filter_changed_since(loaded, ref: str):
-    """Restrict ``loaded`` to assets whose YAML changed since ``ref``."""
+    """Restrict ``loaded`` to assets whose YAML, or a sidecar the asset
+    is loaded from (a playbook's ``.workflow.json``), changed since ``ref``."""
     from contentops.utils.git_diff import GitDiffError, changed_paths
     try:
         diff = changed_paths(ref)
     except GitDiffError as exc:
         raise click.ClickException(f"--changed-since={ref}: {exc}") from exc
-    return [la for la in loaded if la.path.resolve() in diff]
+    return [
+        la for la in loaded
+        if any(p.resolve() in diff for p in (la.path, *la.sidecars))
+    ]
 
 
 def _emit_dependency_report(loaded) -> bool:

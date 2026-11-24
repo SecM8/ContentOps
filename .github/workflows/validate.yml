@@ -97,6 +97,16 @@ jobs:
         run: |
           python scripts/check_version_bump.py "origin/$BASE_REF"
 
+      - name: MITRE id check (added and changed Sentinel rules)
+        # Sentinel rejects a sub-technique id under `techniques` when the
+        # rule is deployed; `plan` does not see it. Checked here, on the
+        # rules this pull request adds or changes, so it fails before the
+        # merge instead of after it.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          python scripts/check_mitre_ids.py "origin/$BASE_REF"
+
       - name: References URL check (added URLs only)
         # PR-time fast path: HEAD-checks ONLY URLs newly introduced by
         # this PR's diff. The full corpus is HEAD-checked weekly by

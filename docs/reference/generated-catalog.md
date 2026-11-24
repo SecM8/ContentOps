@@ -301,7 +301,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **195** files, **2280** test functions. Integration: **12** files, **17** test functions.
+Unit: **197** files, **2327** test functions. Integration: **12** files, **17** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -323,7 +323,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_apply_verify_analytic.py` | 3 |
 | `tests/v2/test_apply_verify_defender.py` | 11 |
 | `tests/v2/test_apply_verify_hunting.py` | 3 |
-| `tests/v2/test_apply_verify_watchlist.py` | 13 |
+| `tests/v2/test_apply_verify_watchlist.py` | 14 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
 | `tests/v2/test_arm_name_matching.py` | 11 |
 | `tests/v2/test_asset_modes.py` | 13 |
@@ -335,11 +335,12 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_audit_timestamp_monotonicity.py` | 18 |
 | `tests/v2/test_auth.py` | 6 |
 | `tests/v2/test_auth_credential_chain.py` | 12 |
-| `tests/v2/test_automation_playbook_drift.py` | 3 |
-| `tests/v2/test_automation_rule_handler.py` | 20 |
-| `tests/v2/test_automation_rule_models.py` | 17 |
+| `tests/v2/test_automation_playbook_drift.py` | 4 |
+| `tests/v2/test_automation_rule_handler.py` | 22 |
+| `tests/v2/test_automation_rule_models.py` | 19 |
 | `tests/v2/test_bootstrap_cli.py` | 3 |
 | `tests/v2/test_catalog.py` | 21 |
+| `tests/v2/test_check_mitre_ids.py` | 10 |
 | `tests/v2/test_check_references_diff.py` | 5 |
 | `tests/v2/test_check_version_bump.py` | 7 |
 | `tests/v2/test_clean_cmd.py` | 5 |
@@ -373,10 +374,10 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_defender_rule_status.py` | 14 |
 | `tests/v2/test_dependencies.py` | 7 |
 | `tests/v2/test_detect_production_promotions.py` | 9 |
-| `tests/v2/test_detection_docs.py` | 12 |
+| `tests/v2/test_detection_docs.py` | 15 |
 | `tests/v2/test_detection_health.py` | 50 |
 | `tests/v2/test_devex_doctor.py` | 9 |
-| `tests/v2/test_devex_scaffold.py` | 9 |
+| `tests/v2/test_devex_scaffold.py` | 11 |
 | `tests/v2/test_disable.py` | 5 |
 | `tests/v2/test_disable_pattern.py` | 12 |
 | `tests/v2/test_discovery.py` | 4 |
@@ -390,6 +391,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_doctor_output.py` | 3 |
 | `tests/v2/test_doctor_sentinel_health.py` | 6 |
 | `tests/v2/test_drift.py` | 16 |
+| `tests/v2/test_drift_authored_envelopes.py` | 8 |
 | `tests/v2/test_drift_field_diff.py` | 10 |
 | `tests/v2/test_drift_pr_body.py` | 8 |
 | `tests/v2/test_drift_resolve.py` | 8 |
@@ -403,7 +405,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_envelope_metadata_fallback.py` | 5 |
 | `tests/v2/test_explain.py` | 16 |
 | `tests/v2/test_extract_etag.py` | 5 |
-| `tests/v2/test_git_diff.py` | 6 |
+| `tests/v2/test_git_diff.py` | 7 |
 | `tests/v2/test_handler_coverage.py` | 3 |
 | `tests/v2/test_http_retry.py` | 22 |
 | `tests/v2/test_hunting_handler.py` | 6 |
@@ -437,7 +439,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_navigator_render.py` | 10 |
 | `tests/v2/test_optional_engines.py` | 14 |
 | `tests/v2/test_plan_against_tenant.py` | 4 |
-| `tests/v2/test_playbook_handler.py` | 19 |
+| `tests/v2/test_playbook_handler.py` | 22 |
 | `tests/v2/test_playbook_models.py` | 16 |
 | `tests/v2/test_playbook_sidecar.py` | 7 |
 | `tests/v2/test_portfolio.py` | 15 |
@@ -447,7 +449,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_product_filter_enum.py` | 3 |
 | `tests/v2/test_production_promotion_detector.py` | 10 |
 | `tests/v2/test_production_promotion_gate_workflow.py` | 3 |
-| `tests/v2/test_prune.py` | 22 |
+| `tests/v2/test_prune.py` | 24 |
 | `tests/v2/test_refresh_attack_matrix.py` | 3 |
 | `tests/v2/test_registry_and_handler.py` | 6 |
 | `tests/v2/test_registry_close.py` | 5 |
@@ -456,7 +458,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_report_enrich.py` | 17 |
 | `tests/v2/test_report_snapshot.py` | 25 |
 | `tests/v2/test_resolve_workspace_id.py` | 7 |
-| `tests/v2/test_restore.py` | 11 |
+| `tests/v2/test_restore.py` | 13 |
 | `tests/v2/test_retry_failed_since.py` | 19 |
 | `tests/v2/test_rollback.py` | 16 |
 | `tests/v2/test_rollback_gates.py` | 5 |
@@ -467,7 +469,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_sentinel_roundtrip.py` | 24 |
 | `tests/v2/test_silent_rules.py` | 8 |
 | `tests/v2/test_slug_arm_name.py` | 12 |
-| `tests/v2/test_snapshot_diff.py` | 15 |
+| `tests/v2/test_snapshot_diff.py` | 16 |
 | `tests/v2/test_snippets.py` | 39 |
 | `tests/v2/test_state_adopt.py` | 10 |
 | `tests/v2/test_state_file.py` | 10 |
@@ -478,7 +480,7 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_status_state_env.py` | 8 |
 | `tests/v2/test_stdio_utf8.py` | 4 |
 | `tests/v2/test_strict_allowlist.py` | 14 |
-| `tests/v2/test_support_asset_lint.py` | 8 |
+| `tests/v2/test_support_asset_lint.py` | 9 |
 | `tests/v2/test_support_asset_metadata.py` | 6 |
 | `tests/v2/test_tenant_policy.py` | 6 |
 | `tests/v2/test_token_auth.py` | 6 |
@@ -493,8 +495,8 @@ Unit: **195** files, **2280** test functions. Integration: **12** files, **17** 
 | `tests/v2/test_upstream_templates.py` | 1 |
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
 | `tests/v2/test_url_path_safety.py` | 8 |
-| `tests/v2/test_watchlist_model.py` | 7 |
-| `tests/v2/test_workflow_hardening.py` | 13 |
+| `tests/v2/test_watchlist_model.py` | 10 |
+| `tests/v2/test_workflow_hardening.py` | 18 |
 | `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
 | `tests/v2/test_workspace_kql.py` | 30 |
 | `tests/v2/test_workspace_kql_emulator.py` | 3 |

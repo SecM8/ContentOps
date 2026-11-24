@@ -153,6 +153,10 @@ class SentinelPlaybookHandler:
         self._provider_factory = provider_factory
         self._provider: SentinelArmProvider | None = None
         self._tenant_id = tenant_id
+        # Logic Apps tagged by ``adopt`` in this run. ARM's tag-filtered
+        # resource list lags a tag just written, so ``list_remote`` adds
+        # these by name.
+        self._adopted: list[str] = []
 
     def _provider_or_create(self) -> SentinelArmProvider | None:
         if self._provider is None:
@@ -317,6 +321,9 @@ class SentinelPlaybookHandler:
                     "(needs Owner / User Access Administrator):\n    "
                     + "\n    ".join(missing)
                 )
+                # The apply summary does not print a result's detail, and
+                # this is the one the operator has to act on.
+                click.echo(f"  {envelope_id}: {detail}")
             elif unverifiable:
                 detail = (
                     "could not read role assignments for the managed identity "
@@ -381,6 +388,10 @@ class SentinelPlaybookHandler:
         return {
             "connectionId": connection_id,
             "connectionName": name,
+            # Logic Apps rejects a managed-identity connection whose
+            # workflow entry does not name the authentication type
+            # (400 WorkflowManagedIdentityConfigurationInvalid).
+            "connectionProperties": {"authentication": {"type": "ManagedServiceIdentity"}},
             "id": api_id,
         }, None
 
@@ -494,6 +505,8 @@ class SentinelPlaybookHandler:
         patched.raise_for_status()
         after = provider.request("GET", url)
         after.raise_for_status()
+        if workflow_name not in self._adopted:
+            self._adopted.append(workflow_name)
         return after.json()
 
     # --- Drift support -------------------------------------------------
@@ -510,12 +523,11 @@ class SentinelPlaybookHandler:
             resource_type=f"{LOGIC_NAMESPACE}/{WORKFLOWS}",
             api_version=RESOURCES_API_VERSION,
         )
+        names = [str(s.get("name")) for s in summaries if s.get("name")]
+        names += [n for n in self._adopted if n.lower() not in {x.lower() for x in names}]
         out: list[dict] = []
-        for summary in summaries:
-            name = summary.get("name")
-            if not name:
-                continue
-            resp = provider.request("GET", self._workflow_url(provider, str(name)))
+        for name in names:
+            resp = provider.request("GET", self._workflow_url(provider, name))
             if resp.status_code != 200:
                 logger.warning("playbook %s: GET returned %s", name, resp.status_code)
                 continue

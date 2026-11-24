@@ -86,6 +86,32 @@ def test_payload007_silent_when_references_resolve(tmp_path: Path) -> None:
     assert "PAYLOAD007" not in _findings(tmp_path, p)
 
 
+def test_payload007_resolves_against_every_kind_when_lint_is_limited_to_one(tmp_path: Path) -> None:
+    """``lint --asset sentinel_automation_rule`` reported every
+    ``playbook:`` reference as dangling: the repo-wide pass only saw the
+    kind being linted, never the playbook envelopes."""
+    from contentops.core.asset import Asset
+
+    d = tmp_path / "sentinel_playbook"; d.mkdir()
+    (d / "pb.workflow.json").write_text(json.dumps({"triggers": {"t": {"type": "Request"}}, "actions": {}}), encoding="utf-8")
+    pb = _write(tmp_path, "sentinel_playbook", "pb", {"definitionFile": "pb.workflow.json", "connections": []})
+    p = _write(tmp_path, "sentinel_automation_rule", "r1", _rule(
+        actions=[{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"playbook": "pb"}}],
+    ))
+    linted = lint_assets(tmp_path, asset_filter=Asset.SENTINEL_AUTOMATION_RULE)
+    found = {f.rule_id for lf in linted if lf.path == p for f in lf.findings}
+    assert "PAYLOAD007" not in found
+    assert all(lf.path != pb for lf in linted)  # the other kind is still not reported
+    dangling = _write(tmp_path, "sentinel_automation_rule", "r2", _rule(
+        order=2, actions=[{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"playbook": "nope"}}],
+    ))
+    linted = lint_assets(tmp_path, asset_filter=Asset.SENTINEL_AUTOMATION_RULE)
+    assert "PAYLOAD007" in {f.rule_id for lf in linted if lf.path == dangling for f in lf.findings}
+    # Limited to playbooks, the automation rules' findings stay out.
+    linted = lint_assets(tmp_path, asset_filter=Asset.SENTINEL_PLAYBOOK)
+    assert all(lf.path not in (p, dangling) for lf in linted)
+
+
 def test_payload008_expired_rule_warns(tmp_path: Path) -> None:
     p = _write(tmp_path, "sentinel_automation_rule", "r1", _rule(expiry="2020-01-01T00:00:00Z"))
     assert _findings(tmp_path, p)["PAYLOAD008"] == ["warning"]

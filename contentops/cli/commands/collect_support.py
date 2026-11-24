@@ -166,7 +166,7 @@ def _classify_collected_drift(
                     ))
                     continue
                 local_path, local_payload = match
-                if _payloads_match(local_payload, new_payload):
+                if _payloads_match(local_payload, new_payload, handler.asset):
                     report.entries.append(DriftEntry(
                         asset=handler.asset, asset_id=asset_id, kind="in-sync",
                         local_path=local_path,

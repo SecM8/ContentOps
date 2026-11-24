@@ -35,13 +35,20 @@ def _definition() -> dict:
     }
 
 
+def _tenant(request: httpx.Request) -> httpx.Response:
+    # The managed playbook is readable; everything else is not there.
+    if request.method == "GET" and "/Microsoft.Logic/workflows/notify-soc" in request.url.path:
+        return httpx.Response(200, json=_playbook_remote())
+    return httpx.Response(404)
+
+
 def _provider() -> SentinelArmProvider:
     cfg = SentinelConfig(subscriptionId="sub", resourceGroup="rg", workspaceName="ws",
                          playbooksResourceGroup="rg-pb")
     p = SentinelArmProvider(cfg, token="t")
     p._client.close()
     p._client = httpx.Client(base_url=sentinel_arm.ARM_BASE_URL,
-                             transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+                             transport=httpx.MockTransport(_tenant))
     return p
 
 
@@ -123,6 +130,21 @@ def test_drift_writes_envelopes_and_sidecars_that_reload_and_come_back_in_sync(t
     report2 = detect_drift(handlers, tmp_path)
     assert not report2.has_drift(), [(e.asset.value, e.asset_id, e.kind) for e in report2.entries]
     assert len(report2.in_sync) == 2
+
+
+def test_drift_names_an_unmanaged_logic_app_and_comes_back_in_sync(tmp_path: Path) -> None:
+    """A rule that runs a Logic App ContentOps does not manage (no tag,
+    no envelope) is written with ``logicApp:``, loads, and the next pass
+    is in sync."""
+    remote = _automation_remote()
+    remote["properties"]["actions"][0]["actionConfiguration"]["logicAppResourceId"] = (
+        "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/team-mail"
+    )
+    handlers = [_StubAutomation([remote])]
+    write_drift(detect_drift(handlers, tmp_path), tmp_path)
+    ar_yaml = yaml.safe_load((tmp_path / "sentinel_automation_rule" / "run-notify-soc.yml").read_text(encoding="utf-8"))
+    assert ar_yaml["payload"]["actions"][0]["actionConfiguration"] == {"logicApp": "team-mail"}
+    assert not detect_drift(handlers, tmp_path).has_drift()
 
 
 def test_drift_detects_changed_playbook_definition(tmp_path: Path) -> None:

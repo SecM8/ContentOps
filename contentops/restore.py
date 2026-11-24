@@ -69,7 +69,10 @@ def _extract_safely(tar: tarfile.TarFile, dest: Path) -> list[str]:
 
 
 def _is_yaml_or_manifest(name: str) -> bool:
-    return name.endswith((".yml", ".yaml")) or name.endswith("MANIFEST.json")
+    # ``.workflow.json`` is a playbook's Logic App definition, the
+    # envelope's ``definitionFile``; without it a restored playbook does
+    # not load.
+    return name.endswith((".yml", ".yaml", ".workflow.json")) or name.endswith("MANIFEST.json")
 
 
 def restore_from_archive(

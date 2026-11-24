@@ -206,12 +206,16 @@ def lint_assets(
         results.append(LintedFile(path=path, asset=None, findings=[_load_error_finding(exc)]))
 
     for loaded in iter_loaded_assets(detections_path, on_error=_load_error):
+        # Every kind feeds the repo-wide pass below (a `playbook:`
+        # reference resolves against the playbook envelopes even when
+        # only automation rules are linted); only the filtered kind is
+        # linted and reported.
+        all_loaded.append(loaded)
         if asset_filter is not None and loaded.envelope.asset != asset_filter:
             continue
 
         kind = loaded.envelope.asset.value
         findings: list[LintFinding] = []
-        all_loaded.append(loaded)
 
         findings.extend(lint_payload(
             loaded.payload, asset=loaded.envelope.asset,
@@ -270,7 +274,10 @@ def lint_assets(
     if support_loaded:
         repo_findings = lint_support_assets_repo(all_loaded)
         by_path = {lf.path: lf for lf in results}
+        linted_paths = {la.path for la in support_loaded}
         for path, extra in repo_findings.items():
+            if path not in linted_paths:
+                continue  # a kind outside --asset
             existing = by_path.get(path)
             if existing is not None:
                 existing.findings.extend(extra)

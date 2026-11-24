@@ -67,11 +67,13 @@ def _alias_to_envelope_id(alias: str) -> str | None:
         return None
     return slug
 
+# ``contentType`` is not here: like ``rawContent`` it describes the
+# upload, and a workspace GET returns it as null, so hashing it made
+# every watchlist deploy report a post-apply mismatch.
 _HASHED_FIELDS = [
     "properties.displayName",
     "properties.itemsSearchKey",
     "properties.provider",
-    "properties.contentType",
 ]
 
 # Server-managed fields stripped before round-trip diff so the

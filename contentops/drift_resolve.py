@@ -163,7 +163,7 @@ def find_entry_for(
                     envelope=envelope,
                 )
             local_path, local_payload = local[asset_id]
-            if _payloads_match(local_payload, new_payload):
+            if _payloads_match(local_payload, new_payload, handler.asset):
                 return DriftEntry(
                     asset=handler.asset, asset_id=asset_id, kind="in-sync",
                     local_path=local_path,
