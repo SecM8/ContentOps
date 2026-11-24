@@ -118,7 +118,7 @@ def prune_cmd(
         JSONL chain ``apply`` uses.
     """
     import json as _json
-    from contentops.core.drift import DriftCapable, _local_index
+    from contentops.core.drift import DriftCapable, _local_index, _local_names, _match_local
     from contentops.core.result import NotSupportedError
 
     _apply_log_levels()
@@ -240,6 +240,8 @@ def prune_cmd(
             # and refuse the whole run.
             converted = [(remote, handler.to_envelope(remote)) for remote in remote_items]
             converted = [(remote, env) for remote, env in converted if env is not None]
+            names = _local_names(detections_path, handler.asset)
+            remote_ids = {str(r.get("name") or r.get("id") or "") for r in remote_items}
             if converted and not local:
                 empty_kinds.append({
                     "asset": asset_value, "remote_count": len(converted),
@@ -265,6 +267,14 @@ def prune_cmd(
                 # thing standing between that bug and unintended
                 # production deletes.
                 if str(remote_id) in local or env_id in local:
+                    continue
+                # A Defender rule restored after a prune is back under a
+                # new id while its file records the deleted one: matched
+                # by display name, as deploy and drift match it, it is
+                # not an orphan.
+                if names and _match_local(
+                    local, names, remote_ids, remote, env_id, envelope,
+                )[0] is not None:
                     continue
                 key = (asset_value, env_id)
                 if key in locked_ids and not include_locked:

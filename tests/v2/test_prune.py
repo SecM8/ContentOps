@@ -301,6 +301,38 @@ def test_a_kind_whose_items_are_never_collected_does_not_block_a_prune(tmp_path:
     assert connectors.deleted == []
 
 
+def test_a_re_created_defender_rule_is_not_an_orphan(tmp_path: Path) -> None:
+    """A Defender rule restored after a prune comes back under a new Graph
+    id while its file still records the deleted one. Matching only by id
+    and slug, prune took the live rule for an orphan and would have
+    deleted it. It is matched by display name now (Graph keeps those
+    unique), as deploy and drift match it."""
+    class _Defender(_FakeAnalyticHandler):
+        asset = Asset.DEFENDER_CUSTOM_DETECTION
+
+        def to_envelope(self, remote: dict) -> dict | None:
+            return {"id": "zz-rule-renamed", "version": "0.1.0", "asset": self.asset.value,
+                    "status": "production", "metadata": {"arm_name": remote["name"]},
+                    "payload": {"displayName": remote["displayName"]}}
+
+    detections = tmp_path / "detections" / "defender_custom_detection"
+    detections.mkdir(parents=True)
+    (detections / "zz-rule.yml").write_text(yaml.safe_dump({
+        "id": "zz-rule", "version": "1.0.0", "asset": "defender_custom_detection",
+        "status": "production", "metadata": {"arm_name": "111"},
+        "payload": {"displayName": "zz rule renamed", "queryCondition": {"queryText": "T"}},
+    }), encoding="utf-8")
+    fake = _Defender([{"name": "222", "displayName": "zz rule renamed"}])
+    _register_only(Asset.DEFENDER_CUSTOM_DETECTION, fake)
+
+    result = CliRunner().invoke(
+        cli, ["prune", "--path", str(tmp_path / "detections"), "--asset",
+              "defender_custom_detection", "--no-dry-run", "--yes"],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake.deleted == []
+
+
 def test_prune_max_deletes_fails_closed(tmp_path: Path) -> None:
     detections = tmp_path / "detections"
     detections.mkdir()

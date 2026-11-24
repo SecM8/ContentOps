@@ -251,6 +251,32 @@ def test_defaults_graph_fills_into_a_new_defender_rule_are_not_drift(tmp_path: P
     assert kinds == {"zz-new": "in-sync", "zz-explicit": "changed"}
 
 
+def test_a_re_created_defender_rule_is_matched_to_its_file_by_name(tmp_path: Path) -> None:
+    """Restored after a prune, a Defender rule comes back under a new Graph
+    id; its file still records the deleted one, and the file's id is not
+    the slug of the (renamed) display name. Drift reported the live rule as
+    new, and collect would have written a second file for it. Seen against
+    a tenant. Deploy matches by recorded id, then by display name (unique
+    in a tenant); drift now does the same, and the import records the new
+    id in the existing file."""
+    payload = {"displayName": "zz rule renamed", "status": "disabled",
+               "queryCondition": {"queryText": "DeviceProcessEvents | take 1"}}
+    path = _write(tmp_path, Asset.DEFENDER_CUSTOM_DETECTION, "zz-rule", payload)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["metadata"]["arm_name"] = "111"  # the deleted rule
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    tenant = _Tenant(Asset.DEFENDER_CUSTOM_DETECTION, [_collected(
+        "zz-rule-renamed", Asset.DEFENDER_CUSTOM_DETECTION, payload, name="222")])
+    report = detect_drift([tenant], tmp_path)
+    assert [(e.kind, e.local_path.name if e.local_path else None) for e in report.entries] == [
+        ("changed", "zz-rule.yml"),
+    ]
+    write_drift(report, tmp_path)
+    assert sorted(p.name for p in (tmp_path / "defender_custom_detection").iterdir()) == ["zz-rule.yml"]
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert doc["metadata"]["arm_name"] == "222" and doc["id"] == "zz-rule"
+
+
 def test_the_default_label_type_is_not_drift_on_either_side(tmp_path: Path) -> None:
     """The tenant returns every label with ``labelType: User``, the
     default. A file that adds a label does not say so; a collected file

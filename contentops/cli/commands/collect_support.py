@@ -131,7 +131,7 @@ def _classify_collected_drift(
     same live rule.
     """
     from contentops.core.drift import (
-        DriftEntry, DriftReport, _local_index, _payloads_match,
+        DriftEntry, DriftReport, _local_index, _local_names, _match_local, _payloads_match,
     )
 
     report = DriftReport()
@@ -139,6 +139,11 @@ def _classify_collected_drift(
         for handler in drift_handlers:
             asset_value = handler.asset.value
             local = _local_index(detections_path, handler.asset)
+            names = _local_names(detections_path, handler.asset)
+            remote_ids = {
+                str(r.get("name") or r.get("id") or "")
+                for r in handler_results.get(asset_value, [])
+            }
             pairs: list[tuple[dict, dict]] = []
             for remote in handler_results.get(asset_value, []):
                 if since_dt is not None:
@@ -155,10 +160,7 @@ def _classify_collected_drift(
                 if not asset_id:
                     continue
                 new_payload = envelope.get("payload", {})
-                remote_key = str(remote.get("name") or remote.get("id") or "")
-                match = local.get(remote_key) if remote_key else None
-                if match is None:
-                    match = local.get(asset_id)
+                match, stale_id = _match_local(local, names, remote_ids, remote, asset_id, envelope)
                 if match is None:
                     report.entries.append(DriftEntry(
                         asset=handler.asset, asset_id=asset_id, kind="new",
@@ -166,7 +168,7 @@ def _classify_collected_drift(
                     ))
                     continue
                 local_path, local_payload = match
-                if _payloads_match(local_payload, new_payload, handler.asset):
+                if not stale_id and _payloads_match(local_payload, new_payload, handler.asset):
                     report.entries.append(DriftEntry(
                         asset=handler.asset, asset_id=asset_id, kind="in-sync",
                         local_path=local_path,

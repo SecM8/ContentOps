@@ -297,6 +297,54 @@ def _local_index(detections_root: Path, asset: Asset) -> dict[str, tuple[Path, d
     return out
 
 
+def _local_names(detections_root: Path, asset: Asset) -> dict[str, tuple[Path, dict, str]]:
+    """Defender rules only: ``displayName -> (path, payload, arm_name)``.
+
+    Graph keeps display names unique and deploy matches a file to a rule
+    by its recorded id, then by its display name. A rule restored after a
+    prune comes back under a new id while its file still records the
+    deleted one; the name is then the only link left.
+    """
+    if asset is not Asset.DEFENDER_CUSTOM_DETECTION:
+        return {}
+    out: dict[str, tuple[Path, dict, str]] = {}
+    for path in discover_assets(detections_root):
+        try:
+            loaded = load_asset(path)
+        except Exception:  # noqa: BLE001 — reported by _local_index
+            continue
+        if loaded.envelope.asset != asset or not isinstance(loaded.payload, dict):
+            continue
+        name = loaded.payload.get("displayName")
+        if name:
+            out[str(name)] = (path, loaded.payload, str(loaded.envelope.arm_name or ""))
+    return out
+
+
+def _match_local(
+    local: dict[str, tuple[Path, dict]],
+    names: dict[str, tuple[Path, dict, str]],
+    remote_ids: set[str],
+    remote: dict,
+    asset_id: str,
+    envelope: dict,
+) -> tuple[tuple[Path, dict] | None, bool]:
+    """The local file for one remote object, and whether its recorded id
+    is stale: by its remote name, then by the envelope id, then (Defender)
+    by display name when the file's recorded id is no longer a live rule
+    (so a name never takes a file another live rule owns)."""
+    remote_key = remote.get("name") or remote.get("id") or ""
+    match = local.get(str(remote_key)) if remote_key else None
+    if match is None:
+        match = local.get(asset_id)
+    if match is None and names:
+        name = (envelope.get("payload") or {}).get("displayName")
+        candidate = names.get(str(name)) if name else None
+        if candidate is not None and candidate[2] not in remote_ids:
+            return (candidate[0], candidate[1]), True
+    return match, False
+
+
 def _payloads_match(local: dict, remote: dict, asset: Asset | None = None) -> bool:
     """Stable comparison of two payload dicts.
 
@@ -407,6 +455,8 @@ def detect_drift(
                 asset=asset, asset_id="*", kind="error", error=str(exc),
             ))
             continue
+        names = _local_names(detections_root, asset)
+        remote_ids = {str(r.get("name") or r.get("id") or "") for r in remote_items}
 
         # Pair each ``to_envelope`` result with its source remote so we
         # can look the match key up by the authoritative ARM/Graph name
@@ -441,17 +491,16 @@ def detect_drift(
             # for Defender graph_id); fall back to the disambiguated
             # envelope id for envelopes that never carried a remote
             # name.
-            remote_key = remote.get("name") or remote.get("id") or ""
-            match = local.get(str(remote_key)) if remote_key else None
-            if match is None:
-                match = local.get(asset_id)
+            match, stale_id = _match_local(local, names, remote_ids, remote, asset_id, envelope)
             if match is None:
                 report.entries.append(DriftEntry(
                     asset=asset, asset_id=asset_id, kind="new", envelope=envelope,
                 ))
                 continue
             local_path, local_payload = match
-            if _payloads_match(local_payload, new_payload, asset):
+            # A stale recorded id is a change: the import records the
+            # live rule's id in the file.
+            if not stale_id and _payloads_match(local_payload, new_payload, asset):
                 report.entries.append(DriftEntry(
                     asset=asset, asset_id=asset_id, kind="in-sync",
                     local_path=local_path,
