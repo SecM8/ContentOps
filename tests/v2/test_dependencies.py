@@ -76,6 +76,55 @@ def test_validate_clean_when_prereqs_present() -> None:
     assert report.violations == ()
 
 
+def test_validate_resolves_references_against_the_whole_inventory() -> None:
+    """plan/apply check only the selected files (``--asset``,
+    ``--changed-since``), but a prerequisite that did not change is still
+    in the repository and need not be deployed again."""
+    rule = _loaded("rule-a", Asset.SENTINEL_ANALYTIC)
+    inventory = [rule, _loaded("highvalue", Asset.SENTINEL_WATCHLIST)]
+    g = DependencyGraph.model_validate({
+        "version": 1, "assets": {"rule-a": {"watchlists": ["highvalue"]}},
+    })
+    assert not validate([rule], g).ok
+    assert validate([rule], g, inventory=inventory).ok
+
+
+def test_plan_with_asset_filter_finds_an_unchanged_prerequisite(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import yaml
+    from click.testing import CliRunner
+
+    from contentops.cli import cli
+    from contentops.core.registry import default_registry
+
+    detections = tmp_path / "detections"
+    (detections / "sentinel_hunting").mkdir(parents=True)
+    (detections / "sentinel_watchlist").mkdir(parents=True)
+    (detections / "dependencies.yml").write_text(
+        "version: 1\nassets:\n  hunt-a:\n    watchlists: [highvalue]\n", encoding="utf-8",
+    )
+    (detections / "sentinel_hunting" / "hunt-a.yml").write_text(yaml.safe_dump({
+        "id": "hunt-a", "version": "1.0.0", "asset": "sentinel_hunting", "status": "production",
+        "payload": {"displayName": "Hunt A", "query": "SecurityEvent | take 1"},
+    }), encoding="utf-8")
+    (detections / "sentinel_watchlist" / "highvalue.yml").write_text(yaml.safe_dump({
+        "id": "highvalue", "version": "1.0.0", "asset": "sentinel_watchlist", "status": "production",
+        "payload": {"displayName": "High value", "provider": "Custom", "itemsSearchKey": "Name",
+                    "rawContent": "Name\nx\n", "contentType": "text/csv"},
+    }), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    default_registry.reset_all()
+    try:
+        result = CliRunner().invoke(
+            cli, ["plan", "--path", str(detections), "--asset", "sentinel_hunting"],
+        )
+    finally:
+        default_registry.reset_all()
+    assert "Dependency check" not in result.output, result.output
+    assert "highvalue" not in result.output
+
+
 def test_validate_hunting_query_does_not_satisfy_parser_prereq() -> None:
     """R5 regression: previously a `sentinel_hunting` envelope with the
     same id as a declared parser would silently satisfy the prereq.

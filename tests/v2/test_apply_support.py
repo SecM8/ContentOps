@@ -456,7 +456,7 @@ class TestApplyDependencyViolationsOrExit:
     def test_violations_exit_1(self, monkeypatch):
         from contentops.cli.commands.apply_support import _apply_dependency_violations_or_exit
 
-        monkeypatch.setattr(f"{_MOD}._emit_dependency_report", lambda _: True)
+        monkeypatch.setattr(f"{_MOD}._emit_dependency_report", lambda _, **__: True)
         with pytest.raises(SystemExit) as exc_info:
             _apply_dependency_violations_or_exit([_make_loaded()], skip_deps_check=False)
         assert exc_info.value.code == 1
@@ -464,14 +464,14 @@ class TestApplyDependencyViolationsOrExit:
     def test_no_violations_passes(self, monkeypatch):
         from contentops.cli.commands.apply_support import _apply_dependency_violations_or_exit
 
-        monkeypatch.setattr(f"{_MOD}._emit_dependency_report", lambda _: False)
+        monkeypatch.setattr(f"{_MOD}._emit_dependency_report", lambda _, **__: False)
         _apply_dependency_violations_or_exit([_make_loaded()], skip_deps_check=False)
 
     def test_skip_deps_check_bypasses(self, monkeypatch):
         from contentops.cli.commands.apply_support import _apply_dependency_violations_or_exit
 
         called = []
-        monkeypatch.setattr(f"{_MOD}._emit_dependency_report", lambda _: called.append(1) or True)
+        monkeypatch.setattr(f"{_MOD}._emit_dependency_report", lambda _, **__: called.append(1) or True)
         _apply_dependency_violations_or_exit([_make_loaded()], skip_deps_check=True)
         assert called == []
 

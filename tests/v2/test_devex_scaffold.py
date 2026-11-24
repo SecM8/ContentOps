@@ -152,6 +152,20 @@ def test_scaffold_refuses_overwrite_without_force(tmp_path: Path) -> None:
     assert "refusing to overwrite" in str(exc.value)
 
 
+def test_playbook_scaffold_writes_nothing_when_the_sidecar_exists(tmp_path: Path) -> None:
+    """The envelope was written before the sidecar check failed, leaving an
+    envelope that points at someone else's definition, and a retry then
+    failed because the envelope existed."""
+    existing = tmp_path / "pb-one.workflow.json"
+    existing.write_text('{"keep": true}', encoding="utf-8")
+    out = tmp_path / "pb-one.yml"
+    with pytest.raises(ScaffoldError) as exc:
+        scaffold("sentinel_playbook", "pb-one", out=out)
+    assert "refusing to overwrite" in str(exc.value)
+    assert not out.exists()
+    assert existing.read_text(encoding="utf-8") == '{"keep": true}'
+
+
 def test_scaffold_force_overwrites(tmp_path: Path) -> None:
     out = tmp_path / "x.yml"
     scaffold("sentinel_hunting", "first-id", out=out)

@@ -37,7 +37,7 @@ from contentops.cli.commands.apply_support import (
     _check_apply_write_allowed_or_exit,
     _filter_loaded_by_env_status,
     _filter_locked_loaded_assets,
-    _load_assets_for_run,
+    _load_assets_and_inventory_for_run,
     _print_against_tenant_summary,
     _resolve_workspaces_for_run,
     _run_workspace_iteration,
@@ -59,18 +59,29 @@ def _defender_dry_run_totals(results: list[ActionResult]) -> str | None:
     ]
     if not rows:
         return None
+    from contentops.defender.deploy import TITLE_CONFLICT_PREFIX
+
     # Each row counts once. "Not compared" comes first: such a row keeps
     # the label it would have had, but nothing is known about its rule.
     compared = [r for r in rows if not (r.detail or "").startswith("not compared")]
     not_compared = len(rows) - len(compared)
+    # A create whose title another rule already has is refused by a real
+    # deploy; it is not a create.
+    refused = sum(
+        1 for r in compared
+        if r.action == PlanAction.CREATE and (r.detail or "").startswith(TITLE_CONFLICT_PREFIX)
+    )
     unchanged = sum(1 for r in compared if r.action == PlanAction.NOOP)
-    creates = sum(1 for r in compared if r.action == PlanAction.CREATE)
-    updates = len(compared) - unchanged - creates
-    return (
+    creates = sum(1 for r in compared if r.action == PlanAction.CREATE) - refused
+    updates = len(compared) - unchanged - creates - refused
+    line = (
         f"Defender dry run: {len(rows)} rule(s) checked against the tenant: "
         f"{unchanged} no change, {updates} would update, {creates} would create, "
-        f"{not_compared} not compared."
+        f"{not_compared} not compared"
     )
+    if refused:
+        line += f", {refused} refused (title already used)"
+    return line + "."
 
 
 @click.command("plan")
@@ -157,13 +168,15 @@ def plan_cmd(
         os.environ["PIPELINE_WORKSPACE_NAME"] = workspaces[0].workspaceName
 
     register_default_handlers()
-    loaded = _load_assets_for_run(
+    loaded, inventory = _load_assets_and_inventory_for_run(
         detections_path,
         asset=asset,
         changed_since=changed_since,
     )
 
-    deps_violations = False if skip_deps_check else _emit_dependency_report(loaded)
+    deps_violations = (
+        False if skip_deps_check else _emit_dependency_report(loaded, inventory=inventory)
+    )
 
     iter_workspaces: list[WorkspaceLoopEntry] = (
         list(workspaces) if (cfg is not None and workspaces) else [None]
@@ -339,7 +352,7 @@ def apply_cmd(
         extra={"dry_run": str(dry_run).lower()},
     )
     started_at = datetime.now(timezone.utc)
-    loaded = _load_assets_for_run(
+    loaded, inventory = _load_assets_and_inventory_for_run(
         detections_path,
         asset=asset,
         changed_since=changed_since,
@@ -354,7 +367,7 @@ def apply_cmd(
         _write_json_report(json_report_path, started_at=started_at, dry_run=dry_run)
         return
 
-    _apply_dependency_violations_or_exit(loaded, skip_deps_check)
+    _apply_dependency_violations_or_exit(loaded, skip_deps_check, inventory=inventory)
     loaded = _filter_locked_loaded_assets(loaded, force_overwrite)
 
     # Multi-workspace iteration — see apply_support._run_workspace_iteration.

@@ -175,6 +175,16 @@ def _local_ref_sha(ref: str, repo: Path) -> str:
         return ""
 
 
+def _base_ref_name(env: str) -> str:
+    """Where this clone records the remote state its file is based on.
+
+    Only ``pull`` and a successful ``push`` move it: not ``push`` before it
+    reaches the remote, not ``--no-push``, not a plain ``git fetch``. It is
+    the value ``push`` leases against.
+    """
+    return "refs/contentops/" + _ref_name(env).removeprefix("refs/heads/")
+
+
 def push(
     env: str,
     state_file: Path,
@@ -192,18 +202,21 @@ def push(
     so unit tests can exercise the plumbing without a real remote.
 
     The remote ref is replaced only if it still points at the commit this
-    clone last pulled or pushed (``--force-with-lease``), or does not exist
-    when this clone has none. A state another run pushed in the meantime is
-    therefore never overwritten: the push fails and says so. ``force=True``
-    replaces the remote ref whatever it holds.
+    clone last pulled or successfully pushed (``--force-with-lease``), or
+    does not exist when this clone has none. A state another run pushed in
+    the meantime is therefore never overwritten: the push fails and says
+    so. A failed push or ``push_remote=False`` leaves that baseline alone,
+    so a later push of the same clone still goes through.
+    ``force=True`` replaces the remote ref whatever it holds.
     """
     if not state_file.is_file():
         raise StateSyncError(f"state file not found: {state_file}")
 
     ref = _ref_name(env)
-    # What this clone believes the remote holds: the commit `pull` fetched
-    # into the local ref, or the commit of this clone's last push.
-    expected = _local_ref_sha(ref, repo)
+    base = _base_ref_name(env)
+    # What this clone's file is based on: the commit `pull` fetched, or the
+    # commit of this clone's last successful push.
+    expected = _local_ref_sha(base, repo)
 
     # 1. Stage the file as a blob in git's object store.
     blob_sha = _run([
@@ -240,14 +253,17 @@ def push(
             if not force and "stale info" in str(exc):
                 detail = (
                     f"local ref updated; remote push refused: {remote} {ref} changed "
-                    "since this clone pulled it (another run pushed state). Nothing "
-                    "was overwritten. Run `contentops state sync pull`, then repeat "
-                    "the change, or push with --force to replace it on purpose."
+                    "since this clone last pulled or pushed it (another run pushed "
+                    "state). Nothing was overwritten. Run `contentops state sync "
+                    "pull`, then repeat the change, or push with --force to replace "
+                    "it on purpose."
                 )
             else:
                 detail = f"local ref updated; remote push failed: {exc}"
             # Local update succeeded, so don't re-raise — let caller
             # decide whether to fail.
+    if pushed:
+        _run(["update-ref", base, commit_sha], cwd=repo)
     return PushResult(
         env=env, ref=ref, commit_sha=commit_sha,
         pushed_remote=pushed, detail=detail,
@@ -273,14 +289,23 @@ def pull(
     run workflow can call ``pull`` unconditionally.
     """
     ref = _ref_name(env)
+    base = _base_ref_name(env)
     fetched = False
     if fetch_remote:
         try:
-            _run(["fetch", remote, f"+{ref}:{ref}"], cwd=repo)
+            # The same commit into the local ref (read below) and into the
+            # baseline `push` leases against.
+            _run(["fetch", remote, f"+{ref}:{ref}", f"+{ref}:{base}"], cwd=repo)
             fetched = True
-        except StateSyncError:
-            # Remote doesn't have the ref yet; treat as empty state.
-            pass
+        except StateSyncError as exc:
+            # Remote doesn't have the ref yet; treat as empty state. Then
+            # the baseline is "no remote state", so a push must create it.
+            # Any other failure leaves the baseline as it was.
+            if "couldn't find remote ref" in str(exc).lower():
+                try:
+                    _run(["update-ref", "-d", base], cwd=repo)
+                except StateSyncError:
+                    pass
 
     # Check if the local ref exists.
     try:

@@ -81,7 +81,9 @@ id = "azure-guid-in-support-asset-envelope"
 # or detections/sentinel_playbook/ is a leak of the 2026-05 class.
 # Synthetic all-zero GUIDs are exempt via the global allowlist.
 description = "Subscription / tenant GUID inside a support-asset envelope (use envelope-id references)"
-regex = '''(?i)(tenantId|subscriptionId|logicAppResourceId|/subscriptions/)\s*[:=]?\s*['"]?/?[^\s'"]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+# The optional quote after the key covers JSON (`"tenantId": "<guid>"`),
+# the format of a playbook's `.workflow.json` sidecar.
+regex = '''(?i)(tenantId|subscriptionId|logicAppResourceId|/subscriptions/)['"]?\s*[:=]?\s*['"]?/?[^\s'"]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
 path = '''detections/(sentinel_automation_rule|sentinel_playbook)/.*\.(ya?ml|workflow\.json)$'''
 
 [[rules]]

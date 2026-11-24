@@ -67,6 +67,13 @@ rollback / retry-failed skip their files with one line per kind, while
 `lint` still checks local files. `doctor` and `config validate` print
 it so nobody forgets it is set. Unknown values fail loud.
 
+The switch does not apply to the live test suite (`integration.yml`).
+Those tests are started on purpose, write only their own `zz-itest` /
+`zz_itest_` objects, and the Defender tests also need
+`i-know-this-hits-prod`. The Defender shape probe is the tool to find
+out why a kind misbehaves, so it stays available while the kind is
+switched off.
+
 ## Multi-workspace notes
 
 - Automation rules deploy per workspace, each with its own GUID

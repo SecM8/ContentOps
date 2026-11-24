@@ -222,6 +222,78 @@ def test_apply_and_rollback_drop_a_switched_off_kind_before_dispatch(tmp_path: P
     assert "skipping 1 envelope(s)" in out
 
 
+def _failed_records(audit: Path, pairs: list[tuple[str, str]]) -> None:
+    import json
+
+    audit.mkdir(exist_ok=True)
+    rows = [
+        {"timestamp": "2026-11-24T08:00:00Z", "asset": kind, "id": rid, "action": "update",
+         "status": "failed", "sha": "x", "actor": "me", "workflow_run": None,
+         "prev_hash": "0" * 64, "record_hash": "x" * 64}
+        for kind, rid in pairs
+    ]
+    (audit / "2026-11-24.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def _monitor_and_managed_tree(tmp_path: Path) -> Path:
+    from contentops.devex.scaffold import scaffold
+
+    detections = tmp_path / "detections"
+    scaffold("sentinel_automation_rule", "ar-one",
+             out=detections / "sentinel_automation_rule" / "ar-one.yml")
+    scaffold("sentinel_hunting", "hunt-one", out=detections / "sentinel_hunting" / "hunt-one.yml")
+    return detections
+
+
+def test_retry_failed_dry_run_leaves_a_monitor_mode_kind_out(tmp_path: Path, monkeypatch) -> None:
+    """retry-failed re-applied every failed record, so a kind switched back
+    to `monitor` after a failed deploy could still be written. apply skips
+    monitor-mode kinds; retry-failed now does the same."""
+    detections = _monitor_and_managed_tree(tmp_path)
+    _failed_records(tmp_path / "audit", [("sentinel_automation_rule", "ar-one"),
+                                         ("sentinel_hunting", "hunt-one")])
+    default_registry.reset_all()
+    try:
+        result = CliRunner().invoke(cli, [
+            "retry-failed", "--path", str(detections), "--audit-dir", str(tmp_path / "audit"), "--dry-run",
+        ])
+    finally:
+        default_registry.reset_all()
+    assert result.exit_code == 0, result.output
+    assert "skipped (monitor mode): sentinel_automation_rule  ar-one" in result.output
+    retry_list = result.output.split("retrying", 1)[1]
+    assert "1 failed asset(s)" in retry_list
+    assert "hunt-one" in retry_list and "ar-one" not in retry_list
+
+
+def test_retry_failed_real_run_never_writes_a_monitor_mode_kind(tmp_path: Path, monkeypatch) -> None:
+    from contentops.handlers.sentinel_automation_rule import SentinelAutomationRuleHandler
+
+    def must_not_apply(self, loaded, *, dry_run):  # pragma: no cover - the assertion is the test
+        raise AssertionError(f"retry-failed applied {loaded.envelope.id} in monitor mode")
+
+    monkeypatch.setattr(SentinelAutomationRuleHandler, "apply", must_not_apply)
+    monkeypatch.setattr(SentinelAutomationRuleHandler, "validate", lambda self, loaded: None)
+    detections = _monitor_and_managed_tree(tmp_path)
+    # Input records apart from ./audit, where retry-failed writes its own.
+    _failed_records(tmp_path / "retry-input", [("sentinel_automation_rule", "ar-one")])
+    monkeypatch.chdir(tmp_path)
+    default_registry.reset_all()
+    try:
+        result = CliRunner().invoke(cli, [
+            "retry-failed", "--path", str(detections), "--audit-dir", str(tmp_path / "retry-input"),
+        ])
+    finally:
+        default_registry.reset_all()
+    assert result.exit_code == 0, result.output
+    assert "skipped (monitor mode): sentinel_automation_rule  ar-one" in result.output
+    import json
+    written = [json.loads(line) for f in sorted((tmp_path / "audit").glob("*.jsonl"))
+               for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # Audited like apply's monitor-mode skip: action and status "skip(ped)".
+    assert [(r["id"], r["action"], r["status"]) for r in written] == [("ar-one", "skip", "skipped")], written
+
+
 def test_retry_failed_leaves_a_switched_off_kind_alone(tmp_path: Path, monkeypatch) -> None:
     """A failed record of a switched-off kind is not retried (it used to
     reach ``default_registry.get`` and stop the retry with a KeyError)."""

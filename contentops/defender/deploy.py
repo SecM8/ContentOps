@@ -92,10 +92,14 @@ def resolve_graph_id(
     return name_map.get(display_name) or None
 
 
+#: Start of every title-conflict message; the dry-run totals count on it.
+TITLE_CONFLICT_PREFIX = "not created: rule "
+
+
 def title_conflict_message(title: str, graph_id: str) -> str:
     """Why a create is not sent when another rule has its alert title."""
     return (
-        f"not created: rule {graph_id} already has the alert title {title!r}, "
+        f"{TITLE_CONFLICT_PREFIX}{graph_id} already has the alert title {title!r}, "
         "and Graph keeps titles unique (it answers 409). If this file is that "
         "rule renamed, record its id as `metadata.arm_name: "
         f"'{graph_id}'` (collect does this) and deploy again; otherwise give "

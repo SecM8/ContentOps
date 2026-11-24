@@ -215,13 +215,16 @@ def _filter_changed_since(loaded, ref: str):
     ]
 
 
-def _emit_dependency_report(loaded) -> bool:
-    """Run dependency validation. Returns True if violations were found."""
+def _emit_dependency_report(loaded, *, inventory=None) -> bool:
+    """Run dependency validation. Returns True if violations were found.
+
+    ``inventory``: every local envelope, where prerequisites are looked up
+    (default: ``loaded``)."""
     from contentops.core.dependencies import (
         load_graph as load_dependency_graph,
         validate as validate_dependencies,
     )
-    report = validate_dependencies(loaded, load_dependency_graph())
+    report = validate_dependencies(loaded, load_dependency_graph(), inventory=inventory)
     if report.violations:
         click.echo(f"\nDependency check — {len(report.violations)} violation(s):")
         for v in report.violations:

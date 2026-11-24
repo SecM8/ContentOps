@@ -142,7 +142,15 @@ def index_archive(archive: Path) -> dict[tuple[str, str], IndexedAsset]:
             folder = name.rsplit("/", 1)[0] if "/" in name else ""
             sidecar = f"{folder}/{payload['definitionFile']}" if folder else str(payload["definitionFile"])
             if sidecar in sidecars:
-                payload = {**payload, "definition": sidecars[sidecar].decode("utf-8", "replace")}
+                text = sidecars[sidecar].decode("utf-8", "replace")
+                # Parsed, so the canonical-JSON hash ignores indentation and
+                # key order inside the definition as it does elsewhere. A
+                # sidecar that is not JSON is compared as text.
+                try:
+                    definition: object = json.loads(text)
+                except ValueError:
+                    definition = text
+                payload = {**payload, "definition": definition}
         out[(asset, envelope_id)] = IndexedAsset(
             asset=asset,
             envelope_id=envelope_id,

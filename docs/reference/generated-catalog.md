@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **202** files, **2494** test functions. Integration: **13** files, **18** test functions.
+Unit: **203** files, **2507** test functions. Integration: **13** files, **18** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -327,7 +327,7 @@ Unit: **202** files, **2494** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_apply_verify_watchlist.py` | 16 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
 | `tests/v2/test_arm_name_matching.py` | 11 |
-| `tests/v2/test_asset_modes.py` | 16 |
+| `tests/v2/test_asset_modes.py` | 18 |
 | `tests/v2/test_attack_matrix_data.py` | 10 |
 | `tests/v2/test_audit.py` | 13 |
 | `tests/v2/test_audit_chain.py` | 23 |
@@ -343,7 +343,7 @@ Unit: **202** files, **2494** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_catalog.py` | 21 |
 | `tests/v2/test_check_mitre_ids.py` | 10 |
 | `tests/v2/test_check_references_diff.py` | 5 |
-| `tests/v2/test_check_version_bump.py` | 7 |
+| `tests/v2/test_check_version_bump.py` | 8 |
 | `tests/v2/test_clean_cmd.py` | 5 |
 | `tests/v2/test_cli_help_ascii_safe.py` | 3 |
 | `tests/v2/test_cli_help_text.py` | 4 |
@@ -367,7 +367,7 @@ Unit: **202** files, **2494** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_coverage_matrix.py` | 6 |
 | `tests/v2/test_coverage_sources.py` | 11 |
 | `tests/v2/test_daily_store.py` | 8 |
-| `tests/v2/test_defender_apply_new_values.py` | 26 |
+| `tests/v2/test_defender_apply_new_values.py` | 27 |
 | `tests/v2/test_defender_dry_run_resolve.py` | 4 |
 | `tests/v2/test_defender_extensions_probe.py` | 9 |
 | `tests/v2/test_defender_no_duplicate_create.py` | 8 |
@@ -377,12 +377,12 @@ Unit: **202** files, **2494** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_defender_rule_shape.py` | 29 |
 | `tests/v2/test_defender_rule_status.py` | 14 |
 | `tests/v2/test_defender_shape_probe.py` | 38 |
-| `tests/v2/test_dependencies.py` | 7 |
+| `tests/v2/test_dependencies.py` | 9 |
 | `tests/v2/test_detect_production_promotions.py` | 9 |
 | `tests/v2/test_detection_docs.py` | 15 |
 | `tests/v2/test_detection_health.py` | 50 |
 | `tests/v2/test_devex_doctor.py` | 9 |
-| `tests/v2/test_devex_scaffold.py` | 12 |
+| `tests/v2/test_devex_scaffold.py` | 13 |
 | `tests/v2/test_disable.py` | 5 |
 | `tests/v2/test_disable_pattern.py` | 12 |
 | `tests/v2/test_discovery.py` | 4 |
@@ -411,6 +411,7 @@ Unit: **202** files, **2494** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_explain.py` | 16 |
 | `tests/v2/test_extract_etag.py` | 5 |
 | `tests/v2/test_git_diff.py` | 7 |
+| `tests/v2/test_gitleaks_rules.py` | 2 |
 | `tests/v2/test_handler_coverage.py` | 3 |
 | `tests/v2/test_http_retry.py` | 22 |
 | `tests/v2/test_hunting_handler.py` | 6 |
@@ -475,11 +476,11 @@ Unit: **202** files, **2494** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_sentinel_roundtrip.py` | 24 |
 | `tests/v2/test_silent_rules.py` | 8 |
 | `tests/v2/test_slug_arm_name.py` | 12 |
-| `tests/v2/test_snapshot_diff.py` | 16 |
+| `tests/v2/test_snapshot_diff.py` | 17 |
 | `tests/v2/test_snippets.py` | 39 |
 | `tests/v2/test_state_adopt.py` | 10 |
 | `tests/v2/test_state_file.py` | 15 |
-| `tests/v2/test_state_sync.py` | 18 |
+| `tests/v2/test_state_sync.py` | 21 |
 | `tests/v2/test_status_configuration.py` | 9 |
 | `tests/v2/test_status_deployments.py` | 13 |
 | `tests/v2/test_status_redact.py` | 13 |

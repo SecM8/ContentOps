@@ -43,6 +43,12 @@ Read this before your first run:
   and exits with status code 2 by default. See
   [Production-workspace guard](#production-workspace-guard) for the
   override and when (rarely) to use it.
+- **The kind kill switch does not apply here.** `CONTENTOPS_DISABLED_KINDS`
+  switches a kind off for collect, drift, apply, prune, rollback and
+  retry-failed. The live tests build their own clients and touch only
+  their own `zz-itest-` / `zz_itest_` objects, so they run whatever the
+  switch says: the Defender shape probe is how you find out why a kind
+  had to be switched off.
 
 ---
 

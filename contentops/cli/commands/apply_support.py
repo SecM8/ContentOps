@@ -59,7 +59,22 @@ def _load_assets_for_run(
 
     Dependency reporting remains in the callers.
     """
-    loaded = _load_all(detections_path)
+    return _load_assets_and_inventory_for_run(
+        detections_path, asset=asset, changed_since=changed_since,
+    )[0]
+
+
+def _load_assets_and_inventory_for_run(
+    detections_path: Path,
+    *,
+    asset: str | None,
+    changed_since: str | None,
+) -> tuple[list[LoadedAsset], list[LoadedAsset]]:
+    """``(selected, inventory)``: the filtered assets of ``_load_assets_for_run``
+    and every local envelope, where the dependency check looks prerequisites
+    up (an unchanged prerequisite is still in the repository)."""
+    inventory = _load_all(detections_path)
+    loaded = list(inventory)
     if asset:
         target = Asset(asset)
         loaded = [la for la in loaded if la.envelope.asset == target]
@@ -70,7 +85,7 @@ def _load_assets_for_run(
     # Drop envelopes whose deployment engine is disabled before dependency
     # checks and handler dispatch.
     loaded = _filter_disabled_engines(loaded)
-    return loaded
+    return loaded, inventory
 
 
 def _resolve_workspaces_for_run(
@@ -215,9 +230,13 @@ def _apply_no_loaded_assets_or_return(loaded: list[LoadedAsset]) -> bool:
 def _apply_dependency_violations_or_exit(
     loaded: list[LoadedAsset],
     skip_deps_check: bool,
+    *,
+    inventory: list[LoadedAsset] | None = None,
 ) -> None:
-    """Exit with code 1 when dependency prerequisites fail (unless skipped)."""
-    if not skip_deps_check and _emit_dependency_report(loaded):
+    """Exit with code 1 when dependency prerequisites fail (unless skipped).
+
+    ``inventory`` is every local envelope; prerequisites are looked up there."""
+    if not skip_deps_check and _emit_dependency_report(loaded, inventory=inventory):
         click.echo(
             "\nApply aborted — dependency violations. Re-run with --skip-deps-check to override.",
             err=True,

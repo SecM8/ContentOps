@@ -12,8 +12,11 @@ here.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 # The script lives under scripts/ which isn't on sys.path by default.
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -84,3 +87,47 @@ def test_unparseable_is_exempt() -> None:
 def test_parse_doc_rejects_non_mapping() -> None:
     assert cvb._parse_doc("- just\n- a\n- list\n") is None
     assert cvb._parse_doc("id: x\nversion: 1.0.0\n") == {"id": "x", "version": "1.0.0"}
+
+
+# ---------------------------------------------------------------------------
+# End to end in a git repository: playbook sidecars
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+def _playbook_repo(root: Path, envelope_name: str, sidecar_name: str) -> Path:
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "test@example.com")
+    _git(root, "config", "user.name", "test")
+    _git(root, "config", "commit.gpgsign", "false")
+    folder = root / "detections" / "sentinel_playbook"
+    folder.mkdir(parents=True)
+    (folder / envelope_name).write_text(
+        "id: pb-one\nversion: 1.0.0\nasset: sentinel_playbook\nstatus: production\n"
+        f"payload:\n  definitionFile: {sidecar_name}\n",
+        encoding="utf-8",
+    )
+    (folder / sidecar_name).write_text('{"actions": {"a": "v1"}}', encoding="utf-8")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "switch", "-q", "-c", "change")
+    (folder / sidecar_name).write_text('{"actions": {"a": "v2"}}', encoding="utf-8")
+    _git(root, "commit", "-q", "-am", "edit the definition only")
+    return root
+
+
+@pytest.mark.parametrize("envelope_name", ["pb-one.yml", "custom.yml"], ids=["same-name", "other-name"])
+def test_a_changed_sidecar_without_a_bump_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    envelope_name: str,
+) -> None:
+    """The sidecar was paired with ``<sidecar stem>.yml``. An envelope with
+    another file name (``contentops new --out``) that points at it through
+    ``definitionFile`` was never checked, so its definition could change
+    without a version bump."""
+    monkeypatch.chdir(_playbook_repo(tmp_path, envelope_name, "pb-one.workflow.json"))
+    assert cvb.main("main") == 1
+    assert f"sentinel_playbook/{envelope_name}" in capsys.readouterr().err

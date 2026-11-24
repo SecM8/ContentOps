@@ -521,9 +521,27 @@ def retry_failed_cmd(
         click.echo("nothing to retry — every selected asset's kind is switched off or its engine disabled.")
         return
 
-    click.echo(f"retrying {len(selected)} failed asset(s) ({scope_label}):")
-    for la in selected:
-        click.echo(f"  - {la.envelope.asset.value}  {la.envelope.id}  ({la.path})")
+    # Same monitor-mode gate apply uses: a kind in `monitor` mode for the
+    # target workspace is never written, also not by a retry of an earlier
+    # failure. Such records are reported and audited as skipped.
+    from contentops.cli.commands._shared import asset_mode_for, monitor_mode_detail
+    from contentops.core.asset import ASSET_MODE_MONITOR
+    ws_name = workspaces[0].workspaceName if len(workspaces) == 1 else None
+    monitor_only = [
+        la for la in selected if asset_mode_for(la.envelope.asset, ws_name) == ASSET_MODE_MONITOR
+    ]
+    if monitor_only:
+        skipped_ids = {id(la) for la in monitor_only}
+        selected = [la for la in selected if id(la) not in skipped_ids]
+        for la in monitor_only:
+            click.echo(f"  skipped (monitor mode): {la.envelope.asset.value}  {la.envelope.id}")
+
+    if selected:
+        click.echo(f"retrying {len(selected)} failed asset(s) ({scope_label}):")
+        for la in selected:
+            click.echo(f"  - {la.envelope.asset.value}  {la.envelope.id}  ({la.path})")
+    else:
+        click.echo("nothing to retry — every selected asset's kind is in monitor mode.")
 
     if dry_run:
         click.echo("[dry-run] no API calls made.")
@@ -537,6 +555,14 @@ def retry_failed_cmd(
 
     results: list[ActionResult] = []
     audit_pairs: list[tuple[LoadedAsset, ActionResult]] = []
+    for la in monitor_only:
+        skipped = ActionResult(
+            asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
+            action=PlanAction.SKIP, status="monitor",
+            detail=monitor_mode_detail(la.envelope.asset),
+        )
+        results.append(skipped)
+        audit_pairs.append((la, skipped))
     try:
         for la in selected:
             handler = default_registry.get(la.envelope.asset)

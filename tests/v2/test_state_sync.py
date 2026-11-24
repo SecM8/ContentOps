@@ -304,6 +304,48 @@ def test_push_force_overwrites_on_purpose(tmp_path: Path) -> None:
     assert _remote_state(remote) == {"v": 5}
 
 
+def test_push_after_a_failed_push_succeeds_when_the_remote_did_not_move(tmp_path: Path) -> None:
+    """The lease compared against the local ref, which push itself moves
+    before contacting the remote. After a push that failed (network, auth),
+    the next push expected that unpushed commit and was refused as stale."""
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    pull("production", b / "state" / "production" / "state.json", repo=b)
+    _git(b, "remote", "set-url", "origin", str(tmp_path / "unreachable.git"))
+    assert push("production", _state(b, {"v": 2}), repo=b).pushed_remote is False
+    _git(b, "remote", "set-url", "origin", str(remote))
+
+    retry = push("production", _state(b, {"v": 2}), repo=b)
+    assert retry.pushed_remote, retry.detail
+    assert _remote_state(remote) == {"v": 2}
+
+
+def test_push_after_a_local_only_push_succeeds(tmp_path: Path) -> None:
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    pull("production", b / "state" / "production" / "state.json", repo=b)
+    push("production", _state(b, {"v": 2}), repo=b, push_remote=False)
+
+    later = push("production", _state(b, {"v": 3}), repo=b)
+    assert later.pushed_remote, later.detail
+    assert _remote_state(remote) == {"v": 3}
+
+
+def test_a_plain_fetch_of_the_state_branch_does_not_move_the_lease(tmp_path: Path) -> None:
+    """Only `state sync pull` and a successful push say which remote state
+    the local file is based on. A plain `git fetch` of the branch must not:
+    the file on disk would still be the older one."""
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    pull("production", b / "state" / "production" / "state.json", repo=b)
+    assert push("production", _state(a, {"v": 2}), repo=a).pushed_remote
+    _git(b, "fetch", "origin", "+refs/heads/state/production:refs/heads/state/production")
+
+    stale = push("production", _state(b, {"v": 3}), repo=b)
+    assert stale.pushed_remote is False
+    assert _remote_state(remote) == {"v": 2}
+
+
 def test_cli_push_stale_exits_1_and_force_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
 

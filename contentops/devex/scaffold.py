@@ -155,28 +155,30 @@ def scaffold(
 
     target = out if out is not None else _default_out_path(parsed, id)
     target = Path(target)
-    if target.exists() and not force:
-        raise ScaffoldError(
-            f"refusing to overwrite existing file: {target} (use --force)",
-            exit_code=1,
-        )
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(rendered, encoding="utf-8")
-
-    # Sidecar (playbook definition). Written next to the envelope under
-    # the name the template's ``definitionFile:`` points at.
+    # Sidecar (playbook definition), written next to the envelope under the
+    # name the template's ``definitionFile:`` points at. Both destinations
+    # are checked, and the sidecar rendered, before either file is written:
+    # a refusal must leave nothing behind.
+    sidecar: tuple[Path, str] | None = None
     suffix = _SIDECAR_TEMPLATES.get(parsed)
     if suffix is not None:
         sidecar_src = _sidecar_template_text(parsed, suffix)
-        sidecar_rendered = Template(sidecar_src).safe_substitute(id=id, asset=parsed.value)
-        sidecar_target = target.parent / f"{id}{suffix}"
-        if sidecar_target.exists() and not force:
+        sidecar = (
+            target.parent / f"{id}{suffix}",
+            Template(sidecar_src).safe_substitute(id=id, asset=parsed.value),
+        )
+    for destination in (target, *([sidecar[0]] if sidecar else [])):
+        if destination.exists() and not force:
             raise ScaffoldError(
-                f"refusing to overwrite existing file: {sidecar_target} (use --force)",
+                f"refusing to overwrite existing file: {destination} (use --force)",
                 exit_code=1,
             )
-        sidecar_target.write_text(sidecar_rendered, encoding="utf-8")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(rendered, encoding="utf-8")
+    if sidecar is not None:
+        sidecar[0].write_text(sidecar[1], encoding="utf-8")
     return target
 
 

@@ -145,8 +145,15 @@ def _index_by_asset(
 def validate(
     loaded: list[LoadedAsset],
     graph: DependencyGraph | None = None,
+    *,
+    inventory: Iterable[LoadedAsset] | None = None,
 ) -> DependencyReport:
     """Validate prerequisites for the supplied assets against ``graph``.
+
+    ``inventory`` is every local envelope (default: ``loaded``). Only the
+    assets in ``loaded`` are checked, but their prerequisites are looked up
+    in ``inventory``: a run limited by ``--asset`` or ``--changed-since``
+    still finds a watchlist, parser or playbook that did not change.
 
     Watchlists, parsers, and detections must resolve to ids present in
     ``loaded``. Tables and ``external`` are reported but never fail.
@@ -161,7 +168,9 @@ def validate(
     )
 
     g = graph if graph is not None else load_graph()
-    watchlists, parsers, asset_ids, playbooks, analytics = _index_by_asset(loaded)
+    watchlists, parsers, asset_ids, playbooks, analytics = _index_by_asset(
+        list(inventory) if inventory is not None else loaded
+    )
 
     violations: list[DependencyViolation] = []
     info_tables: dict[str, tuple[str, ...]] = {}

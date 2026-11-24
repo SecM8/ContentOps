@@ -184,6 +184,26 @@ def test_diff_sees_a_change_to_a_playbook_definition(tmp_path: Path) -> None:
     assert len(rep.updated) == 1
 
 
+def test_diff_ignores_formatting_of_a_playbook_definition(tmp_path: Path) -> None:
+    """The definition was hashed as text, so re-indenting it or reordering
+    its keys reported the playbook as updated."""
+    envelope = ("id: pb-x\nversion: 1.0.0\nasset: sentinel_playbook\nstatus: production\n"
+                "payload:\n  definitionFile: pb-x.workflow.json\n")
+    a = _make_archive(tmp_path / "a.tar.gz", {
+        "detections/sentinel_playbook/pb-x.yml": envelope,
+        "detections/sentinel_playbook/pb-x.workflow.json": '{"actions": {"a": {"inputs": "v1", "type": "Http"}}}',
+    })
+    b = _make_archive(tmp_path / "b.tar.gz", {
+        "detections/sentinel_playbook/pb-x.yml": envelope,
+        "detections/sentinel_playbook/pb-x.workflow.json": (
+            '{\n  "actions": {\n    "a": {\n      "type": "Http",\n      "inputs": "v1"\n    }\n  }\n}\n'
+        ),
+    })
+    rep = diff_archives(a, b)
+    assert rep.updated == []
+    assert rep.unchanged == 1
+
+
 def test_diff_only_in_b_is_created(tmp_path: Path) -> None:
     a = _make_archive(tmp_path / "a.tar.gz", {})
     b = _make_archive(tmp_path / "b.tar.gz", {

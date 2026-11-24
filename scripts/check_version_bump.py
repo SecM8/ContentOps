@@ -50,17 +50,49 @@ SIDECAR_SUFFIX = ".workflow.json"
 
 
 def _changed_files(base_ref: str) -> list[str]:
-    """Changed envelope paths. A changed playbook sidecar
-    (``<id>.workflow.json``) counts as a change to its ``<id>.yml``
-    envelope, so editing the Logic App definition also demands a bump."""
+    """Changed envelope paths. A changed playbook sidecar (``.workflow.json``)
+    counts as a change to the envelope that loads it, so editing the Logic
+    App definition also demands a bump."""
     out = _run("diff", "--name-only", f"{base_ref}...HEAD", "--", DETECTIONS_ROOT)
     files: list[str] = []
     for line in out.splitlines():
         if line.endswith((".yml", ".yaml")):
             files.append(line)
         elif line.endswith(SIDECAR_SUFFIX):
-            files.append(line[: -len(SIDECAR_SUFFIX)] + ".yml")
+            files.extend(_envelopes_for_sidecar(line))
     return sorted(set(files))
+
+
+def _definition_file(yml_path: str, doc: dict | None) -> str:
+    """The sidecar an envelope loads: its ``payload.definitionFile`` next to
+    it, else ``<envelope stem>.workflow.json``."""
+    payload = doc.get("payload") if isinstance(doc, dict) else None
+    name = payload.get("definitionFile") if isinstance(payload, dict) else None
+    folder = yml_path.rsplit("/", 1)[0] if "/" in yml_path else ""
+    if isinstance(name, str) and name:
+        return f"{folder}/{name}" if folder else name
+    return yml_path.rsplit(".", 1)[0] + SIDECAR_SUFFIX
+
+
+def _envelopes_for_sidecar(sidecar: str) -> list[str]:
+    """Envelopes in the sidecar's folder that load it (working tree).
+
+    The file names need not match: ``contentops new --out custom.yml`` writes
+    ``<id>.workflow.json`` and records it as ``definitionFile``. Falls back
+    to ``<sidecar stem>.yml`` when no envelope names the sidecar.
+    """
+    folder = Path(sidecar).parent
+    found: list[str] = []
+    if folder.is_dir():
+        for candidate in sorted([*folder.glob("*.yml"), *folder.glob("*.yaml")]):
+            try:
+                doc = _parse_doc(candidate.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            path = candidate.as_posix()
+            if _definition_file(path, doc) == sidecar:
+                found.append(path)
+    return found or [sidecar[: -len(SIDECAR_SUFFIX)] + ".yml"]
 
 
 def _parse_doc(text: str) -> dict | None:
@@ -71,12 +103,13 @@ def _parse_doc(text: str) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
-def _sidecar_text(ref: str | None, yml_path: str) -> str | None:
-    """Content of the playbook sidecar next to ``yml_path`` at ``ref``
-    (None = working tree), or None when there is no sidecar."""
-    sidecar = yml_path[: -len(".yml")] + SIDECAR_SUFFIX if yml_path.endswith(".yml") else None
-    if sidecar is None:
+def _sidecar_text(ref: str | None, yml_path: str, doc: dict | None = None) -> str | None:
+    """Content of the playbook sidecar the envelope at ``yml_path`` loads,
+    at ``ref`` (None = working tree), or None when there is no sidecar.
+    ``doc`` is that envelope parsed at the same ref (for ``definitionFile``)."""
+    if not yml_path.endswith((".yml", ".yaml")):
         return None
+    sidecar = _definition_file(yml_path, doc)
     if ref is None:
         p = Path(sidecar)
         return p.read_text(encoding="utf-8") if p.exists() else None
@@ -135,8 +168,8 @@ def main(base_ref: str) -> int:
         msg = _requires_bump(head_text, base_text)
         if msg is None:
             # Unchanged envelope body: a changed sidecar still needs a bump.
-            head_sidecar = _sidecar_text(None, path)
-            base_sidecar = _sidecar_text(base_ref, path)
+            head_sidecar = _sidecar_text(None, path, _parse_doc(head_text))
+            base_sidecar = _sidecar_text(base_ref, path, _parse_doc(base_text))
             if head_sidecar is not None and base_sidecar is not None and head_sidecar != base_sidecar:
                 head_doc = _parse_doc(head_text)
                 base_doc = _parse_doc(base_text)

@@ -428,7 +428,12 @@ def test_a_dry_run_ends_with_one_line_of_totals() -> None:
         handler.apply(
             _loaded(_edited("description", "another description"), arm_name=rule_id), dry_run=True,
         ),
-        handler.apply(_loaded(current_payload(displayName="Not in the tenant")), dry_run=True),
+        # A rule the tenant does not have, with its own alert title (the
+        # tenant's title would make it a refused create, counted apart).
+        handler.apply(_loaded({
+            **_edited("detectionAction.alertTemplate.title", "Its own title"),
+            "displayName": "Not in the tenant",
+        }), dry_run=True),
     ]
     line = _defender_dry_run_totals(results)
     assert line == (
@@ -436,6 +441,26 @@ def test_a_dry_run_ends_with_one_line_of_totals() -> None:
         "1 no change, 1 would update, 1 would create, 0 not compared."
     )
     assert _defender_dry_run_totals([]) is None
+
+
+def test_dry_run_totals_count_a_title_conflict_as_refused_not_as_a_create() -> None:
+    """A rule whose title another rule has says "Would not create", and a
+    real deploy refuses it; the totals counted it as "would create"."""
+    from contentops.cli.commands.apply import _defender_dry_run_totals
+    from contentops.core.result import ActionResult, PlanAction
+    from contentops.defender.deploy import title_conflict_message
+
+    kind = "defender_custom_detection"
+    results = [
+        ActionResult(asset_id="a", asset_kind=kind, action=PlanAction.CREATE, status="dry-run",
+                     detail=title_conflict_message("Taken title", "graph-1")),
+        ActionResult(asset_id="b", asset_kind=kind, action=PlanAction.CREATE, status="dry-run"),
+    ]
+    assert _defender_dry_run_totals(results) == (
+        "Defender dry run: 2 rule(s) checked against the tenant: "
+        "0 no change, 0 would update, 1 would create, 0 not compared, "
+        "1 refused (title already used)."
+    )
 
 
 # --- the real files ------------------------------------------------------------
