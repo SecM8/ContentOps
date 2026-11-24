@@ -58,11 +58,14 @@ suppression rule is a decision somebody made in the portal.
 
 If the beta misbehaves in CI, set the repository variable
 `CONTENTOPS_DISABLED_KINDS` (comma-separated, e.g.
-`sentinel_playbook,sentinel_automation_rule`). The `pipeline-setup`
-action exports it; listed kinds are not registered at all, so
-collect / drift / apply / prune ignore them while `lint` still checks
-local files. `doctor` and `config validate` print it so nobody forgets
-it is set. Unknown values fail loud.
+`sentinel_playbook,sentinel_automation_rule`). Any of the eight kinds
+can be listed, the detection kinds included. The `pipeline-setup`
+action exports it (`integration-deploy.yml` and
+`promote-to-integration.yml` set it on the job); listed kinds are not
+registered at all, so collect / drift / prune ignore them, and apply /
+rollback / retry-failed skip their files with one line per kind, while
+`lint` still checks local files. `doctor` and `config validate` print
+it so nobody forgets it is set. Unknown values fail loud.
 
 ## Multi-workspace notes
 

@@ -291,13 +291,15 @@ def monitor_mode_detail(asset: "_Asset") -> str:
 
 
 def _filter_disabled_engines(loaded: list[LoadedAsset]) -> list[LoadedAsset]:
-    """Drop envelopes whose deployment engine is disabled in tenant.yml.
+    """Drop envelopes whose kind is switched off or whose engine is disabled.
 
     Mirrors the registration-time gating in
     :func:`contentops.cli.handler_factories.register_default_handlers`:
-    skip Sentinel envelopes when ``sentinelWorkspaces`` is empty, skip
-    Defender envelopes when ``defender:`` is absent or ``enabled:
-    false``. Prints a single info line per skipped engine.
+    skip every kind listed in ``CONTENTOPS_DISABLED_KINDS`` (with or
+    without a tenant.yml), skip Sentinel envelopes when
+    ``sentinelWorkspaces`` is empty, skip Defender envelopes when
+    ``defender:`` is absent or ``enabled: false``. Prints a single info
+    line per skipped kind or engine.
 
     Only ``FileNotFoundError`` (no tenant.yml) is treated as "both
     engines enabled" to preserve unit-test behaviour that bypasses
@@ -307,6 +309,21 @@ def _filter_disabled_engines(loaded: list[LoadedAsset]) -> list[LoadedAsset]:
     leaving every envelope in place and surfacing later as an obscure
     handler error.
     """
+    from contentops.cli.handler_factories import DISABLED_KINDS_ENV, disabled_kinds
+
+    switched_off = disabled_kinds()
+    if switched_off:
+        dropped: dict[str, int] = {}
+        kept_on: list[LoadedAsset] = []
+        for la in loaded:
+            if la.envelope.asset in switched_off:
+                dropped[la.envelope.asset.value] = dropped.get(la.envelope.asset.value, 0) + 1
+            else:
+                kept_on.append(la)
+        for kind, count in sorted(dropped.items()):
+            click.echo(f"  {DISABLED_KINDS_ENV} lists {kind} — skipping {count} envelope(s)")
+        loaded = kept_on
+
     try:
         from contentops.config import load_tenant_config
         cfg = load_tenant_config()

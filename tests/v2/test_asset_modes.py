@@ -154,6 +154,104 @@ def test_kill_switch_rejects_unknown_values(monkeypatch) -> None:
         disabled_kinds()
 
 
+@pytest.mark.parametrize("kind", sorted(Asset, key=lambda a: a.value), ids=lambda a: a.value)
+def test_kill_switch_unregisters_every_kind(monkeypatch, kind: Asset) -> None:
+    """The switch accepts all eight kinds and ``config validate`` reports
+    each as switched off. It used to apply only to the two support kinds:
+    listing ``sentinel_analytic`` (or any other detection kind) changed
+    nothing, and apply still wrote those rules."""
+    monkeypatch.setenv(DISABLED_KINDS_ENV, kind.value)
+    default_registry.reset_all()
+    try:
+        register_default_handlers()
+        assert not default_registry.has(kind)
+        assert set(default_registry.assets()) == set(Asset) - {kind}
+    finally:
+        default_registry.reset_all()
+
+
+_KS_ANALYTIC = """\
+id: ks-analytic
+version: 0.1.0
+asset: sentinel_analytic
+status: production
+payload:
+  kind: Scheduled
+  displayName: ks
+  severity: Low
+  query: print 1
+  queryFrequency: PT5M
+  queryPeriod: PT5M
+  triggerOperator: GreaterThan
+  triggerThreshold: 0
+"""
+
+_KS_DEFENDER = """\
+id: ks-defender
+version: 0.1.0
+asset: defender_custom_detection
+status: production
+payload:
+  displayName: ks
+  isEnabled: true
+  queryCondition:
+    queryText: DeviceEvents | take 1
+"""
+
+
+def _two_kind_tree(root: Path) -> Path:
+    detections = root / "detections"
+    for kind, body in (("sentinel_analytic", _KS_ANALYTIC), ("defender_custom_detection", _KS_DEFENDER)):
+        (detections / kind).mkdir(parents=True)
+        (detections / kind / "rule.yml").write_text(body, encoding="utf-8")
+    return detections
+
+
+def test_apply_and_rollback_drop_a_switched_off_kind_before_dispatch(tmp_path: Path, monkeypatch, capsys) -> None:
+    """apply and rollback filter their envelopes through
+    ``_filter_disabled_engines``. A switched-off kind is dropped there with
+    one line per kind, instead of a "no handler" line per file."""
+    from contentops.cli.commands._shared import _filter_disabled_engines, _load_all
+
+    detections = _two_kind_tree(tmp_path)
+    monkeypatch.setenv(DISABLED_KINDS_ENV, "sentinel_analytic")
+    kept = _filter_disabled_engines(_load_all(detections))
+    assert [la.envelope.id for la in kept] == ["ks-defender"]
+    out = capsys.readouterr().out
+    assert f"{DISABLED_KINDS_ENV} lists sentinel_analytic" in out
+    assert "skipping 1 envelope(s)" in out
+
+
+def test_retry_failed_leaves_a_switched_off_kind_alone(tmp_path: Path, monkeypatch) -> None:
+    """A failed record of a switched-off kind is not retried (it used to
+    reach ``default_registry.get`` and stop the retry with a KeyError)."""
+    import json
+
+    detections = _two_kind_tree(tmp_path)
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    rows = [
+        {"timestamp": "2026-11-24T08:00:00Z", "asset": kind, "id": rid, "action": "update",
+         "status": "failed", "sha": "x", "actor": "me", "workflow_run": None,
+         "prev_hash": "0" * 64, "record_hash": "x" * 64}
+        for kind, rid in (("sentinel_analytic", "ks-analytic"), ("defender_custom_detection", "ks-defender"))
+    ]
+    (audit / "2026-11-24.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    monkeypatch.setenv(DISABLED_KINDS_ENV, "sentinel_analytic")
+    default_registry.reset_all()
+    try:
+        result = CliRunner().invoke(
+            cli, ["retry-failed", "--path", str(detections), "--audit-dir", str(audit), "--dry-run"],
+        )
+    finally:
+        default_registry.reset_all()
+    assert result.exit_code == 0, result.output
+    retry_list = result.output.split("retrying", 1)[1]
+    assert "1 failed asset(s)" in retry_list
+    assert "ks-defender" in retry_list
+    assert "ks-analytic" not in retry_list
+
+
 # ---------------------------------------------------------------------------
 # Apply ordering + monitor gate
 # ---------------------------------------------------------------------------

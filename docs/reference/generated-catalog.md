@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **202** files, **2479** test functions. Integration: **13** files, **18** test functions.
+Unit: **202** files, **2482** test functions. Integration: **13** files, **18** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -327,7 +327,7 @@ Unit: **202** files, **2479** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_apply_verify_watchlist.py` | 16 |
 | `tests/v2/test_apply_workspace_iteration.py` | 16 |
 | `tests/v2/test_arm_name_matching.py` | 11 |
-| `tests/v2/test_asset_modes.py` | 13 |
+| `tests/v2/test_asset_modes.py` | 16 |
 | `tests/v2/test_attack_matrix_data.py` | 10 |
 | `tests/v2/test_audit.py` | 13 |
 | `tests/v2/test_audit_chain.py` | 23 |

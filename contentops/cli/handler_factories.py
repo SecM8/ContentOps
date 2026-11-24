@@ -41,10 +41,12 @@ from contentops.providers.sentinel_arm import SentinelArmProvider
 # Kill switch: a comma-separated list of Asset values that must NOT be
 # registered, regardless of tenant.yml. Set as a GitHub Actions
 # repository variable (exported to the job env by the pipeline-setup
-# action) or in the local shell. Listed kinds are invisible to
-# collect / drift / apply / prune; `lint` still checks their local
-# files. Lets an operator switch a misbehaving kind off in CI without
-# rotating the tenant secret.
+# action) or in the local shell. Any of the eight kinds can be listed.
+# Listed kinds are invisible to collect / drift / prune, and apply /
+# rollback / retry-failed drop their envelopes before dispatch (see
+# ``_filter_disabled_engines``); `lint` still checks their local files.
+# Lets an operator switch a misbehaving kind off in CI without rotating
+# the tenant secret.
 DISABLED_KINDS_ENV = "CONTENTOPS_DISABLED_KINDS"
 
 
@@ -139,52 +141,48 @@ def register_default_handlers() -> None:
 
     disabled = disabled_kinds()
 
-    if sentinel_enabled and not default_registry.has(Asset.SENTINEL_ANALYTIC):
+    def wanted(asset: Asset, engine_enabled: bool) -> bool:
+        # The kill switch applies to every kind, not only the support kinds.
+        return engine_enabled and asset not in disabled and not default_registry.has(asset)
+
+    if wanted(Asset.SENTINEL_ANALYTIC, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_ANALYTIC,
             lambda: SentinelAnalyticHandler(_sentinel_arm_provider),
         )
-    if defender_enabled and not default_registry.has(Asset.DEFENDER_CUSTOM_DETECTION):
+    if wanted(Asset.DEFENDER_CUSTOM_DETECTION, defender_enabled):
         default_registry.register(
             Asset.DEFENDER_CUSTOM_DETECTION,
             lambda: DefenderCustomDetectionHandler(_defender_client),
         )
-    if sentinel_enabled and not default_registry.has(Asset.SENTINEL_HUNTING):
+    if wanted(Asset.SENTINEL_HUNTING, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_HUNTING,
             lambda: SentinelHuntingHandler(_sentinel_arm_provider),
         )
-    if sentinel_enabled and not default_registry.has(Asset.SENTINEL_WATCHLIST):
+    if wanted(Asset.SENTINEL_WATCHLIST, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_WATCHLIST,
             lambda: SentinelWatchlistHandler(_sentinel_arm_provider),
         )
-    if sentinel_enabled and not default_registry.has(Asset.SENTINEL_PARSER):
+    if wanted(Asset.SENTINEL_PARSER, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_PARSER,
             lambda: SentinelParserHandler(_sentinel_arm_provider),
         )
-    if sentinel_enabled and not default_registry.has(Asset.SENTINEL_DATA_CONNECTOR):
+    if wanted(Asset.SENTINEL_DATA_CONNECTOR, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_DATA_CONNECTOR,
             lambda: SentinelDataConnectorHandler(_sentinel_arm_provider),
         )
     # Support-asset kinds. ``tenant_id`` feeds the RunPlaybook action's
     # ``tenantId`` and the collect-time reverse mapping.
-    if (
-        sentinel_enabled
-        and Asset.SENTINEL_PLAYBOOK not in disabled
-        and not default_registry.has(Asset.SENTINEL_PLAYBOOK)
-    ):
+    if wanted(Asset.SENTINEL_PLAYBOOK, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_PLAYBOOK,
             lambda: SentinelPlaybookHandler(_sentinel_arm_provider, tenant_id=tenant_id),
         )
-    if (
-        sentinel_enabled
-        and Asset.SENTINEL_AUTOMATION_RULE not in disabled
-        and not default_registry.has(Asset.SENTINEL_AUTOMATION_RULE)
-    ):
+    if wanted(Asset.SENTINEL_AUTOMATION_RULE, sentinel_enabled):
         default_registry.register(
             Asset.SENTINEL_AUTOMATION_RULE,
             lambda: SentinelAutomationRuleHandler(

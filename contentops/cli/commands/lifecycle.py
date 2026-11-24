@@ -513,6 +513,14 @@ def retry_failed_cmd(
         click.echo("nothing to retry — all selected assets filtered out by env-status gate.")
         return
 
+    # A kind switched off by CONTENTOPS_DISABLED_KINDS, or whose engine
+    # tenant.yml disables, has no handler: drop it like apply does.
+    from contentops.cli.commands._shared import _filter_disabled_engines
+    selected = _filter_disabled_engines(selected)
+    if not selected:
+        click.echo("nothing to retry — every selected asset's kind is switched off or its engine disabled.")
+        return
+
     click.echo(f"retrying {len(selected)} failed asset(s) ({scope_label}):")
     for la in selected:
         click.echo(f"  - {la.envelope.asset.value}  {la.envelope.id}  ({la.path})")
