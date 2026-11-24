@@ -57,6 +57,7 @@ def pytest_collection_modifyitems(config, items):
     silently skip the entire unit-test suite as well.
     """
     if _live_enabled():
+        _apply_kind_kill_switch(items)
         return
     skip = pytest.mark.skip(reason="RUN_LIVE_TESTS!=1; integration tests skipped")
     for item in items:
@@ -66,6 +67,29 @@ def pytest_collection_modifyitems(config, items):
             continue
         if _INTEGRATION_DIR in item_path.parents or item_path == _INTEGRATION_DIR:
             item.add_marker(skip)
+
+
+def _apply_kind_kill_switch(items) -> None:
+    """Skip live tests that write a kind ``CONTENTOPS_DISABLED_KINDS`` lists
+    (see ``tests/integration/kill_switch.py``)."""
+    from contentops.cli.handler_factories import disabled_kinds
+    from tests.integration.kill_switch import kinds_for, override_set, skip_reason
+
+    disabled = frozenset(a.value for a in disabled_kinds())
+    if not disabled:
+        return
+    override = override_set()
+    for item in items:
+        try:
+            item_path = Path(str(item.fspath)).resolve()
+        except Exception:
+            continue
+        if _INTEGRATION_DIR not in item_path.parents:
+            continue
+        name = getattr(item, "originalname", None) or item.name
+        reason = skip_reason(kinds_for(item.module, name), disabled, override=override)
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 def _is_production_workspace(cfg, workspace: str) -> tuple[bool, str | None]:
@@ -105,11 +129,18 @@ def _confirm_not_production(workspace: str) -> None:
     ``cfg.sentinel.workspaceName`` (the latter no longer exists post-
     multi-workspace migration).
     """
+    from contentops.config import load_tenant_config
     try:
-        from contentops.config import load_tenant_config
         cfg = load_tenant_config()
-    except Exception:
+    except FileNotFoundError:
         return  # No tenant.yml to compare against — nothing to guard.
+    except Exception as exc:  # noqa: BLE001 — any other error must not disarm the guard
+        pytest.exit(
+            f"could not read config/tenant.yml ({exc.__class__.__name__}: {exc}), so "
+            f"INTEGRATION_WORKSPACE_NAME={workspace!r} cannot be checked against the "
+            "production workspaces. Fix the file before running live tests.",
+            returncode=2,
+        )
     matches_prod, matched_name = _is_production_workspace(cfg, workspace)
     if not matches_prod:
         return
@@ -202,12 +233,24 @@ def confirmed_defender_client(request):
     return request.getfixturevalue("defender_client")
 
 
+def _test_saved_searches(client) -> list[str]:
+    """Names of the workspace's saved searches (parsers, hunting queries)
+    that carry the test prefix. Raises when the list cannot be read."""
+    response = client.request("GET", client.la_resource_url("savedSearches"))
+    response.raise_for_status()
+    return [
+        str(item.get("name", "")) for item in (response.json().get("value") or [])
+        if str(item.get("name", "")).startswith(RESOURCE_PREFIX_HYPHEN)
+    ]
+
+
 def _sweep_sentinel(client) -> None:
-    """Delete any Sentinel rule whose name starts with the test prefix."""
+    """Delete every Sentinel rule and saved search (parser, hunting query)
+    whose name starts with the test prefix. Best-effort."""
     try:
         rules = client.list_resource("alertRules")
     except Exception:
-        return
+        rules = []
     for rule in rules:
         name = rule.get("name", "")
         if name.startswith(RESOURCE_PREFIX_HYPHEN):
@@ -215,6 +258,15 @@ def _sweep_sentinel(client) -> None:
                 client.delete_resource("alertRules", name)
             except Exception:
                 pass
+    try:
+        searches = _test_saved_searches(client)
+    except Exception:
+        searches = []
+    for name in searches:
+        try:
+            client.request("DELETE", client.la_resource_url("savedSearches", name))
+        except Exception:
+            pass
 
 
 def _sweep_defender(client) -> None:
@@ -252,14 +304,36 @@ def created_sentinel_rules(sentinel_client) -> Iterator[list[str]]:
 
 
 @pytest.fixture
-def created_defender_rules(defender_client) -> Iterator[list[str]]:
-    """Track Defender rule IDs the test created, delete them on teardown."""
+def created_saved_searches(sentinel_client) -> Iterator[list[str]]:
+    """Saved searches (parsers, hunting queries) the test created, deleted
+    on teardown through the Log Analytics URL (``delete_resource`` addresses
+    SecurityInsights resources, not saved searches). Append the name before
+    the PUT, so a failure between create and delete still cleans up."""
+    names: list[str] = []
+    try:
+        yield names
+    finally:
+        for name in names:
+            try:
+                sentinel_client.request(
+                    "DELETE", sentinel_client.la_resource_url("savedSearches", name),
+                )
+            except Exception:
+                pass
+
+
+@pytest.fixture
+def created_defender_rules(confirmed_defender_client) -> Iterator[list[str]]:
+    """Track Defender rule IDs the test created, delete them on teardown.
+
+    Through ``confirmed_defender_client``: an unconfirmed run skips before
+    the Defender client exists, so it makes no call at all."""
     ids: list[str] = []
     try:
         yield ids
     finally:
         for rid in ids:
             try:
-                defender_client.delete_rule(rid)
+                confirmed_defender_client.delete_rule(rid)
             except Exception:
                 pass

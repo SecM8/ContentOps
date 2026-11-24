@@ -19,6 +19,7 @@ Multi-workspace selection (DESIGN §6, v3 schema):
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from contentops.config import (
     SentinelWorkspaceConfig,
@@ -101,7 +102,7 @@ def _sentinel_arm_provider() -> SentinelArmProvider:
     return SentinelArmProvider(_active_workspace(), credential=get_credential())
 
 
-def register_default_handlers() -> None:
+def register_default_handlers(detections_root: Path | None = None) -> None:
     """Idempotent — safe to call from multiple entry points.
 
     Engine gating:
@@ -187,5 +188,6 @@ def register_default_handlers() -> None:
             Asset.SENTINEL_AUTOMATION_RULE,
             lambda: SentinelAutomationRuleHandler(
                 _sentinel_arm_provider, tenant_id=tenant_id,
+                detections_root=detections_root,
             ),
         )

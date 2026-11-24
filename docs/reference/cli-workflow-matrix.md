@@ -85,17 +85,27 @@ Every destructive workflow follows these rules (verified by
    `contentops prune`, `promote-to-integration` and `retry-failed`
    default to dry-run; a dry run of `promote-to-integration` is a dry
    run of its bootstrap step too.
-7. **Kind kill switch**: every job that writes to a tenant honours
-   `CONTENTOPS_DISABLED_KINDS` (exported by `pipeline-setup`, or set on
-   the job for workflows that do not use it).
-8. **No stale re-runs**: a re-run of a `deploy.yml` run stops before the
-   Azure login when its commit is no longer the head of the branch.
 4. **Audit artefact upload** on every workflow that writes records:
    `actions/upload-artifact@<sha>`, 90-day retention.
 5. **Structured `$GITHUB_STEP_SUMMARY`** with the inputs used and
    the result.
 6. **`concurrency:` group** on env-scoped workflows so two
    simultaneous runs against the same tenant queue rather than race.
+   Every workflow that pushes the state branch queues in `deploy-prod`.
+   GitHub keeps one *pending* run per group: a new run cancels one that
+   is still waiting (a running one is never cancelled). The group sits on
+   `deploy.yml`'s deploy job, so a push deploy cancelled that way still
+   starts and its `notify-failure` job opens the pipeline alert.
+7. **Kind kill switch**: every job that writes to a tenant honours
+   `CONTENTOPS_DISABLED_KINDS` (exported by `pipeline-setup`, or set on
+   the job for workflows that do not use it).
+8. **No stale re-runs**: a re-run of a `deploy.yml`, `prune.yml`,
+   `rollback.yml` or `retry-failed.yml` run stops before the Azure login
+   when its commit is no longer the head of the branch
+   (`.github/actions/refuse-stale-rerun`).
+9. **State pull stops the run**: a write workflow's `state sync pull`
+   fails the step when the state branch cannot be read; only a missing
+   branch reads as empty state.
 
 ## Local-only commands (never automated)
 

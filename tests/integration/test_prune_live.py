@@ -32,6 +32,13 @@ import pytest
 
 from contentops.core.asset import Asset
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = {
+    "test_prune_sentinel_analytic_create_then_delete": ("sentinel_analytic",),
+    "test_prune_sentinel_parser_create_then_delete": ("sentinel_parser",),
+}
+
 
 def _expect_404(provider, url: str) -> None:
     resp = provider.request("GET", url)
@@ -106,7 +113,7 @@ def _name_to_guid(name: str) -> str:
 
 
 def test_prune_sentinel_parser_create_then_delete(
-    arm_provider_for_prune, integration_id,
+    arm_provider_for_prune, integration_id, created_saved_searches,
 ):
     """Parser = savedSearches with category='Function'."""
     from contentops.handlers.sentinel_parser import SentinelParserHandler
@@ -119,6 +126,8 @@ def test_prune_sentinel_parser_create_then_delete(
         "functionAlias": integration_id.replace("-", "_"),
     }}
     url = arm_provider_for_prune.la_resource_url("savedSearches", integration_id)
+    # Registered first: a failure before the prune's delete still cleans up.
+    created_saved_searches.append(integration_id)
     create = arm_provider_for_prune.request("PUT", url, json=body)
     assert create.status_code in (200, 201), create.text
 

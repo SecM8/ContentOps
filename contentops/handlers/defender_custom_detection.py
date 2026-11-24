@@ -286,8 +286,12 @@ class DefenderCustomDetectionHandler:
         if existing is None:
             return answer(changing, "Would update", "not compared: the rule could not be read")
         diff = rule_compare.diff_rule(body, _strip_server_fields(existing))
-        status_same = "status" not in body or rule_status.rule_status(existing) == body["status"]
         notes = []
+        if rule_status.rule_status(existing) == rule_status.AUTO_DISABLED and body.get("status") == "enabled":
+            # As apply: an auto-disabled rule is left as it is.
+            body = {k: v for k, v in body.items() if k != "status"}
+            notes.append("auto-disabled in the tenant; left as it is (re-enable it in the portal)")
+        status_same = "status" not in body or rule_status.rule_status(existing) == body["status"]
         if diff.changed:
             notes.append(f"fields: {_names(diff.changed)}")
         if not status_same:
@@ -365,6 +369,16 @@ class DefenderCustomDetectionHandler:
                         "empty in the file, filled in the tenant, left as it is: "
                         f"{_names(diff.not_cleared)}"
                     )
+                if (
+                    rule_status.rule_status(existing) == rule_status.AUTO_DISABLED
+                    and body.get("status") == "enabled"
+                ):
+                    # Defender switched the rule off after repeated run
+                    # failures. Re-enabling is a deliberate act (in the
+                    # portal), not a side effect of a file saying "enabled".
+                    body = {k: v for k, v in body.items() if k != "status"}
+                    auto = "auto-disabled in the tenant; left as it is (re-enable it in the portal)"
+                    note = "; ".join(part for part in (note, auto) if part)
                 if not diff.changed and (
                     "status" not in body
                     or rule_status.rule_status(existing) == body["status"]
@@ -380,10 +394,17 @@ class DefenderCustomDetectionHandler:
             # a PATCH that can mean "clear" (a scope written as null would
             # broaden the rule to every device). Where the file is empty
             # and the tenant is not, the tenant's own value is sent back.
-            patch_body = (
-                rule_compare.keep_tenant_values(body, before, intended)
-                if before is not None else body
-            )
+            if before is not None and not intended and "status" in body:
+                # Only the enabled state changes (a disable or enable): send
+                # just that. The whole rule would be re-saved otherwise, and
+                # a rule Graph's tightened check no longer accepts as written
+                # (400) would keep running.
+                patch_body = {"status": body["status"]}
+            else:
+                patch_body = (
+                    rule_compare.keep_tenant_values(body, before, intended)
+                    if before is not None else body
+                )
             response = client.update_rule(graph_id, patch_body)
             if response.status_code != 200:
                 logger.error(
@@ -428,10 +449,22 @@ class DefenderCustomDetectionHandler:
                     loaded.envelope.id, exc, response.text[:200],
                 )
                 graph_id = ""
-            if graph_id:
-                # A second YAML with this displayName later in the run
-                # must PATCH this rule, not POST another.
-                record_graph_id(display_name, graph_id, name_map, self._graph_ids)
+            if not graph_id:
+                # Without an id there is nothing to read back; say what
+                # happened instead of reporting a post-apply 404.
+                err = (
+                    f"create returned HTTP {response.status_code} but no rule id; "
+                    "check the tenant for the rule before running again"
+                )
+                click.echo(f"  error: {loaded.envelope.id}: {err}", err=True)
+                return ActionResult(
+                    asset_id=loaded.envelope.id, asset_kind=self.asset.value,
+                    action=action, status="error-create", detail=err,
+                    verified=False, error=err,
+                )
+            # A second YAML with this displayName later in the run
+            # must PATCH this rule, not POST another.
+            record_graph_id(display_name, graph_id, name_map, self._graph_ids)
             click.echo(f"  {action.value}: {loaded.envelope.id}")
 
         # Post-apply check: the tenant must hold what the file says. Graph
@@ -498,6 +531,35 @@ class DefenderCustomDetectionHandler:
             asset_id=loaded.envelope.id, asset_kind=self.asset.value,
             action=action, status="success", detail=note, verified=True,
         )
+
+    def disable_in_place(self, loaded: LoadedAsset) -> ActionResult:
+        """Switch the tenant's rule off as it is (a locked rule set to
+        deprecated) with a status-only PATCH: its query and settings, tuned
+        in the portal, are not written. An auto-disabled rule is already
+        off."""
+        from contentops.handlers._disable_in_place import disable_existing
+
+        client = self._client_or_create()
+        assert client is not None
+        name_map = self._name_map_or_build(False)
+        display_name = to_defender_body(loaded.payload, deprecated=True).get("displayName", "")
+        graph_id = resolve_graph_id(
+            display_name, name_map,
+            arm_name=loaded.envelope.arm_name, graph_ids=self._graph_ids,
+        )
+
+        def read() -> dict | None:
+            return client.get_rule(graph_id) if graph_id else None
+
+        result = disable_existing(
+            asset_kind=self.asset.value, envelope_id=loaded.envelope.id,
+            existing=read(),
+            is_off=lambda rule: rule_status.rule_status(rule) != "enabled",
+            switch_off=lambda _existing: client.update_rule(graph_id, {"status": "disabled"}),
+            read_back=read,
+        )
+        click.echo(f"  {result.action.value}: {loaded.envelope.id} ({result.detail})")
+        return result
 
     def close(self) -> None:
         if self._client is not None:

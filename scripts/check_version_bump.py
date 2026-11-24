@@ -49,18 +49,28 @@ def _run(*args: str) -> str:
 SIDECAR_SUFFIX = ".workflow.json"
 
 
-def _changed_files(base_ref: str) -> list[str]:
-    """Changed envelope paths. A changed playbook sidecar (``.workflow.json``)
-    counts as a change to the envelope that loads it, so editing the Logic
-    App definition also demands a bump."""
-    out = _run("diff", "--name-only", f"{base_ref}...HEAD", "--", DETECTIONS_ROOT)
-    files: list[str] = []
+def _changed_files(base_ref: str) -> list[tuple[str, str]]:
+    """Changed envelopes as ``(path now, path at the base)``.
+
+    A renamed envelope keeps its base path (``-M``), so a rename plus a
+    content edit is compared with the old file instead of passing as new.
+    A changed playbook sidecar (``.workflow.json``) counts as a change to
+    the envelope that loads it, so editing the Logic App definition also
+    demands a bump.
+    """
+    out = _run("diff", "-M", "--name-status", f"{base_ref}...HEAD", "--", DETECTIONS_ROOT)
+    files: set[tuple[str, str]] = set()
     for line in out.splitlines():
-        if line.endswith((".yml", ".yaml")):
-            files.append(line)
-        elif line.endswith(SIDECAR_SUFFIX):
-            files.extend(_envelopes_for_sidecar(line))
-    return sorted(set(files))
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status, path = parts[0], parts[-1]
+        base_path = parts[1] if status[:1] in ("R", "C") and len(parts) >= 3 else path
+        if path.endswith((".yml", ".yaml")):
+            files.add((path, base_path))
+        elif path.endswith(SIDECAR_SUFFIX):
+            files.update((env, env) for env in _envelopes_for_sidecar(path))
+    return sorted(files)
 
 
 def _definition_file(yml_path: str, doc: dict | None) -> str:
@@ -158,18 +168,18 @@ def main(base_ref: str) -> int:
         return 2
 
     failures: list[str] = []
-    for path in changed:
+    for path, base_path in changed:
         head_text = Path(path).read_text(encoding="utf-8") if Path(path).exists() else None
         if head_text is None:
             continue  # Deletion.
-        base_text = _file_at_ref(base_ref, path)
+        base_text = _file_at_ref(base_ref, base_path)
         if base_text is None:
             continue  # New file.
         msg = _requires_bump(head_text, base_text)
         if msg is None:
             # Unchanged envelope body: a changed sidecar still needs a bump.
             head_sidecar = _sidecar_text(None, path, _parse_doc(head_text))
-            base_sidecar = _sidecar_text(base_ref, path, _parse_doc(base_text))
+            base_sidecar = _sidecar_text(base_ref, base_path, _parse_doc(base_text))
             if head_sidecar is not None and base_sidecar is not None and head_sidecar != base_sidecar:
                 head_doc = _parse_doc(head_text)
                 base_doc = _parse_doc(base_text)

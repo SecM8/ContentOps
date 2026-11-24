@@ -190,7 +190,7 @@ def state_adopt_cmd(
     if _skip_if_integration_role_absent(role, workspace_name, command="state adopt"):
         return
     _resolve_single_workspace_or_exit(role, workspace_name)
-    register_default_handlers()
+    register_default_handlers(detections_root=detections_path)
     target_asset = Asset(asset) if asset else None
 
     handlers = _collect_drift_handlers(target_asset)
@@ -205,8 +205,11 @@ def state_adopt_cmd(
 
     if report.has_errors():
         for entry in report.errors:
+            # "*": the tenant listing failed; otherwise a local file failed
+            # to load (its name), as the drift command words it.
+            what = "could not list remote" if entry.asset_id == "*" else "could not compare"
             click.echo(
-                f"  ERROR    {entry.asset.value:30} (could not list remote: {entry.error})",
+                f"  ERROR    {entry.asset.value:30} ({what}: {entry.error})",
                 err=True,
             )
         click.echo(

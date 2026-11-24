@@ -254,15 +254,13 @@ jobs:
           contentops lint --strict --path .snapshot
 
       - name: Pull integration state before apply
-        # Best-effort: an empty / missing state/integration ref means
-        # we start from local empty state (collected snapshot
-        # round-trips will reach steady state on the second run).
+        # A missing state/integration ref means we start from local empty
+        # state (collected snapshot round-trips reach steady state on the
+        # second run). Any other pull failure stops the run before apply.
         env:
           PIPELINE_ENV: integration
         run: |
-          contentops state sync pull || {
-            echo "::notice::No remote state/integration branch yet; starting from empty local state."
-          }
+          contentops state sync pull
 
       - name: Step 3 — apply to integration
         env:

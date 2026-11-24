@@ -90,8 +90,11 @@ jobs:
         # adopted. contents: write (above) covers the fetch.
         run: |
           set -euo pipefail
+          # No state branch yet is not a failure. This run only reads, so a
+          # branch that cannot be read is reported and the pages render
+          # every asset as unmanaged.
           contentops state sync pull || {
-            echo "::notice::No remote state branch yet; every asset will render as unmanaged."
+            echo "::warning::Could not read the state branch; every asset will render as unmanaged."
           }
 
       - name: Regenerate status pages (L1-L7)

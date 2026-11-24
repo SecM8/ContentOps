@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("sentinel_parser",)
 
 
 def _name_to_guid(name: str) -> str:
@@ -27,35 +29,13 @@ def _name_to_guid(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def created_sentinel_extras(integration_sentinel_config, integration_credential):
-    """Track per-resource-type ids; sweep on teardown via the same client."""
-    from contentops.providers.sentinel_arm import SentinelArmProvider
-
-    provider = SentinelArmProvider(
-        integration_sentinel_config,
-        credential=integration_credential,
-    )
-    pending: list[tuple[str, str]] = []
-    try:
-        yield pending
-    finally:
-        for kind, name in pending:
-            try:
-                provider.delete_resource(kind, name)
-            except Exception:
-                pass
-        provider.close()
-
-
-
 # ---------------------------------------------------------------------------
 # Parser (savedSearch with category=Function)
 # ---------------------------------------------------------------------------
 
 
 def test_parser_full_crud(integration_sentinel_config, integration_credential,
-                          integration_id, created_sentinel_extras):
+                          integration_id, created_saved_searches):
     from contentops.providers.sentinel_arm import SentinelArmProvider
 
     provider = SentinelArmProvider(
@@ -76,7 +56,8 @@ def test_parser_full_crud(integration_sentinel_config, integration_credential,
         }
         url = provider.la_resource_url("savedSearches", integration_id)
 
-        # CREATE
+        # CREATE (registered first: a failure below still cleans up)
+        created_saved_searches.append(integration_id)
         resp = provider.request("PUT", url, json=body)
         assert resp.status_code in (200, 201), resp.text
 

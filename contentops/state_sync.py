@@ -36,6 +36,7 @@ purpose. There is no merge of two states.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -53,12 +54,18 @@ def _git() -> str:
     return g
 
 
+def _git_env() -> dict[str, str]:
+    """git's environment with English messages: ``pull`` recognises a
+    missing state branch by git's text ("couldn't find remote ref")."""
+    return {**os.environ, "LC_ALL": "C", "LANGUAGE": "C"}
+
+
 def _run(args: list[str], *, cwd: Path) -> str:
     """Run a git command and return stripped stdout. Raises on non-zero."""
     try:
         result = subprocess.run(
             [_git(), "-C", str(cwd), *args],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, check=False, timeout=30, env=_git_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise StateSyncError(f"git invocation failed: {exc}") from exc
@@ -70,6 +77,24 @@ def _run(args: list[str], *, cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def _run_bytes(args: list[str], *, cwd: Path) -> bytes:
+    """Run a git command and return stdout exactly (no strip, no newline
+    translation). Raises on non-zero."""
+    try:
+        result = subprocess.run(
+            [_git(), "-C", str(cwd), *args],
+            capture_output=True, check=False, timeout=30, env=_git_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise StateSyncError(f"git invocation failed: {exc}") from exc
+    if result.returncode != 0:
+        msg = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise StateSyncError(
+            f"git {' '.join(args)} failed (exit {result.returncode}): {msg}"
+        )
+    return result.stdout
+
+
 def _run_with_input(args: list[str], *, cwd: Path, stdin: str) -> str:
     """Run git with stdin. Uses BYTES so Windows doesn't translate
     LF->CRLF on the way in (mktree treats the trailing \\r as part of
@@ -78,7 +103,7 @@ def _run_with_input(args: list[str], *, cwd: Path, stdin: str) -> str:
         result = subprocess.run(
             [_git(), "-C", str(cwd), *args],
             input=stdin.encode("utf-8"),
-            capture_output=True, check=False, timeout=30,
+            capture_output=True, check=False, timeout=30, env=_git_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise StateSyncError(f"git invocation failed: {exc}") from exc
@@ -219,8 +244,10 @@ def push(
     expected = _local_ref_sha(base, repo)
 
     # 1. Stage the file as a blob in git's object store.
+    # --no-filters: the blob is the file's exact bytes (no autocrlf), the
+    # bytes `pull` writes back and `status` hashes.
     blob_sha = _run([
-        "hash-object", "-w", str(state_file),
+        "hash-object", "-w", "--no-filters", str(state_file),
     ], cwd=repo)
 
     # 2. Build a tree containing just state.json -> blob.
@@ -285,8 +312,12 @@ def pull(
 ) -> PullResult:
     """Pull the remote state ref into ``state_file``.
 
-    Tolerates missing ref (returns ``fetched=False``) so a first-
-    run workflow can call ``pull`` unconditionally.
+    Tolerates a missing ref (returns ``fetched=False``) so a first-run
+    workflow can call ``pull`` unconditionally. Any other fetch failure
+    (auth, network, a bad remote) raises: reading it as "no state yet"
+    let a run write to the tenant and fail only at the push after it.
+    The file is written byte for byte as the branch holds it, so
+    ``status`` reads an untouched pulled file as in sync.
     """
     ref = _ref_name(env)
     base = _base_ref_name(env)
@@ -298,14 +329,16 @@ def pull(
             _run(["fetch", remote, f"+{ref}:{ref}", f"+{ref}:{base}"], cwd=repo)
             fetched = True
         except StateSyncError as exc:
+            if "couldn't find remote ref" not in str(exc).lower():
+                raise StateSyncError(
+                    f"could not fetch {ref} from {remote}: {exc}"
+                ) from exc
             # Remote doesn't have the ref yet; treat as empty state. Then
             # the baseline is "no remote state", so a push must create it.
-            # Any other failure leaves the baseline as it was.
-            if "couldn't find remote ref" in str(exc).lower():
-                try:
-                    _run(["update-ref", "-d", base], cwd=repo)
-                except StateSyncError:
-                    pass
+            try:
+                _run(["update-ref", "-d", base], cwd=repo)
+            except StateSyncError:
+                pass
 
     # Check if the local ref exists.
     try:
@@ -316,11 +349,9 @@ def pull(
             detail=f"ref {ref} does not exist locally — empty state",
         )
 
-    # Read the state.json blob from the ref.
+    # Read the state.json blob from the ref, exactly as stored.
     try:
-        body = _run([
-            "show", f"{ref}:state.json",
-        ], cwd=repo)
+        body = _run_bytes(["cat-file", "blob", f"{ref}:state.json"], cwd=repo)
     except StateSyncError as exc:
         return PullResult(
             env=env, ref=ref, fetched=fetched, written_path=None,
@@ -328,7 +359,7 @@ def pull(
         )
 
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(body + ("\n" if not body.endswith("\n") else ""), encoding="utf-8")
+    state_file.write_bytes(body)
     return PullResult(
         env=env, ref=ref, fetched=fetched, written_path=state_file,
         detail=f"wrote {state_file}",

@@ -226,3 +226,19 @@ def test_handles_malformed_yaml_gracefully(repo: Path) -> None:
     assert code == 0
     assert "detections/sentinel/ok.yml" in md
     assert "detections/sentinel/bad.yml" not in md
+
+
+def test_a_failing_git_diff_is_an_error_not_a_clean_result(repo: Path) -> None:
+    """``git diff`` failing (an unknown base ref, a shallow clone) was logged
+    and read as "no changed files": the check printed "No production
+    promotions" and passed."""
+    _write(repo, "detections/sentinel/r.yml", ENVELOPE_TEMPLATE.format(rule_id="r", status="production"))
+    _commit_all(repo, "base")
+
+    code, md = _run_detector(repo, "no-such-ref")
+
+    assert code == 2
+    # The report says so: the workflow posts it as the sticky PR comment, and
+    # without a file the PR kept its previous one ("No production promotions").
+    assert "could not be checked" in md
+    assert "No production promotions" not in md

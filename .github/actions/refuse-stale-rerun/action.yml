@@ -1,0 +1,45 @@
+name: Refuse a re-run of an older commit
+description: >
+  Stops a re-run (attempt 2 or later) whose commit is no longer the head
+  of its branch. A re-run works from its own run's commit: once a later
+  commit has landed, a deploy, rollback or retry-failed re-run sends
+  that older content back over the newer merge, and a prune re-run
+  takes rules added since for orphans and deletes them. A first attempt
+  always proceeds: queued behind another run it must still do its own
+  work.
+
+  Used by `deploy.yml`, `prune.yml`, `rollback.yml` and
+  `retry-failed.yml`, after the checkout and before the Azure login, so
+  a refused run touches nothing.
+
+inputs:
+  run-kind:
+    description: What the run does, for the error message (deploy, prune, rollback, retry).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Compare the run's commit with the head of its branch
+      shell: bash
+      env:
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        RUN_SHA: ${{ github.sha }}
+        BRANCH_REF: ${{ github.ref }}
+        RUN_KIND: ${{ inputs.run-kind }}
+      run: |
+        set -euo pipefail
+        if [ "${RUN_ATTEMPT:-1}" -le 1 ]; then
+          exit 0
+        fi
+        if ! REMOTE="$(git ls-remote --exit-code origin "$BRANCH_REF")"; then
+          echo "::error::Could not read the head of $BRANCH_REF. Nothing was changed."
+          exit 1
+        fi
+        HEAD_SHA="${REMOTE%%[[:space:]]*}"
+        if [ "$HEAD_SHA" != "$RUN_SHA" ]; then
+          echo "::error::This is re-run attempt $RUN_ATTEMPT of a ${RUN_KIND:-run} of $RUN_SHA, but $BRANCH_REF is now at $HEAD_SHA. Nothing was changed."
+          echo "Re-running would work from this older commit, over the changes merged since. Start a new run instead (a manual deploy: set changed_since to the commit before the changes; empty re-applies every detection)."
+          exit 1
+        fi
+        echo "Re-run attempt $RUN_ATTEMPT: $RUN_SHA is still the head of $BRANCH_REF; proceeding."

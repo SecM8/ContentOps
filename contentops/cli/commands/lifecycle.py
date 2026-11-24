@@ -391,11 +391,17 @@ def unlock_cmd(rule_id: str, detections_path: Path) -> None:
     help="Target the Sentinel workspace with this exact ``workspaceName`` "
          "(must match config/tenant.yml). Mutex with --role.",
 )
+@click.option(
+    "--force-overwrite", is_flag=True, default=False,
+    help="Retry locked (localCustomization: true) rules too, as "
+         "`apply --force-overwrite` does. Without it they are skipped.",
+)
 def retry_failed_cmd(
     detections_path: Path, audit_dir: Path,
     since_spec: str | None, run_id: str | None,
     dry_run: bool,
     role: str | None, workspace_name: str | None,
+    force_overwrite: bool,
 ) -> None:
     """Re-apply only the assets a previous apply marked as failed.
 
@@ -490,8 +496,8 @@ def retry_failed_cmd(
 
     click.echo(f"scope: {scope_label} → {len(failed)} failed (asset, id) pair(s)")
 
-    register_default_handlers()
-    loaded = _load_all(detections_path)
+    register_default_handlers(detections_root=detections_path)
+    loaded = _load_all(detections_path, strict=True)
     target_set = {(la.envelope.asset.value, la.envelope.id) for la in loaded}
     missing = sorted(failed - target_set)
     if missing:
@@ -521,24 +527,42 @@ def retry_failed_cmd(
         click.echo("nothing to retry — every selected asset's kind is switched off or its engine disabled.")
         return
 
+    # Same lock apply honours: a rule locked since the failed run is left
+    # alone (a locked rule set to deprecated is still disabled).
+    from contentops.cli.commands.apply_support import (
+        WorkspaceRunContext,
+        _filter_locked_loaded_assets,
+        _process_apply_asset,
+        ordered_for_apply,
+        record_results_in_state,
+    )
+    selected = _filter_locked_loaded_assets(selected, force_overwrite=force_overwrite)
+    if not selected:
+        click.echo("nothing to retry — every selected asset is locked.")
+        return
+    selected = ordered_for_apply(selected)
+
     # Same monitor-mode gate apply uses: a kind in `monitor` mode for the
     # target workspace is never written, also not by a retry of an earlier
-    # failure. Such records are reported and audited as skipped.
-    from contentops.cli.commands._shared import asset_mode_for, monitor_mode_detail
+    # failure. Such records are reported and audited as skipped (by
+    # apply's per-asset step below).
+    from contentops.cli.commands._shared import asset_mode_for
     from contentops.core.asset import ASSET_MODE_MONITOR
-    ws_name = workspaces[0].workspaceName if len(workspaces) == 1 else None
+    ws_name = (
+        workspaces[0].workspaceName if len(workspaces) == 1
+        else os.environ.get("PIPELINE_WORKSPACE_NAME")
+    )
     monitor_only = [
         la for la in selected if asset_mode_for(la.envelope.asset, ws_name) == ASSET_MODE_MONITOR
     ]
-    if monitor_only:
-        skipped_ids = {id(la) for la in monitor_only}
-        selected = [la for la in selected if id(la) not in skipped_ids]
-        for la in monitor_only:
-            click.echo(f"  skipped (monitor mode): {la.envelope.asset.value}  {la.envelope.id}")
+    for la in monitor_only:
+        click.echo(f"  skipped (monitor mode): {la.envelope.asset.value}  {la.envelope.id}")
+    monitor_ids = {id(la) for la in monitor_only}
+    to_write = [la for la in selected if id(la) not in monitor_ids]
 
-    if selected:
-        click.echo(f"retrying {len(selected)} failed asset(s) ({scope_label}):")
-        for la in selected:
+    if to_write:
+        click.echo(f"retrying {len(to_write)} failed asset(s) ({scope_label}):")
+        for la in to_write:
             click.echo(f"  - {la.envelope.asset.value}  {la.envelope.id}  ({la.path})")
     else:
         click.echo("nothing to retry — every selected asset's kind is in monitor mode.")
@@ -553,47 +577,37 @@ def retry_failed_cmd(
     # is internally skipped on dry_run (dry-run already returned above).
     _check_apply_write_allowed_or_exit(cfg, workspaces, asset=None, dry_run=dry_run)
 
-    results: list[ActionResult] = []
-    audit_pairs: list[tuple[LoadedAsset, ActionResult]] = []
-    for la in monitor_only:
-        skipped = ActionResult(
-            asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
-            action=PlanAction.SKIP, status="monitor",
-            detail=monitor_mode_detail(la.envelope.asset),
-        )
-        results.append(skipped)
-        audit_pairs.append((la, skipped))
+    # Apply's per-asset step: snippet substitution, validate, the
+    # monitor-mode skip, then the write, so a retry sends exactly what
+    # apply would have sent.
+    ctx = WorkspaceRunContext(
+        command="apply", detections_path=detections_path, dry_run=False, audit_pairs=[],
+        force_overwrite=force_overwrite,
+    )
     try:
         for la in selected:
-            handler = default_registry.get(la.envelope.asset)
-            try:
-                handler.validate(la)
-                result = handler.apply(la, dry_run=False)
-            except Exception as exc:
-                result = ActionResult(
-                    asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
-                    action=PlanAction.NOOP, status="error-apply", detail=str(exc),
-                )
-            results.append(result)
-            audit_pairs.append((la, result))
+            _process_apply_asset(la, ws_name, ctx)
     finally:
         default_registry.close_all()
+    results = ctx.results
+    assert ctx.audit_pairs is not None
 
     click.echo(f"\nRetry summary ({len(results)} assets):")
     for r in results:
         click.echo(r.as_row())
 
-    if audit_pairs:
-        # Thread the active
-        # workspace into each record so multi-workspace retries are
-        # attributable.
-        active_ws = os.environ.get("PIPELINE_WORKSPACE_NAME")
+    if ctx.audit_pairs:
         records = [
-            _build_audit_record(r, la, workspace=active_ws)
-            for la, r in audit_pairs
+            _build_audit_record(r, la, workspace=pair_ws, snippet_digest=digest)
+            for la, r, pair_ws, digest in ctx.audit_pairs
         ]
         path = write_records(Path.cwd(), records)
         click.echo(f"[audit] wrote {len(records)} records to {path}")
+        from contentops.audit import _resolve_sha
+        record_results_in_state(
+            [(la, r) for la, r, _ws, _digest in ctx.audit_pairs],
+            sha=_resolve_sha(Path.cwd()),
+        )
 
     failed_now = [r for r in results if r.is_failure]
     if failed_now:

@@ -36,6 +36,10 @@ class AssetResult:
     audit_pointer: str | None = None
     detail: str | None = None
     error: str | None = None
+    # The handler's own status (``error-400``, ``error-503``, ``success``):
+    # ``status`` above only buckets it. The deploy gate tells a content
+    # rejection from an outage by it.
+    result_status: str | None = None
 
 
 @dataclass
@@ -95,6 +99,7 @@ def _result_to_row(la: LoadedAsset, result: ActionResult) -> AssetResult:
         verified=result.verified,
         detail=(result.detail or None),
         error=(result.error or None),
+        result_status=result.status,
     )
 
 

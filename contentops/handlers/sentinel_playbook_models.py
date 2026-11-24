@@ -343,9 +343,10 @@ def is_managed_workflow(remote: dict) -> bool:
 def connections_from_remote(remote_workflow: dict) -> list[dict] | None:
     """Reverse ``$connections`` into ``connections:`` declarations.
 
-    Returns None when a connection's auth can't be known to be managed
-    identity from the workflow alone — the caller then GETs the
-    connection resource to decide (or skips the workflow).
+    Returns None when a connection is not shown to be on managed identity
+    (its ``connectionProperties.authentication.type`` is not
+    ``ManagedServiceIdentity``); the caller then skips the workflow with a
+    warning. Convert the connection in the designer, then collect again.
     """
     props = remote_workflow.get("properties") or {}
     params = props.get("parameters") or {}
@@ -353,6 +354,14 @@ def connections_from_remote(remote_workflow: dict) -> list[dict] | None:
     out: list[dict] = []
     for name, ref in conns.items():
         if not isinstance(ref, dict):
+            return None
+        # A managed-identity connection is read back with
+        # ``connectionProperties.authentication.type: ManagedServiceIdentity``
+        # (the block deploy writes). Without it the connection signs in some
+        # other way (OAuth, a key); declaring it would make the next apply
+        # PUT it with managed-identity settings and break its sign-in.
+        auth = ((ref.get("connectionProperties") or {}).get("authentication") or {})
+        if not isinstance(auth, dict) or str(auth.get("type") or "").lower() != "managedserviceidentity":
             return None
         api_id = str(ref.get("id") or "")
         api_name = api_id.rsplit("/", 1)[-1].lower() if api_id else name.lower()

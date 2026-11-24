@@ -126,6 +126,26 @@ def test_collision_disambiguation_suffixes_both_envelopes() -> None:
     assert ("sentinel_analytic", "test") not in ids_per_asset
 
 
+def test_collision_disambiguation_names_sharing_their_first_8_chars_stay_distinct() -> None:
+    """Workflow names like ``Revoke-Session-Prod`` / ``Revoke-Session-Test``
+    share their first 8 characters; the suffix must still tell them apart,
+    or both envelopes get one id and one file overwrites the other."""
+    from contentops.core.drift import disambiguate_envelope_ids
+
+    envelopes = [
+        {"id": "revoke", "asset": "sentinel_playbook",
+         "metadata": {"arm_name": "Revoke-Session-Prod"}, "payload": {}},
+        {"id": "revoke", "asset": "sentinel_playbook",
+         "metadata": {"arm_name": "Revoke-Session-Test"}, "payload": {}},
+    ]
+    out = disambiguate_envelope_ids(envelopes)
+    ids = [e["id"] for e in out]
+    assert len(set(ids)) == 2, ids
+    assert all(i.startswith("revoke-") for i in ids)
+    # Same input, same ids (collect runs again tomorrow).
+    assert [e["id"] for e in disambiguate_envelope_ids(envelopes)] == ids
+
+
 def test_collision_disambiguation_idempotent() -> None:
     from contentops.core.drift import disambiguate_envelope_ids
 

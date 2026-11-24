@@ -312,3 +312,134 @@ def test_a_deployed_automation_rule_renamed_in_the_tenant_is_a_change_not_a_new_
     assert [(e.kind, e.local_path.name if e.local_path else None) for e in report.entries] == [
         ("changed", "zz-rule.yml"),
     ]
+
+
+# --- Defender: drift compares as deploy does ---------------------------------
+
+
+def _defender(**template) -> dict:
+    tpl = {"title": "T", "severity": "low", "description": "d", "recommendedActions": "r",
+           "tactics": [{"tactic": "Discovery", "techniques": []}],
+           "entityMappings": {"hosts": [{"deviceIdColumn": "DeviceId"}]}}
+    tpl.update(template)
+    return {"displayName": "D", "status": "enabled", "queryCondition": {"queryText": "DeviceEvents"},
+            "schedule": {"frequency": "PT1H", "lookback": "PT4H"},
+            "detectionAction": {"alertTemplate": tpl}}
+
+
+def test_defender_drift_reads_what_a_verified_deploy_left_as_in_sync() -> None:
+    """Drift compared Defender payloads more strictly than deploy, so some
+    differences a verified deploy can never clear stayed "changed": OData
+    annotations the tenant adds, ``PT60M`` for ``PT1H``, list order."""
+    from contentops.core.asset import Asset
+    from contentops.core.drift import _payloads_match
+
+    local = _defender(tactics=[{"tactic": "Discovery", "techniques": []},
+                               {"tactic": "Execution", "techniques": []}])
+    local["schedule"]["frequency"] = "PT60M"
+    remote = _defender(
+        tactics=[{"tactic": "Execution", "techniques": []}, {"tactic": "Discovery", "techniques": []}],
+        entityMappings={"hosts": [{"@odata.type": "#microsoft.graph.security.hostEntityMapping",
+                                   "deviceIdColumn": "DeviceId"}]},
+    )
+    assert _payloads_match(local, remote, Asset.DEFENDER_CUSTOM_DETECTION)
+
+
+def test_defender_drift_still_sees_a_portal_edit_and_a_portal_added_value() -> None:
+    from contentops.core.asset import Asset
+    from contentops.core.drift import _payloads_match
+
+    assert not _payloads_match(_defender(), _defender(title="Edited in the portal"),
+                               Asset.DEFENDER_CUSTOM_DETECTION)
+    left_empty = _defender()
+    left_empty["detectionAction"]["alertTemplate"]["recommendedActions"] = ""
+    assert not _payloads_match(left_empty, _defender(), Asset.DEFENDER_CUSTOM_DETECTION)
+
+
+def test_a_disabled_defender_rule_file_is_in_sync_with_the_switched_off_rule(tmp_path: Path) -> None:
+    """``contentops disable`` sets ``status: deprecated`` and leaves
+    ``payload.status: enabled``; deploy sends ``disabled``. Drift reported
+    the switched-off rule as changed until the file was imported."""
+    import yaml
+
+    from contentops.core.asset import Asset
+    from contentops.core.drift import _local_index, _payloads_match
+
+    folder = tmp_path / "defender_custom_detection"
+    folder.mkdir()
+    (folder / "rule-r.yml").write_text(yaml.safe_dump({
+        "id": "rule-r", "version": "1.0.0", "asset": "defender_custom_detection", "status": "deprecated",
+        "payload": _defender(),
+    }), encoding="utf-8")
+    local_payload = _local_index(tmp_path, Asset.DEFENDER_CUSTOM_DETECTION)["rule-r"][1]
+    switched_off = {**_defender(), "status": "disabled"}
+    assert _payloads_match(local_payload, switched_off, Asset.DEFENDER_CUSTOM_DETECTION)
+
+
+def test_an_expired_automation_rule_is_not_drift_every_run(tmp_path: Path) -> None:
+    """Collect imports an expired rule as ``deprecated`` and keeps the
+    tenant's ``isEnabled: true``. Drift compared a deprecated rule as
+    switched off, but deploy skips an expired rule (it never sends the
+    disable), so the rule read as changed on every run."""
+    logic = {"isEnabled": True, "triggersOn": "Incidents", "triggersWhen": "Created",
+             "conditions": [], "expirationTimeUtc": "2020-01-01T00:00:00Z"}
+    payload = {"displayName": "zz expired", "order": 1, "triggeringLogic": logic}
+    _write(tmp_path, Asset.SENTINEL_AUTOMATION_RULE, "zz-expired", payload, status="deprecated")
+    tenant = _Tenant(Asset.SENTINEL_AUTOMATION_RULE, [_collected(
+        "zz-expired", Asset.SENTINEL_AUTOMATION_RULE, payload, status="deprecated",
+    )])
+    assert [e.kind for e in detect_drift([tenant], tmp_path).entries] == ["in-sync"]
+
+
+def test_a_defender_field_added_in_the_portal_is_drift_when_the_file_leaves_it_out() -> None:
+    """Drift compared only the fields a file carries (as deploy does), so a
+    response action, a description or custom details added in the portal
+    to a rule written from the template read as in sync, and collect never
+    imported them. A field is drift when neither it nor its old/new partner
+    is in the file and the tenant holds a value."""
+    from contentops.core.drift import _payloads_match
+
+    local = _defender()
+    action = {"@odata.type": "#microsoft.graph.security.isolateDeviceResponseAction",
+              "identifier": "deviceId", "isolationType": "full"}
+    with_action = _defender()
+    with_action["detectionAction"]["responseActions"] = [action]
+    assert not _payloads_match(local, with_action, Asset.DEFENDER_CUSTOM_DETECTION)
+
+    with_description = {**_defender(), "description": "added in the portal"}
+    assert not _payloads_match(local, with_description, Asset.DEFENDER_CUSTOM_DETECTION)
+
+    with_details = _defender(customDetails=[{"key": "k", "value": "Column"}])
+    assert not _payloads_match(local, with_details, Asset.DEFENDER_CUSTOM_DETECTION)
+
+
+def test_the_old_keys_graph_fills_next_to_the_file_keys_are_not_drift() -> None:
+    """Graph returns ``category`` / ``mitreTechniques`` next to ``tactics``
+    and ``impactedAssets`` next to ``entityMappings`` (seen in every
+    collected rule), plus empty action lists."""
+    from contentops.core.drift import _payloads_match
+
+    served = _defender(category="Discovery", mitreTechniques=["T1082"],
+                       impactedAssets=[{"@odata.type": "#microsoft.graph.security.impactedDeviceAsset",
+                                        "identifier": "deviceId"}])
+    served["detectionAction"].update({"automatedActions": [], "responseActions": []})
+    assert _payloads_match(_defender(), served, Asset.DEFENDER_CUSTOM_DETECTION)
+
+
+def test_two_logic_app_names_that_differ_only_in_punctuation_are_drift(tmp_path: Path) -> None:
+    """With no playbook files the comparison fell back to slugs, so
+    ``Notify_SOC`` and ``Notify-SOC`` (two different Logic Apps) compared
+    equal and a switch between them was invisible."""
+    def _rule(app: str) -> dict:
+        return {"displayName": "zz rule", "order": 1, "triggeringLogic": {
+            "isEnabled": True, "triggersOn": "Incidents", "triggersWhen": "Created", "conditions": []},
+            "actions": [{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"logicApp": app}}]}
+
+    _write(tmp_path, Asset.SENTINEL_AUTOMATION_RULE, "zz-rule", _rule("Notify_SOC"))
+    tenant = _Tenant(Asset.SENTINEL_AUTOMATION_RULE, [_collected(
+        "zz-rule", Asset.SENTINEL_AUTOMATION_RULE, _rule("Notify-SOC"))])
+    assert [e.kind for e in detect_drift([tenant], tmp_path).entries] == ["changed"]
+    # ARM names are case-insensitive: only the case differs, same Logic App.
+    tenant = _Tenant(Asset.SENTINEL_AUTOMATION_RULE, [_collected(
+        "zz-rule", Asset.SENTINEL_AUTOMATION_RULE, _rule("notify_soc"))])
+    assert [e.kind for e in detect_drift([tenant], tmp_path).entries] == ["in-sync"]

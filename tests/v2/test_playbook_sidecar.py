@@ -105,12 +105,12 @@ def _load_script():
 def test_version_bump_script_maps_sidecar_to_envelope(monkeypatch) -> None:
     mod = _load_script()
     monkeypatch.setattr(mod, "_run", lambda *args: (
-        "detections/sentinel_playbook/pb-one.workflow.json\n"
-        "detections/sentinel_analytic/x.yml\n"
+        "M\tdetections/sentinel_playbook/pb-one.workflow.json\n"
+        "M\tdetections/sentinel_analytic/x.yml\n"
     ))
     assert mod._changed_files("origin/main") == [
-        "detections/sentinel_analytic/x.yml",
-        "detections/sentinel_playbook/pb-one.yml",
+        ("detections/sentinel_analytic/x.yml", "detections/sentinel_analytic/x.yml"),
+        ("detections/sentinel_playbook/pb-one.yml", "detections/sentinel_playbook/pb-one.yml"),
     ]
 
 
@@ -128,7 +128,9 @@ def test_version_bump_script_requires_bump_when_only_sidecar_changed(tmp_path: P
         "detections/sentinel_playbook/pb-one.yml": env_text,
         "detections/sentinel_playbook/pb-one.workflow.json": '{"actions": {}}',
     }
-    monkeypatch.setattr(mod, "_changed_files", lambda ref: ["detections/sentinel_playbook/pb-one.yml"])
+    monkeypatch.setattr(mod, "_changed_files", lambda ref: [
+        ("detections/sentinel_playbook/pb-one.yml", "detections/sentinel_playbook/pb-one.yml"),
+    ])
     monkeypatch.setattr(mod, "_file_at_ref", lambda ref, path: base_files.get(path))
     assert mod.main("origin/main") == 1
 

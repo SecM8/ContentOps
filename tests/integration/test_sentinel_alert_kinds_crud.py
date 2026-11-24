@@ -20,6 +20,10 @@ Coverage:
 
 from __future__ import annotations
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("sentinel_analytic",)
+
 
 def _msi_body(display_name: str) -> dict:
     return {

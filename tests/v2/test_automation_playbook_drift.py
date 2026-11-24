@@ -114,7 +114,10 @@ def test_drift_writes_envelopes_and_sidecars_that_reload_and_come_back_in_sync(t
 
     ar_yaml = yaml.safe_load((tmp_path / "sentinel_automation_rule" / "run-notify-soc.yml").read_text(encoding="utf-8"))
     cfg = ar_yaml["payload"]["actions"][0]["actionConfiguration"]
-    assert cfg == {"playbook": "notify-soc"}  # no GUIDs on disk
+    # No GUIDs on disk. The playbook's envelope is written in this same run,
+    # so the rule names it by envelope id; the second pass below reads it
+    # back in sync.
+    assert cfg == {"playbook": "notify-soc"}
     assert ar_yaml["metadata"]["arm_name"] == "00000000-0000-0000-0000-000000000001"
 
     # Every written envelope loads (sidecar inlined) and validates.
@@ -172,3 +175,28 @@ def test_drift_matches_collected_automation_rule_by_arm_name_after_rename(tmp_pa
     report = detect_drift([_StubAutomation([renamed])], tmp_path)
     assert [e.kind for e in report.entries] == ["changed"]
     assert report.changed[0].local_path.name == "run-notify-soc.yml"
+
+
+def test_playbook_connection_fields_only_the_file_holds_are_kept_and_not_compared(tmp_path: Path) -> None:
+    """A connection's ``authMode``, ``displayName`` and ``auth`` are not in
+    what the tenant returns. A playbook that declares them showed as changed
+    on every drift run, and the import dropped them (``authMode`` is required
+    for a connector outside the known table, so the file then failed)."""
+    import yaml
+
+    from contentops.core.asset import Asset
+    from contentops.core.drift import _payloads_match, _preserve_authored
+
+    local_conn = {"name": "kv", "apiName": "keyvault", "authMode": "parameterValueSet",
+                  "displayName": "Key Vault", "auth": "managedIdentity"}
+    local_payload = {"definition": {"triggers": {}, "actions": {}}, "connections": [local_conn]}
+    remote_payload = {"definition": {"triggers": {}, "actions": {}},
+                      "connections": [{"name": "kv", "apiName": "keyvault"}]}
+    assert _payloads_match(local_payload, remote_payload, Asset.SENTINEL_PLAYBOOK)
+
+    path = tmp_path / "pb.yml"
+    path.write_text(yaml.safe_dump({"id": "pb", "version": "1.0.0", "asset": "sentinel_playbook",
+                                    "status": "production", "payload": local_payload}), encoding="utf-8")
+    imported = {"id": "pb", "payload": {**remote_payload, "state": "Disabled"}}
+    kept = _preserve_authored(imported, path, Asset.SENTINEL_PLAYBOOK)
+    assert kept["payload"]["connections"] == [local_conn]

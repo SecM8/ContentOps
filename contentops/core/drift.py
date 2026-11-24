@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Protocol, runtime_checkable
@@ -170,6 +172,80 @@ def _without_default_label_type(payload: dict) -> dict:
     return {**payload, "actions": out}
 
 
+# ``envelope id -> workflow name`` of the local playbooks, set while drift
+# or collect compares (see ``comparing_with_playbooks``).
+_PLAYBOOK_WORKFLOWS: ContextVar[dict[str, str] | None] = ContextVar("_PLAYBOOK_WORKFLOWS", default=None)
+
+
+def playbook_workflow_index(detections_root: Path) -> dict[str, str]:
+    """``envelope id -> workflow name`` (``arm_name`` or id) of local playbooks."""
+    out: dict[str, str] = {}
+    for path in discover_assets(detections_root):
+        try:
+            loaded = load_asset(path)
+        except Exception:  # noqa: BLE001 — reported by local_load_errors
+            continue
+        if loaded.envelope.asset is Asset.SENTINEL_PLAYBOOK:
+            out[loaded.envelope.id] = loaded.envelope.arm_name or loaded.envelope.id
+    return out
+
+
+@contextmanager
+def comparing_with_playbooks(detections_root: Path):
+    """Make ``playbook: <id>`` and ``logicApp: <its workflow name>`` compare
+    equal while the block runs (both deploy the same Logic App)."""
+    token = _PLAYBOOK_WORKFLOWS.set(playbook_workflow_index(detections_root))
+    try:
+        yield
+    finally:
+        _PLAYBOOK_WORKFLOWS.reset(token)
+
+
+def _automation_rule_canonical(payload: dict) -> dict:
+    """Automation rules: the label default (see ``_without_default_label_type``)
+    and one form for a RunPlaybook target. Collect writes ``playbook: <id>``
+    only when that playbook's envelope exists, else ``logicApp: <name>``;
+    both name the same Logic App, so both compare as its workflow name
+    (case-insensitive, as ARM names are). Every caller compares inside
+    ``comparing_with_playbooks``, so a ``playbook:`` id resolves to its
+    workflow name; a Logic App name is never reduced to a slug (two names
+    that differ only in punctuation are two Logic Apps)."""
+    payload = _without_default_label_type(payload)
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        return payload
+    index = _PLAYBOOK_WORKFLOWS.get() or {}
+    out = []
+    for action in actions:
+        cfg = action.get("actionConfiguration") if isinstance(action, dict) else None
+        if isinstance(cfg, dict) and action.get("actionType") == "RunPlaybook":
+            target = cfg.get("playbook") or cfg.get("logicApp")
+            if target:
+                name = index.get(str(target), str(target)) if cfg.get("playbook") else str(target)
+                cfg = {k: v for k, v in cfg.items() if k not in ("playbook", "logicApp")}
+                cfg["logicApp"] = name.lower()
+                action = {**action, "actionConfiguration": cfg}
+        out.append(action)
+    return {**payload, "actions": out}
+
+
+#: Playbook connection fields only the file holds: the tenant's
+#: ``$connections`` says nothing about them.
+_CONNECTION_FILE_ONLY = ("authMode", "displayName", "auth")
+
+
+def _playbook_canonical(payload: dict) -> dict:
+    """Playbooks: compare connections without the fields only a file holds."""
+    connections = payload.get("connections")
+    if not isinstance(connections, list):
+        return payload
+    return {**payload, "connections": [
+        {k: v for k, v in conn.items() if k not in _CONNECTION_FILE_ONLY}
+        if isinstance(conn, dict) else conn
+        for conn in connections
+    ]}
+
+
 def _defender_current_shape(payload: dict) -> dict:
     """Defender rules: Graph returns the deprecated keys filled in next to
     the current ones (``scopeNames`` next to ``deviceGroups``,
@@ -183,7 +259,8 @@ def _defender_current_shape(payload: dict) -> dict:
 
 # Per-kind canonical form, applied to both sides before comparing.
 _CANONICAL = {
-    Asset.SENTINEL_AUTOMATION_RULE: _without_default_label_type,
+    Asset.SENTINEL_AUTOMATION_RULE: _automation_rule_canonical,
+    Asset.SENTINEL_PLAYBOOK: _playbook_canonical,
     Asset.DEFENDER_CUSTOM_DETECTION: _defender_current_shape,
 }
 
@@ -288,6 +365,26 @@ def _local_index(detections_root: Path, asset: Asset) -> dict[str, tuple[Path, d
             # payload says (emergency disable flips only the status), so
             # the tenant's ``enabled: false`` is what the repo asked for.
             payload = {**payload, "enabled": False}
+        elif loaded.envelope.status == "deprecated" and isinstance(payload, dict):
+            # Same for the support kinds: deploy sends a deprecated
+            # automation rule with ``isEnabled: false`` and a deprecated
+            # playbook with ``state: Disabled``.
+            if asset is Asset.SENTINEL_AUTOMATION_RULE:
+                from contentops.handlers.sentinel_automation_rule_models import is_expired
+                logic = payload.get("triggeringLogic")
+                # An expired rule is skipped by deploy (no disable is sent),
+                # so it compares as the file has it.
+                if (
+                    isinstance(logic, dict) and logic.get("isEnabled") is not False
+                    and not is_expired(logic.get("expirationTimeUtc"))
+                ):
+                    payload = {**payload, "triggeringLogic": {**logic, "isEnabled": False}}
+            elif asset is Asset.SENTINEL_PLAYBOOK and payload.get("state") != "Disabled":
+                payload = {**payload, "state": "Disabled"}
+            elif asset is Asset.DEFENDER_CUSTOM_DETECTION:
+                # Deploy sends a deprecated Defender rule as ``disabled``.
+                payload = {k: v for k, v in payload.items() if k != "isEnabled"}
+                payload["status"] = "disabled"
         entry = (path, payload)
         # Fallback key: envelope id (handlers w/o arm_name).
         out[loaded.envelope.id] = entry
@@ -356,8 +453,34 @@ def _payloads_match(local: dict, remote: dict, asset: Asset | None = None) -> bo
     so the dumper strips it before writing. With ``asset``, the
     per-kind rules of ``_comparable`` apply as well.
     """
+    if asset is Asset.DEFENDER_CUSTOM_DETECTION and isinstance(local, dict) and isinstance(remote, dict):
+        return _defender_in_sync(local, remote)
     local, remote = _comparable(local, remote, asset)
     return _normalize(local) == _normalize(remote)
+
+
+def _defender_in_sync(local: dict, remote: dict) -> bool:
+    """A Defender rule file and the tenant's rule, compared as deploy does.
+
+    ``rule_compare.diff_rule`` is the comparison deploy makes before and
+    after a write (OData annotations the tenant adds, ``PT60M`` for
+    ``PT1H``, list order and service-filled fields are not differences), so
+    a verified deploy always leaves drift in sync. A field the tenant
+    filled that the file leaves empty (``not_cleared``) is drift: the
+    portal added a value the repository does not hold. The enabled state
+    is compared as deploy sends it.
+    """
+    from contentops.defender import rule_compare, rule_status
+
+    body = rule_status.to_wire_body(local)
+    diff = rule_compare.diff_rule(body, remote)
+    if diff.changed or diff.not_cleared:
+        return False
+    # A value added in the portal to a field the file leaves out (deploy
+    # does not touch such a field, so only drift can bring it into git).
+    if rule_compare.added_in_tenant(body, remote):
+        return False
+    return "status" not in body or rule_status.rule_status(remote) == body["status"]
 
 
 @dataclass(frozen=True)
@@ -434,11 +557,78 @@ def _normalize(value: Any) -> Any:
     return value
 
 
+def local_load_errors(detections_root: Path) -> list[tuple[Path, Exception]]:
+    """Detection files under ``detections_root`` that fail to load.
+
+    Such a file is left out of the local side, so its live rule would read
+    as NEW (drift) or as an orphan (prune). Callers report or refuse
+    instead of comparing without it.
+    """
+    out: list[tuple[Path, Exception]] = []
+    for path in discover_assets(detections_root):
+        try:
+            load_asset(path)
+        except Exception as exc:  # noqa: BLE001 — reported by the caller
+            out.append((path, exc))
+    return out
+
+
+def _asset_of_path(path: Path) -> Asset | None:
+    """The kind a file's folder names (``detections/<kind>/...``), if any."""
+    values = {a.value: a for a in Asset}
+    for part in path.parts:
+        if part in values:
+            return values[part]
+    return None
+
+
+def references_last(handlers: Iterable) -> list:
+    """Handlers with the kinds that reference others (automation rules)
+    after the kinds they reference, so the same run's new analytics and
+    playbooks are known when the rules are mapped (stable otherwise)."""
+    return sorted(handlers, key=lambda h: h.asset is Asset.SENTINEL_AUTOMATION_RULE)
+
+
+def record_new_id(new_ids: dict[Asset, dict[str, str]], asset: Asset, asset_id: str, envelope: dict) -> None:
+    """Note a new envelope's id against its remote name (see ``references_last``)."""
+    md = envelope.get("metadata") or {}
+    remote_name = md.get("arm_name") if isinstance(md, dict) else None
+    new_ids.setdefault(asset, {})[asset_id] = str(remote_name or asset_id)
+
+
+def seed_same_run_references(handler, new_ids: dict[Asset, dict[str, str]]) -> None:
+    """Hand a referencing handler the new analytics and playbooks of this run."""
+    seed = getattr(type(handler), "add_collected", None)
+    if callable(seed):
+        handler.add_collected(
+            analytics=dict(new_ids.get(Asset.SENTINEL_ANALYTIC, {})),
+            playbooks=dict(new_ids.get(Asset.SENTINEL_PLAYBOOK, {})),
+        )
+
+
 def detect_drift(
     handlers: Iterable[DriftCapable],
     detections_root: Path,
 ) -> DriftReport:
+    with comparing_with_playbooks(detections_root):
+        return _detect_drift(handlers, detections_root)
+
+
+def _detect_drift(
+    handlers: Iterable[DriftCapable],
+    detections_root: Path,
+) -> DriftReport:
     report = DriftReport()
+    handlers = references_last(handlers)
+    new_ids: dict[Asset, dict[str, str]] = {}
+    checked = {h.asset for h in handlers}
+    for path, exc in local_load_errors(detections_root):
+        asset = _asset_of_path(path)
+        if asset in checked:
+            report.entries.append(DriftEntry(
+                asset=asset, asset_id=path.name, kind="error",
+                error=f"local file {path} failed to load ({exc}); its tenant item cannot be compared",
+            ))
     for handler in handlers:
         asset = handler.asset
         local = _local_index(detections_root, asset)
@@ -457,6 +647,7 @@ def detect_drift(
             continue
         names = _local_names(detections_root, asset)
         remote_ids = {str(r.get("name") or r.get("id") or "") for r in remote_items}
+        seed_same_run_references(handler, new_ids)
 
         # Pair each ``to_envelope`` result with its source remote so we
         # can look the match key up by the authoritative ARM/Graph name
@@ -496,6 +687,7 @@ def detect_drift(
                 report.entries.append(DriftEntry(
                     asset=asset, asset_id=asset_id, kind="new", envelope=envelope,
                 ))
+                record_new_id(new_ids, asset, asset_id, envelope)
                 continue
             local_path, local_payload = match
             # A stale recorded id is a change: the import records the
@@ -636,6 +828,23 @@ def _preserve_authored(envelope: dict, local_path: Path, asset: Asset) -> dict:
         for key in _DEPLOY_ONLY.get(asset, frozenset()):
             if key in local_payload and key not in payload:
                 payload[key] = local_payload[key]
+        if asset is Asset.SENTINEL_PLAYBOOK and isinstance(payload.get("connections"), list):
+            # Fields only the file holds (``authMode`` is required for a
+            # connector outside the known table): kept per connection name.
+            local_conns = {
+                c.get("name"): c for c in (local_payload.get("connections") or [])
+                if isinstance(c, dict)
+            }
+            merged = []
+            for conn in payload["connections"]:
+                if isinstance(conn, dict) and conn.get("name") in local_conns:
+                    extra = {
+                        k: v for k, v in local_conns[conn["name"]].items()
+                        if k in _CONNECTION_FILE_ONLY and k not in conn
+                    }
+                    conn = {**conn, **extra}
+                merged.append(conn)
+            payload["connections"] = merged
     for key, value in local.items():
         if key not in _ENVELOPE_KEYS_FROM_TENANT and key not in envelope:
             envelope[key] = value
@@ -739,12 +948,26 @@ def disambiguate_envelope_ids(envelopes: list[dict]) -> list[dict]:
     If two envelopes from the same asset kind end up with the same
     base slug (e.g. two analytics named "Test"), both are rewritten
     to ``<slug>-<arm8>`` where ``arm8`` is the first 8 alphanumeric
-    chars of the originating ARM resource name. The non-colliding
+    chars of the originating ARM resource name. When those 8 chars do
+    not tell the colliding names apart (``Revoke-Session-Prod`` /
+    ``Revoke-Session-Test``), the suffix is a hash of the full name
+    instead, so no two envelopes leave with one id. The non-colliding
     envelopes pass through unchanged. Idempotent.
     """
-    from contentops.utils.slug import disambiguate
+    from contentops.utils.slug import arm_name_hash, arm_name_suffix, disambiguate
+
+    def _arm_name(env: dict) -> str:
+        md = env.get("metadata") or {}
+        return str(md.get("arm_name") or "") if isinstance(md, dict) else ""
+
     counts: Counter[tuple[str, str]] = Counter(
         (e.get("asset", ""), e.get("id", "")) for e in envelopes if isinstance(e, dict)
+    )
+    # How many colliding envelopes share each short suffix, per slug.
+    short: Counter[tuple[str, str, str]] = Counter(
+        (e.get("asset", ""), e.get("id", ""), arm_name_suffix(_arm_name(e)))
+        for e in envelopes
+        if isinstance(e, dict) and counts[(e.get("asset", ""), e.get("id", ""))] > 1
     )
     out: list[dict] = []
     for env in envelopes:
@@ -752,11 +975,11 @@ def disambiguate_envelope_ids(envelopes: list[dict]) -> list[dict]:
             continue
         key = (env.get("asset", ""), env.get("id", ""))
         if counts[key] > 1:
-            arm_name = ""
-            md = env.get("metadata") or {}
-            if isinstance(md, dict):
-                arm_name = str(md.get("arm_name") or "")
-            new_id = disambiguate(env.get("id", ""), arm_name)
+            arm_name = _arm_name(env)
+            suffix = arm_name_suffix(arm_name)
+            if short[(*key, suffix)] > 1:
+                suffix = arm_name_hash(arm_name)
+            new_id = disambiguate(env.get("id", ""), arm_name, suffix=suffix)
             new_env = dict(env)
             new_env["id"] = new_id
             out.append(new_env)

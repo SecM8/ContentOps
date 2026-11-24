@@ -73,7 +73,7 @@ def _load_assets_and_inventory_for_run(
     """``(selected, inventory)``: the filtered assets of ``_load_assets_for_run``
     and every local envelope, where the dependency check looks prerequisites
     up (an unchanged prerequisite is still in the repository)."""
-    inventory = _load_all(detections_path)
+    inventory = _load_all(detections_path, strict=True)
     loaded = list(inventory)
     if asset:
         target = Asset(asset)
@@ -248,11 +248,25 @@ def _filter_locked_loaded_assets(
     loaded: list[LoadedAsset],
     force_overwrite: bool,
 ) -> list[LoadedAsset]:
-    """Remove locally locked assets unless ``force_overwrite`` is set."""
+    """Remove locally locked assets unless ``force_overwrite`` is set.
+
+    A locked asset whose status is ``deprecated`` is kept: that is
+    ``contentops disable`` (emergency disable), which flips only the
+    status and leaves the lock, and a disable must reach the tenant. The
+    apply step switches it off as it is in the tenant (``_disable_locked``),
+    not with the file's body.
+    """
     locked_skipped = 0
     if not force_overwrite:
         kept: list = []
         for la in loaded:
+            if _is_locked(la) and la.envelope.status == "deprecated":
+                click.echo(
+                    "  locked but deprecated — switching the tenant's rule off as it is: "
+                    f"{la.envelope.id}"
+                )
+                kept.append(la)
+                continue
             if _is_locked(la):
                 click.echo(
                     f"  skipped (locked — re-run with --force-overwrite to push): "
@@ -281,6 +295,9 @@ class WorkspaceRunContext:
     audit_pairs: list[ApplyAuditPair] | None = None
     # (workspace name, asset) -> "managed" | "monitor"; filled lazily.
     asset_modes: dict = field(default_factory=dict)
+    # --force-overwrite: a locked rule is sent as its file says. Without it
+    # a locked rule set to deprecated is switched off as it is in the tenant.
+    force_overwrite: bool = False
 
 
 def _print_multi_workspace_banner(
@@ -338,6 +355,56 @@ def _process_plan_asset(
         ))
 
 
+def _disable_locked(handler, la: LoadedAsset, *, dry_run: bool) -> ActionResult:
+    """A locked rule set to deprecated (``contentops disable`` on a rule
+    tuned in the portal): switch the tenant's rule off as it is, so the
+    tuning survives. A kind whose handler cannot do that is left alone."""
+    from contentops.handlers._disable_in_place import NO_DISABLE_IN_PLACE
+
+    disable = getattr(handler, "disable_in_place", None)
+    if not callable(disable):
+        click.echo(f"  skipped (locked): {la.envelope.id}: {NO_DISABLE_IN_PLACE}")
+        return ActionResult(
+            asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
+            action=PlanAction.SKIP, status="skipped", detail=NO_DISABLE_IN_PLACE,
+        )
+    if dry_run:
+        detail = "locked: would switch the tenant's rule off as it is"
+        click.echo(f"  [DRY-RUN] {detail}: {la.envelope.id}")
+        return ActionResult(
+            asset_id=la.envelope.id, asset_kind=la.envelope.asset.value,
+            action=PlanAction.DISABLE, status="dry-run", detail=detail,
+        )
+    return disable(la)
+
+
+def status_for_exception(exc: BaseException) -> str:
+    """The result status for an exception a handler raised.
+
+    A handler maps the write's HTTP answer itself, but the read before it
+    (or a token request) raises. Keep what kind of failure it was, so the
+    deploy gate can tell an outage from a content problem: ``error-<HTTP
+    code>`` when the exception carries one, ``error-network`` for a
+    transport failure, ``error-auth`` when no token could be had, else
+    ``error-apply``.
+    """
+    code = getattr(exc, "status_code", None)
+    if not isinstance(code, int):
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(code, int):
+        return f"error-{code}"
+    import httpx
+    if isinstance(exc, httpx.TransportError):
+        return "error-network"
+    try:
+        from azure.core.exceptions import ClientAuthenticationError
+    except ImportError:  # pragma: no cover — azure-core is a dependency
+        ClientAuthenticationError = ()  # type: ignore[assignment]
+    if ClientAuthenticationError and isinstance(exc, ClientAuthenticationError):
+        return "error-auth"
+    return "error-apply"
+
+
 def _process_apply_asset(
     la: LoadedAsset,
     ws_name: str | None,
@@ -388,6 +455,12 @@ def _process_apply_asset(
         if monitor is not None:
             click.echo(f"  skipped (monitor mode): {la.envelope.id}")
             result = monitor
+        elif (
+            not ctx.force_overwrite
+            and getattr(la.envelope, "status", None) == "deprecated"
+            and _is_locked(la)
+        ):
+            result = _disable_locked(handler, la_resolved, dry_run=ctx.dry_run)
         else:
             result = handler.apply(la_resolved, dry_run=ctx.dry_run)
     except Exception as exc:
@@ -395,7 +468,7 @@ def _process_apply_asset(
             asset_id=la.envelope.id,
             asset_kind=la.envelope.asset.value,
             action=PlanAction.NOOP,
-            status="error-apply",
+            status=status_for_exception(exc),
             detail=str(exc),
         )
 
@@ -427,6 +500,68 @@ def _monitor_mode_result(
         status="monitor" if ctx.command == "apply" else "planned",
         detail=monitor_mode_detail(la.envelope.asset),
     )
+
+
+def _state_status(result: ActionResult) -> str:
+    if result.is_failure:
+        return "failed"
+    if result.action is PlanAction.SKIP:
+        return "skipped"
+    return "success"
+
+
+def record_results_in_state(
+    pairs: list[tuple[LoadedAsset, ActionResult]], *, sha: str,
+) -> None:
+    """Merge what a write run did into ``state/<env>/state.json``.
+
+    Every command that writes to the tenant (apply, retry-failed,
+    rollback) records its results, so the state branch the workflow
+    pushes afterwards says what is deployed. ``sha`` is the commit whose
+    content was sent (rollback: the target commit). Best-effort: the
+    tenant was already written, so a failure here only warns.
+    """
+    try:
+        from contentops.state import load_state, merge_apply_results, save_state
+        env_name = _config.load_tenant_config().name
+        state = load_state(env=env_name)
+        merge_apply_results(
+            state,
+            [(la.envelope.asset.value, la.envelope.id, _remote_name(la, r), _state_status(r))
+             for la, r in pairs],
+            sha=sha,
+        )
+        save_state(state)
+    except Exception as exc:  # noqa: BLE001 — never fail a write over state
+        click.echo(f"[warn] state file update skipped: {exc}", err=True)
+
+
+def _remote_name(la: LoadedAsset, result: ActionResult) -> str:
+    """The name the tenant knows the object by (ARM name / Graph id), so a
+    later prune can find the state entry of a file that has since gone."""
+    return str(la.envelope.arm_name or (result.extra or {}).get("arm_name") or "")
+
+
+def forget_in_state(deleted: list[tuple[str, str, str]]) -> None:
+    """Drop the entries of what a prune deleted from the state file, by
+    ``(asset kind, envelope id, tenant name)``: the entry's own id, or the
+    tenant name it recorded (an authored or suffixed file id differs from
+    the id prune derives from the tenant). Best-effort."""
+    if not deleted:
+        return
+    try:
+        from contentops.state import load_state, save_state
+        env_name = _config.load_tenant_config().name
+        state = load_state(env=env_name)
+        for asset_value, envelope_id, remote_id in deleted:
+            state.forget(asset_value, envelope_id)
+            if remote_id:
+                bucket = state.managed_assets.get(asset_value) or {}
+                for key in [k for k, e in bucket.items() if e.remote_id == remote_id]:
+                    state.forget(asset_value, key)
+        save_state(state)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"[warn] state file update skipped: {exc}", err=True)
 
 
 def ordered_for_apply(loaded: list[LoadedAsset]) -> list[LoadedAsset]:
@@ -468,7 +603,7 @@ def _run_workspace_iteration(
             if workspace is not None:
                 os.environ["PIPELINE_WORKSPACE_NAME"] = workspace.workspaceName
                 default_registry.close_all()
-                register_default_handlers()
+                register_default_handlers(detections_root=ctx.detections_path)
 
                 if len(iter_workspaces) > 1:
                     click.echo(

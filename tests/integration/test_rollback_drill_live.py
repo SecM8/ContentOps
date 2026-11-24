@@ -37,6 +37,10 @@ import yaml
 
 from contentops.core.discovery import discover_assets, load_asset
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("sentinel_analytic",)
+
 
 def _git(repo: Path, *args: str) -> str:
     """Run a git command inside ``repo`` and return stdout (stripped)."""

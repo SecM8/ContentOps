@@ -327,7 +327,7 @@ class TestLoadAssetsForRun:
 
         la_analytic = _make_loaded(asset=Asset.SENTINEL_ANALYTIC, envelope_id="rule-a")
         la_hunting = _make_loaded(asset=Asset.SENTINEL_HUNTING, envelope_id="rule-b")
-        monkeypatch.setattr(f"{_MOD}._load_all", lambda _p: [la_analytic, la_hunting])
+        monkeypatch.setattr(f"{_MOD}._load_all", lambda _p, **_kw: [la_analytic, la_hunting])
         monkeypatch.setattr(f"{_MOD}._filter_disabled_engines", lambda x: x)
 
         result = _load_assets_for_run(tmp_path, asset="sentinel_analytic", changed_since=None)
@@ -339,7 +339,7 @@ class TestLoadAssetsForRun:
 
         la1 = _make_loaded(envelope_id="rule-a")
         la2 = _make_loaded(envelope_id="rule-b")
-        monkeypatch.setattr(f"{_MOD}._load_all", lambda _p: [la1, la2])
+        monkeypatch.setattr(f"{_MOD}._load_all", lambda _p, **_kw: [la1, la2])
         monkeypatch.setattr(f"{_MOD}._filter_disabled_engines", lambda x: x)
 
         result = _load_assets_for_run(tmp_path, asset=None, changed_since=None)
@@ -350,7 +350,7 @@ class TestLoadAssetsForRun:
 
         la1 = _make_loaded(envelope_id="rule-a")
         la2 = _make_loaded(envelope_id="rule-b")
-        monkeypatch.setattr(f"{_MOD}._load_all", lambda _p: [la1, la2])
+        monkeypatch.setattr(f"{_MOD}._load_all", lambda _p, **_kw: [la1, la2])
         monkeypatch.setattr(f"{_MOD}._filter_changed_since", lambda loaded, _since: [loaded[0]])
         monkeypatch.setattr(f"{_MOD}._filter_disabled_engines", lambda x: x)
 
@@ -658,3 +658,75 @@ class TestComputeSnippetDigest:
         d1 = _compute_snippet_digest(original, resolved)
         d2 = _compute_snippet_digest(original, resolved)
         assert d1 == d2
+
+
+def test_a_disabled_rule_passes_the_lock_filter(tmp_path: Path) -> None:
+    """`contentops disable` (emergency disable) sets ``status: deprecated``
+    but keeps ``localCustomization: true``. The lock filter dropped every
+    locked file, the disable with it, so the rule kept firing while every
+    deploy reported it "skipped (locked)"."""
+    from contentops.cli.commands.apply_support import _filter_locked_loaded_assets
+
+    def loaded(rule_id: str, status: str) -> LoadedAsset:
+        path = tmp_path / f"{rule_id}.yml"
+        path.write_text(f"id: {rule_id}\nstatus: {status}\nlocalCustomization: true\n", encoding="utf-8")
+        envelope = EnvelopeV2(id=rule_id, version="0.1.0", asset=Asset.SENTINEL_ANALYTIC, status=status)
+        return LoadedAsset(path=path, envelope=envelope, payload={})
+
+    kept = _filter_locked_loaded_assets(
+        [loaded("locked-rule", "production"), loaded("disabled-rule", "deprecated")],
+        force_overwrite=False,
+    )
+    assert [la.envelope.id for la in kept] == ["disabled-rule"]
+
+
+# ---------------------------------------------------------------------------
+# An exception a handler raises keeps what kind of failure it was
+# ---------------------------------------------------------------------------
+
+
+def _http_error(code: int):
+    import httpx
+
+    request = httpx.Request("GET", "https://management.azure.com/x")
+    return httpx.HTTPStatusError("boom", request=request, response=httpx.Response(code, request=request))
+
+
+@pytest.mark.parametrize(("exc", "status"), [
+    (_http_error(403), "error-403"),
+    (_http_error(503), "error-503"),
+    (__import__("httpx").ConnectError("unreachable"), "error-network"),
+    (ValueError("condition references analytic:'x' but no file exists"), "error-apply"),
+])
+def test_an_exception_from_the_handler_keeps_its_kind(tmp_path, exc, status) -> None:
+    """The GET before a write raises on 401 / 403 / 5xx. Every exception
+    became ``error-apply``, which the deploy gate reads as a content
+    rejection, so a deploy that lost access went green."""
+    from contentops.cli.commands.apply_support import WorkspaceRunContext, _process_apply_asset
+    from contentops.core.registry import default_registry
+
+    class Raising:
+        asset = Asset.SENTINEL_HUNTING
+
+        def validate(self, loaded):
+            return None
+
+        def apply(self, loaded, *, dry_run=False):
+            raise exc
+
+    saved_f, saved_i = dict(default_registry._factories), dict(default_registry._instances)
+    default_registry._factories.clear()
+    default_registry._instances.clear()
+    default_registry.register(Asset.SENTINEL_HUNTING, lambda: Raising())
+    try:
+        ctx = WorkspaceRunContext(command="apply", detections_path=tmp_path / "detections",
+                                  audit_pairs=[])
+        _process_apply_asset(_make_loaded(asset=Asset.SENTINEL_HUNTING), None, ctx)
+    finally:
+        default_registry._factories.clear()
+        default_registry._instances.clear()
+        default_registry._factories.update(saved_f)
+        default_registry._instances.update(saved_i)
+    [result] = ctx.results
+    assert result.status == status
+    assert result.is_failure

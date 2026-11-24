@@ -338,3 +338,32 @@ def test_adopted_asset_renders_managed_on_status_page(tmp_path: Path) -> None:
     )
     assert "in-sync (adopted)" in rendered
     assert "0 unmanaged" in rendered
+
+
+def test_a_local_file_that_fails_to_load_is_named_as_such(tmp_path: Path) -> None:
+    """Adopt stops on a local file that fails to load (drift reports it), but
+    said "could not list remote", sending the operator to the tenant."""
+    _write_envelope(Path("detections"), envelope_id="rule-a",
+                    display_name="Rule A", arm_name="guid-a")
+    broken = Path("detections") / "sentinel_analytic" / "broken.yml"
+    broken.write_text("id: broken\nasset: sentinel_analytic\n", encoding="utf-8")
+    _register(_StubDriftHandler([_remote("guid-a", "Rule A")]))
+
+    result = _adopt()
+
+    assert result.exit_code != 0, result.output
+    assert "could not compare" in result.output and "broken.yml" in result.output
+    assert "could not list remote" not in result.output
+
+
+def test_adopt_resolves_references_against_its_path(tmp_path: Path, monkeypatch) -> None:
+    seen: dict = {}
+
+    def register(**kw):
+        seen.update(kw)
+
+    monkeypatch.setattr("contentops.cli.handler_factories.register_default_handlers", register)
+    _register(_StubDriftHandler([]))
+    Path("detections").mkdir(exist_ok=True)
+    _adopt()
+    assert seen.get("detections_root") == Path("detections")

@@ -17,6 +17,10 @@ import os
 
 import pytest
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS: tuple[str, ...] = ()  # reads alerts only
+
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LIVE_TESTS") != "1",
     reason="Live tests disabled (set RUN_LIVE_TESTS=1 to enable)",

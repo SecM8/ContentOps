@@ -18,6 +18,7 @@ in isolation).
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
@@ -69,14 +70,26 @@ def arm_name_suffix(arm_name: str | None) -> str:
     return cleaned[:8]
 
 
-def disambiguate(slug: str, arm_name: str | None) -> str:
-    """Return ``slug`` suffixed with ``-<arm8>`` for collision resolution.
+def arm_name_hash(arm_name: str | None) -> str:
+    """8 hex chars of the SHA-256 of the full ``arm_name`` (``""`` if none).
+
+    The suffix for names whose first 8 characters do not tell them apart
+    (``Revoke-Session-Prod`` / ``Revoke-Session-Test``)."""
+    if not arm_name:
+        return ""
+    return hashlib.sha256(arm_name.encode("utf-8")).hexdigest()[:8]
+
+
+def disambiguate(slug: str, arm_name: str | None, *, suffix: str | None = None) -> str:
+    """Return ``slug`` suffixed with ``-<arm8>`` (or ``suffix``) for
+    collision resolution.
 
     Falls back to ``slug`` unchanged if no usable arm8 can be derived
     (so the caller can pin a stable id even when the ARM name is
     pathological).
     """
-    suffix = arm_name_suffix(arm_name)
+    if suffix is None:
+        suffix = arm_name_suffix(arm_name)
     if not suffix:
         return slug
     base_max = _SLUG_MAX_LEN - len(suffix) - 1

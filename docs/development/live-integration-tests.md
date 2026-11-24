@@ -31,8 +31,11 @@ Read this before your first run:
   with `zz-itest-` (or `zz_itest_` for Graph endpoints that reject
   hyphens). The session-scope sweep in
   [`tests/integration/conftest.py`](../../tests/integration/conftest.py)
-  walks every matching resource on session exit and deletes it, so
-  even a crashed test does not leak.
+  walks every matching alert rule and saved search (parser, hunting
+  query) on session exit and deletes it, so even a crashed test does not
+  leak. `integration.yml` with `sweep-only=true` runs the same sweep on
+  its own (`test_sweep_leftovers.py`) and fails while anything is still
+  listed.
 - **Sentinel analytics are created disabled** (`enabled: false`) where
   the API permits it — they will never fire alerts even if teardown is
   interrupted.
@@ -40,15 +43,19 @@ Read this before your first run:
   run if `INTEGRATION_WORKSPACE_NAME` matches a `role: prod` workspace
   from `config/tenant.yml`; the production-workspace guard is in
   [`tests/integration/conftest.py`](../../tests/integration/conftest.py)
-  and exits with status code 2 by default. See
+  and exits with status code 2 by default. A `config/tenant.yml` that
+  exists but cannot be read also exits 2 (only a missing file skips the
+  check). See
   [Production-workspace guard](#production-workspace-guard) for the
   override and when (rarely) to use it.
-- **The kind kill switch does not apply here.** `CONTENTOPS_DISABLED_KINDS`
-  switches a kind off for collect, drift, apply, prune, rollback and
-  retry-failed. The live tests build their own clients and touch only
-  their own `zz-itest-` / `zz_itest_` objects, so they run whatever the
-  switch says: the Defender shape probe is how you find out why a kind
-  had to be switched off.
+- **The kind kill switch applies here too.** Each test module declares
+  the kinds it writes (`LIVE_KINDS`), and a test whose kind
+  `CONTENTOPS_DISABLED_KINDS` lists is skipped with the reason. To run it
+  anyway, for example the Defender shape probe to find out why Defender
+  had to be switched off, start `integration.yml` with
+  `ignore-kill-switch` (locally: `CONTENTOPS_LIVE_IGNORE_KILL_SWITCH=1`).
+  A new live test module must declare `LIVE_KINDS`; a unit test checks
+  that, and an undeclared module counts as writing every kind.
 
 ---
 

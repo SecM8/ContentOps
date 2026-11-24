@@ -41,6 +41,7 @@ from contentops.cli.commands.apply_support import (
     _print_against_tenant_summary,
     _resolve_workspaces_for_run,
     _run_workspace_iteration,
+    record_results_in_state,
 )
 from contentops.core.asset import Asset
 from contentops.core.result import ActionResult, PlanAction
@@ -167,7 +168,7 @@ def plan_cmd(
     if cfg is not None and workspaces:
         os.environ["PIPELINE_WORKSPACE_NAME"] = workspaces[0].workspaceName
 
-    register_default_handlers()
+    register_default_handlers(detections_root=detections_path)
     loaded, inventory = _load_assets_and_inventory_for_run(
         detections_path,
         asset=asset,
@@ -345,7 +346,7 @@ def apply_cmd(
     elif _apply_integration_no_workspace_skip(role):
         return
 
-    register_default_handlers()
+    register_default_handlers(detections_root=detections_path)
     _print_run_banner(
         "apply",
         detections_path,
@@ -380,6 +381,7 @@ def apply_cmd(
         detections_path=detections_path,
         dry_run=dry_run,
         audit_pairs=[],
+        force_overwrite=force_overwrite,
     )
     _run_workspace_iteration(
         loaded,
@@ -446,29 +448,10 @@ def apply_cmd(
         # State file: record what we just applied so drift / prune can
         # distinguish "intentionally deleted" from "never managed".
         # See DESIGN §13.
-        try:
-            from contentops.config import load_tenant_config
-            from contentops.state import load_state, merge_apply_results, save_state
-            cfg = load_tenant_config()
-            env_name = cfg.name
-            state = load_state(env=env_name)
-            sha = _resolve_sha(Path.cwd())
-            state_inputs = []
-            for la, r, _ws_name, _digest in audit_pairs:
-                if r.is_failure:
-                    status = "failed"
-                elif r.action is PlanAction.SKIP:
-                    status = "skipped"
-                else:
-                    status = "success"
-                state_inputs.append(
-                    (la.envelope.asset.value, la.envelope.id, "", status)
-                )
-            merge_apply_results(state, state_inputs, sha=sha)
-            save_state(state)
-        except Exception as exc:
-            # State file is best-effort; never fail apply because of it.
-            click.echo(f"[warn] state file update skipped: {exc}", err=True)
+        record_results_in_state(
+            [(la, r) for la, r, _ws_name, _digest in audit_pairs],
+            sha=_resolve_sha(Path.cwd()),
+        )
 
         # --push-state (P3-2): after a successful apply + state-file save,
         # optionally push the per-env state ref. Off by default; CI's

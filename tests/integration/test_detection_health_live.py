@@ -15,6 +15,10 @@ from pathlib import Path
 
 import pytest
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS: tuple[str, ...] = ()  # read-only
+
 pytestmark = pytest.mark.skipif(
     not os.getenv("RUN_LIVE_TESTS"),
     reason="Live test — set RUN_LIVE_TESTS=1 to run",

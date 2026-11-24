@@ -185,6 +185,21 @@ def test_to_json_is_parseable_and_contains_expected_keys() -> None:
     assert "results" in parsed
 
 
+def test_each_row_keeps_the_handlers_status() -> None:
+    """The row's ``status`` buckets (failed / success / skipped); the deploy
+    gate also needs the handler's own status to tell a content rejection
+    (``error-400``) from an outage (``error-503``, ``error-401``)."""
+    la = _loaded("rule-a")
+    rep = ar.build_report(
+        tenant="t", started_at=datetime(2026, 5, 7, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 7, tzinfo=timezone.utc), sha="x", actor="me",
+        workflow_run=None, dry_run=False, pairs=[(la, _failure(la, "error-503"))],
+    )
+    [row] = json.loads(ar.to_json(rep))["results"]
+    assert row["status"] == "failed"
+    assert row["result_status"] == "error-503"
+
+
 def test_write_report_creates_file(tmp_path: Path) -> None:
     rep = ar.build_report(
         tenant="t",

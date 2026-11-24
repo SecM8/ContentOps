@@ -14,6 +14,11 @@ import time
 import pytest
 
 from tests.integration.conftest import RESOURCE_PREFIX_UNDERSCORE
+from tests.integration.defender_shape_probe import QUERY
+
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("defender_custom_detection",)
 
 # Graph acknowledges PATCH / DELETE with 2xx before its read path catches
 # up; a GET issued straight after can return the pre-write body or the
@@ -43,42 +48,31 @@ def _display_name(integration_id: str) -> str:
 
 
 def _detection_body(display_name: str) -> dict:
-    """Minimal valid Defender custom detection payload (Graph beta).
-
-    impactedAssets must be non-empty — the API rejects with InvalidInput
-    "At least one of impactedAssets or entityMappings must be provided."
-    The DeviceId column from DeviceProcessEvents satisfies the
-    impactedDeviceAsset type.
+    """A test rule that cannot raise an alert: created disabled (``status``,
+    the property Graph uses; it dropped ``isEnabled``), with the shape
+    probe's query, which returns no row, in the current Graph shape.
+    ``entityMappings`` must not be empty: Graph refuses a rule with none.
     """
     return {
         "displayName": display_name,
-        "isEnabled": False,
-        "queryCondition": {
-            "queryText": "DeviceProcessEvents | take 1",
-        },
-        "schedule": {"period": "1H"},
+        "status": "disabled",
+        "queryCondition": {"queryText": QUERY},
+        "schedule": {"frequency": "PT1H", "lookback": "PT4H"},
         "detectionAction": {
             "alertTemplate": {
                 "title": display_name,
                 "description": "integration test — safe to delete",
                 "severity": "informational",
-                "category": "SuspiciousActivity",
                 "recommendedActions": "none",
-                "mitreTechniques": [],
-                "impactedAssets": [
-                    {
-                        "@odata.type": "#microsoft.graph.security.impactedDeviceAsset",
-                        "identifier": "deviceId",
-                    },
-                ],
+                "tactics": [],
+                "entityMappings": {"hosts": [{"deviceIdColumn": "DeviceId"}]},
             },
-            "organizationalScope": None,
-            "responseActions": [],
         },
     }
 
 
-def test_defender_custom_detection_full_crud(defender_client, integration_id, created_defender_rules):
+def test_defender_custom_detection_full_crud(confirmed_defender_client, integration_id, created_defender_rules):
+    defender_client = confirmed_defender_client
     name = _display_name(integration_id)
 
     # CREATE

@@ -423,6 +423,41 @@ class SentinelAnalyticHandler:
             verified=True,
         )
 
+    def disable_in_place(self, loaded: LoadedAsset) -> ActionResult:
+        """Switch the tenant's rule off as it is (a locked rule set to
+        deprecated): its query and settings, tuned in the portal, go back
+        unchanged; only ``enabled`` changes."""
+        from contentops.handlers._disable_in_place import disable_existing
+
+        provider = self._provider_or_create()
+        if provider is None:
+            raise RuntimeError("sentinel_analytic disable_in_place requires a SentinelArmProvider")
+        remote_id = loaded.envelope.arm_name or loaded.envelope.id
+
+        def switch_off(existing: dict):
+            kind = existing.get("kind") or "Scheduled"
+            props = {k: v for k, v in (existing.get("properties") or {}).items()
+                     if k != "lastModifiedUtc"}
+            if kind == "Fusion":
+                props = {k: v for k, v in props.items() if k in _FUSION_BODY_ALLOWLIST}
+            elif kind == "MLBehaviorAnalytics":
+                props = {k: v for k, v in props.items() if k in _MLBA_BODY_ALLOWLIST}
+            props["enabled"] = False
+            return provider.put_resource(
+                self._RESOURCE, remote_id, {"kind": kind, "properties": props},
+                etag=extract_etag(existing),
+            )
+
+        result = disable_existing(
+            asset_kind=self.asset.value, envelope_id=loaded.envelope.id,
+            existing=provider.get_resource(self._RESOURCE, remote_id),
+            is_off=lambda obj: (obj.get("properties") or {}).get("enabled") is False,
+            switch_off=switch_off,
+            read_back=lambda: provider.get_resource(self._RESOURCE, remote_id),
+        )
+        click.echo(f"  {result.action.value}: {loaded.envelope.id} ({result.detail})")
+        return result
+
     def close(self) -> None:
         if self._provider is not None:
             self._provider.close()

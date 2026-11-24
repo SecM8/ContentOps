@@ -63,8 +63,13 @@ permissions:
   # audit artefact.
   actions: read
 
+# One queue for every workflow that pushes the tenant state (deploy, retry-failed,
+# rollback, prune, state-adopt), whatever the env input: the state branch is
+# named after tenant.yml's name, so with a single tenant.yml an env=integration
+# run pushes the same branch as a prod deploy. Behind the queue, state sync push
+# refuses a stale push. GitHub keeps one pending run per group: dispatch one at a time.
 concurrency:
-  group: ${{ inputs.env == 'prod' && 'deploy-prod' || format('retry-failed-{0}', inputs.env) }}
+  group: deploy-prod
   cancel-in-progress: false
 
 jobs:
@@ -97,6 +102,13 @@ jobs:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
+      - name: Refuse a re-run of an older commit
+        # A re-run re-applies its own run's files over everything merged
+        # since.
+        uses: ./.github/actions/refuse-stale-rerun
+        with:
+          run-kind: retry
+
       - name: Pipeline setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml.
         # PIPELINE_ENV is exported on the job env above; the
@@ -112,15 +124,12 @@ jobs:
           role: ${{ inputs.env }}
 
       - name: Pull state before retry
-        # Best-effort: an empty / missing state/<env> ref means the
-        # retry starts from local empty state. retry-failed reads
-        # audit/*.jsonl for the (asset, id) pairs to re-apply, not
-        # state, so an empty pull doesn't change behaviour -- but
-        # any post-retry push still wants the latest baseline.
+        # retry-failed reads the (asset, id) pairs to re-apply from the
+        # audit trail, then records its results in this state file, which
+        # the push below lands on the state branch. No state branch yet is
+        # fine; any other pull failure stops the run before it writes.
         run: |
-          contentops state sync pull || {
-            echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
-          }
+          contentops state sync pull
 
       - name: Fetch the deploy audit trail
         # The audit trail is not committed; deploy.yml uploads it as the

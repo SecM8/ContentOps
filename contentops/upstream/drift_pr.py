@@ -37,6 +37,9 @@ class DriftEntrySummary:
     asset: str
     id: str
     kind: str  # "new" or "changed"
+    # Changed entries whose file changed in git after the rule was last
+    # deployed (``contentops.undeployed.changed_since_last_deploy``).
+    undeployed: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,7 @@ def parse_report(raw: dict) -> DriftReportSummary:
             asset=str(e.get("asset") or ""),
             id=str(e.get("id") or ""),
             kind=str(e.get("kind") or ""),
+            undeployed=bool(e.get("undeployed")),
         )
         for e in raw.get("entries") or []
     ]
@@ -182,6 +186,25 @@ def render_pr_body(
         lines.append("| Asset | ID |")
         lines.append("| --- | --- |")
         for e in sorted(rows, key=lambda r: (r.asset, r.id)):
+            lines.append(f"| `{e.asset}` | `{e.id}` |")
+        lines.append("")
+
+    undeployed = [e for e in changed if e.undeployed]
+    if undeployed:
+        lines.append(f"### ⚠️ Changed in the repository after the last deploy ({len(undeployed)})")
+        lines.append(
+            "These files changed in `main` after their rule was last deployed. "
+            "The tenant may simply not have that merge yet (a repository that "
+            "deploys by hand). If so, merging this PR would undo the merge: "
+            "leave these files out, run **Deploy to production** on `main` with "
+            "`changed_since` set to the commit before that merge (empty "
+            "re-applies every detection), and let the next drift run confirm "
+            "them in sync. After a rollback, the tenant holds the rolled-back "
+            "version on purpose: revert the change in git instead of deploying."
+        )
+        lines.append("| Asset | ID |")
+        lines.append("| --- | --- |")
+        for e in sorted(undeployed, key=lambda r: (r.asset, r.id)):
             lines.append(f"| `{e.asset}` | `{e.id}` |")
         lines.append("")
 

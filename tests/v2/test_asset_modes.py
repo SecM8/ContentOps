@@ -485,7 +485,7 @@ def test_apply_order_integration_via_cli(tmp_path: Path, monkeypatch) -> None:
     handlers = {k: _Seq(k) for k in (Asset.SENTINEL_AUTOMATION_RULE, Asset.SENTINEL_ANALYTIC, Asset.SENTINEL_PLAYBOOK)}
     import contentops.cli.handler_factories as hf
 
-    def fake_register() -> None:
+    def fake_register(**_kw) -> None:
         for k, h in handlers.items():
             if not default_registry.has(k):
                 default_registry.register(k, lambda h=h: h)

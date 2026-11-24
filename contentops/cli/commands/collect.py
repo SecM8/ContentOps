@@ -11,6 +11,8 @@ enrich/rename/clean/since helpers) live in :mod:`collect_support`, which
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import sys
 import time
 from pathlib import Path
@@ -182,11 +184,11 @@ def collect_cmd(
         return
     _resolve_collect_workspace_or_exit(role, workspace_name)
 
-    register_default_handlers()
+    register_default_handlers(detections_root=detections_path)
     target_asset = Asset(asset) if asset else None
 
     if adopt_names:
-        _adopt_playbooks_or_exit(target_asset, adopt_names)
+        _adopt_playbooks_or_exit(target_asset, adopt_names, role=role, workspace_name=workspace_name)
 
     detections_path.mkdir(parents=True, exist_ok=True)
 
@@ -276,8 +278,26 @@ def collect_cmd(
         sys.exit(2)
 
 
-def _adopt_playbooks_or_exit(target_asset: Asset | None, names: tuple[str, ...]) -> None:
-    """``--adopt``: tag the named Logic Apps as managed before listing."""
+def _adopt_playbooks_or_exit(
+    target_asset: Asset | None,
+    names: tuple[str, ...],
+    *,
+    role: str | None = None,
+    workspace_name: str | None = None,
+) -> None:
+    """``--adopt``: tag the named Logic Apps as managed before listing.
+
+    The only write ``collect`` makes, so it takes the same gates as apply:
+    the kind must be registered (not switched off) and the target
+    workspace must have ``writeAllowed``. Each tag change is written to the
+    audit trail.
+    """
+    from contentops.audit.writer import write_records
+    from contentops.cli.commands.apply_support import (
+        _check_apply_write_allowed_or_exit,
+        _resolve_workspaces_for_run,
+    )
+    from contentops.cli.commands.lifecycle_support import _build_lifecycle_audit_record
     from contentops.core.registry import default_registry
 
     if target_asset is not Asset.SENTINEL_PLAYBOOK:
@@ -293,6 +313,13 @@ def _adopt_playbooks_or_exit(target_asset: Asset | None, names: tuple[str, ...])
             err=True,
         )
         sys.exit(2)
+    # The workspace collect resolved for this run (``--workspace``, or the
+    # one ``_resolve_collect_workspace_or_exit`` picked for ``--role``).
+    target = workspace_name or os.environ.get("PIPELINE_WORKSPACE_NAME") or None
+    cfg, workspaces = _resolve_workspaces_for_run(None if target else role, target)
+    _check_apply_write_allowed_or_exit(
+        cfg, workspaces, asset=Asset.SENTINEL_PLAYBOOK.value, dry_run=False,
+    )
     handler = default_registry.get(Asset.SENTINEL_PLAYBOOK)
     for name in names:
         try:
@@ -300,9 +327,15 @@ def _adopt_playbooks_or_exit(target_asset: Asset | None, names: tuple[str, ...])
         except Exception as exc:  # noqa: BLE001 — surfaced to the operator
             click.echo(f"error: adopt {name!r} failed: {exc}", err=True)
             sys.exit(2)
-        click.echo(
-            f"  [--adopt] tagged Logic App {remote.get('name', name)!r} as contentops-managed"
+        tagged = str(remote.get("name") or name)
+        record = _build_lifecycle_audit_record(
+            "adopt", tagged, Asset.SENTINEL_PLAYBOOK.value,
+            message="collect --adopt: tagged the Logic App as contentops-managed",
         )
+        if record.workspace is None and len(workspaces) == 1:
+            record = dataclasses.replace(record, workspace=workspaces[0].workspaceName)
+        path = write_records(Path.cwd(), [record])
+        click.echo(f"  [--adopt] tagged Logic App {tagged!r} as contentops-managed (audit: {path})")
 
 
 @click.command("clean")

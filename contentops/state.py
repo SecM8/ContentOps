@@ -220,8 +220,10 @@ def save_state(state: EnvState, *, root: Path | None = None) -> Path:
     # rename each other's half-written file into place.
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, indent=2, sort_keys=True))
+        # The same bytes on every platform (LF, one trailing newline): the
+        # state branch stores them, and `state sync pull` writes them back.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         # mkstemp creates the file owner-only; keep the mode a plain write gave.
         os.chmod(tmp_name, 0o644)
         os.replace(tmp_name, path)

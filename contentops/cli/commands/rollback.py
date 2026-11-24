@@ -30,11 +30,14 @@ from contentops.cli.commands.apply_support import (
     _filter_loaded_by_env_status,
     _process_apply_asset,
     _process_plan_asset,
+    ordered_for_apply,
+    record_results_in_state,
 )
 import contentops.config as _config
 from contentops.config import SentinelWorkspaceConfig, TenantConfig
 from contentops.core.asset import Asset
 from contentops.core.discovery import iter_loaded_assets
+from contentops.core.drift import local_load_errors
 from contentops.core.handler import LoadedAsset
 from contentops.core.registry import default_registry
 from contentops.core.result import ActionResult
@@ -181,8 +184,6 @@ def rollback_cmd(
         workspaces[0].workspaceName if len(workspaces) == 1
         else os.environ.get("PIPELINE_WORKSPACE_NAME")
     )
-    register_default_handlers()
-
     try:
         full_sha = resolve_sha(sha)
     except RollbackError as exc:
@@ -216,17 +217,29 @@ def rollback_cmd(
             )
             sys.exit(1)
 
-        loaded = _load_all(rollback_root)
+        # Handlers resolve references (`analytic:`, `playbook:`) against the
+        # tree being rolled back to, which may hold objects deleted since.
+        register_default_handlers(detections_root=rollback_root)
+        # A full rollback stops on a file that fails to load (it would be
+        # left out silently). A --rule-id rollback is an incident action on
+        # one rule: other files that no longer load are reported, not fatal.
+        loaded = _load_all(rollback_root, strict=not rule_id)
         if asset:
             target = Asset(asset)
             loaded = [la for la in loaded if la.envelope.asset == target]
         if rule_id:
             loaded = [la for la in loaded if la.envelope.id == rule_id]
             if not loaded:
+                load_errors = local_load_errors(rollback_root)
                 click.echo(
                     f"error: rule_id {rule_id!r} not found at SHA "
                     f"{full_sha[:12]}"
-                    + (f" (asset={asset})" if asset else ""),
+                    + (f" (asset={asset})" if asset else "")
+                    + (
+                        f"; {len(load_errors)} file(s) at that SHA failed to "
+                        "load (above) and may hold it"
+                        if load_errors else ""
+                    ),
                     err=True,
                 )
                 sys.exit(1)
@@ -236,6 +249,8 @@ def rollback_cmd(
         if not loaded:
             click.echo("No assets to rollback.")
             return
+        # Apply's order: playbooks before the automation rules that run them.
+        loaded = ordered_for_apply(loaded)
 
         # Filter locked envelopes — rollback honours the lock by default,
         # read from the current checkout (a lock added after SHA counts).
@@ -337,6 +352,11 @@ def rollback_cmd(
                 records.append(replace(base, message=new_message))
             path = write_records(Path.cwd(), records)
             click.echo(f"[audit] wrote {len(records)} rollback records to {path}")
+            # The state branch the workflow pushes next records the
+            # rolled-back content (its commit), as apply records its own.
+            record_results_in_state(
+                [(la, r) for la, r, _ws, _digest in audit_pairs], sha=full_sha,
+            )
 
         failed = [r for r in results if r.is_failure]
         if failed:

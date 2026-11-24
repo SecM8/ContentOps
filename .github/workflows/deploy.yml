@@ -36,12 +36,8 @@ permissions:
   # next runner starts from the last successful production state.
   contents: write
 
-# Serialise prod deploys — two simultaneous merges into main must not
-# race against the same Sentinel workspace. cancel-in-progress: false so
-# the *first* deploy completes; the next one queues.
-concurrency:
-  group: deploy-prod
-  cancel-in-progress: false
+# Prod deploys are serialised on the deploy job below (group deploy-prod),
+# not on the whole workflow: see the comment there.
 
 jobs:
   # Safety gate: skip the deploy when the push that triggered the
@@ -143,6 +139,17 @@ jobs:
     # Environment, this `environment:` field, and the federated credential
     # subject) or OIDC token exchange fails with AADSTS700213.
     environment: production
+    # Serialise prod deploys — two simultaneous merges into main must not
+    # race against the same Sentinel workspace, and every workflow that
+    # pushes the state branch queues here too. cancel-in-progress: false so
+    # the running deploy completes. GitHub keeps one PENDING run per group:
+    # a newer queued run cancels the one still waiting. The group is on this
+    # job, not the workflow, so such a run still starts and notify-failure
+    # reports the cancelled push deploy (it diffs only its own push, so its
+    # changes are not deployed by the next one).
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
     steps:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -153,26 +160,9 @@ jobs:
         # newer merge. A first attempt always proceeds: queued behind
         # another push it must still deploy its own change. Runs before
         # the Azure login, so a refused run touches nothing.
-        env:
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_SHA: ${{ github.sha }}
-          BRANCH_REF: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-          if [ "${RUN_ATTEMPT:-1}" -le 1 ]; then
-            exit 0
-          fi
-          if ! REMOTE="$(git ls-remote --exit-code origin "$BRANCH_REF")"; then
-            echo "::error::Could not read the head of $BRANCH_REF. Nothing was applied."
-            exit 1
-          fi
-          HEAD_SHA="${REMOTE%%[[:space:]]*}"
-          if [ "$HEAD_SHA" != "$RUN_SHA" ]; then
-            echo "::error::This is re-run attempt $RUN_ATTEMPT of a deploy of $RUN_SHA, but $BRANCH_REF is now at $HEAD_SHA. Nothing was applied."
-            echo "Re-running would put this older commit's content back over the changes merged since. Start a new run instead."
-            exit 1
-          fi
-          echo "Re-run attempt $RUN_ATTEMPT: $RUN_SHA is still the head of $BRANCH_REF; proceeding."
+        uses: ./.github/actions/refuse-stale-rerun
+        with:
+          run-kind: deploy
 
       - name: Pipeline setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml.
@@ -192,9 +182,10 @@ jobs:
       - name: Pull durable state
         run: |
           set -euo pipefail
-          contentops state sync pull || {
-            echo "::notice::No remote state branch yet; starting from empty local state."
-          }
+          # No state branch yet is not an error (a first deploy starts
+          # from empty state). Any other pull failure stops the run here,
+          # before anything is applied.
+          contentops state sync pull
 
       - name: Apply changed detections to prod workspace(s)
         # --role prod targets every workspace tagged role=prod in
@@ -225,7 +216,8 @@ jobs:
           # content-fit 400) must not block the rest of the deploy. The
           # apply exit code is suppressed so the good rules still land;
           # per-rule failures are recorded in apply-report.json and the
-          # post-deploy smoke step turns them into warnings (see below).
+          # post-deploy smoke step decides: a content rejection is a
+          # warning, an access / server error fails the job (see below).
           if [ -n "$INPUT_WORKSPACE" ]; then
             ARGS=( "--workspace" "$INPUT_WORKSPACE" "--skip-deps-check" "--continue-on-error" )
           else
@@ -299,10 +291,13 @@ jobs:
         # assets are healthy on the remote. Handlers already do an inline
         # apply-verify (PUT → GET → content-hash compare) so the
         # ``verified`` boolean in apply-report.json is the load-bearing
-        # signal. This step turns it into a workflow gate: any failed or
-        # un-verified item fails the job and surfaces the IDs in the step
-        # summary. We also re-verify the audit chain integrity to catch
-        # the (rare) case where a crash mid-batch left a chain break.
+        # signal. This step turns it into a workflow gate and lists the
+        # IDs in the step summary: an un-verified item, an access /
+        # throttling / server error, or a deploy in which every write
+        # failed fails the job; a content rejection of one rule is a
+        # warning (see the script). We also re-verify the audit chain
+        # integrity to catch the (rare) case where a crash mid-batch
+        # left a chain break.
         #
         # ``dry-run`` deploys skip this — there's nothing to verify.
         # ``inputs.dry_run`` is a real boolean (unlike the string-typed
@@ -351,10 +346,37 @@ jobs:
               (step_summary.read_text() if step_summary.exists() else "")
               + "\n".join(summary_lines) + "\n"
           )
+          # A rule the tenant rejects for its content (a 4xx such as 400 /
+          # 404 / 409 / 412, or a local validation error) is tolerated: the
+          # rule is skipped, the rest of the deploy stands, and a warning
+          # keeps the green run from being silent. Lost access, throttling,
+          # server and network errors (401 / 403 / 407 / 429 / 5xx, on the
+          # write or the read before it; error-network / error-auth) are no
+          # content problem and fail the deploy, as does a deploy of more
+          # than one rule in which every rule failed: nothing reached the
+          # tenant. Rules are counted once across workspaces.
+          def systemic(row):
+              code = str(row.get("result_status") or "")
+              return (code in ("error-401", "error-403", "error-407", "error-429",
+                               "error-network", "error-auth")
+                      or code.startswith("error-5"))
+          def rule(row):
+              return (row.get("asset"), row.get("id"))
+          written = {rule(r) for r in results if r.get("status") in ("success", "failed")}
+          landed = {rule(r) for r in results if r.get("status") == "success"}
+          failed_rows = [r for r in results if r.get("status") == "failed"]
+          outage = {rule(r) for r in failed_rows if systemic(r)}
+          if outage:
+              print(
+                  f"::error::{len(outage)} rule(s) failed with an access, throttling, "
+                  "server or network error (see the items above). That is not a "
+                  "content problem; fix it and deploy again."
+              )
+              sys.exit(1)
+          if len(written) > 1 and not landed:
+              print(f"::error::Every one of the {len(written)} rules failed; nothing was deployed.")
+              sys.exit(1)
           if failed:
-              # Content-fit rejections (e.g. a 400 from the tenant) are
-              # tolerated: the rule is skipped, the rest of the deploy stands.
-              # Surfaced as a warning so a green run is not silent.
               print(
                   f"::warning::{failed} rule(s) failed to apply and were skipped "
                   "(tolerated; see apply-report.json + the items above). "
@@ -461,7 +483,9 @@ jobs:
   # token. It runs no repository code beyond the local composite action.
   notify-failure:
     needs: deploy
-    if: ${{ always() && github.event_name == 'push' && needs.deploy.result == 'failure' }}
+    # 'cancelled' too: a push deploy cancelled while it waited in the
+    # deploy-prod queue never deploys its changes.
+    if: ${{ always() && github.event_name == 'push' && (needs.deploy.result == 'failure' || needs.deploy.result == 'cancelled') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

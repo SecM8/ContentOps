@@ -346,6 +346,47 @@ def test_a_plain_fetch_of_the_state_branch_does_not_move_the_lease(tmp_path: Pat
     assert _remote_state(remote) == {"v": 2}
 
 
+def test_pull_raises_when_the_remote_cannot_be_read(tmp_path: Path) -> None:
+    """Only a missing state branch means "no state yet". Any other fetch
+    failure (auth, network, bad remote) used to read as empty state too, so
+    a deploy went on to write the tenant and only failed at the push."""
+    _remote, _a, b = _two_runners(tmp_path)
+    _git(b, "remote", "set-url", "origin", str(tmp_path / "unreachable.git"))
+    with pytest.raises(StateSyncError, match="could not fetch"):
+        pull("production", b / "state" / "production" / "state.json", repo=b)
+
+
+def test_cli_pull_exits_1_when_the_remote_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from click.testing import CliRunner
+
+    from contentops.cli import cli
+
+    _remote, _a, b = _two_runners(tmp_path)
+    _git(b, "remote", "set-url", "origin", str(tmp_path / "unreachable.git"))
+    monkeypatch.chdir(b)
+    result = CliRunner().invoke(cli, ["state", "sync", "pull", "--env", "production"])
+    assert result.exit_code == 1, result.output
+
+
+def test_a_pulled_state_file_is_in_sync_with_the_branch(tmp_path: Path) -> None:
+    """``save_state`` wrote no trailing newline and ``pull`` added one, so a
+    file pulled and left alone showed as diverged in ``state sync status``."""
+    from contentops.state import EnvState, save_state, state_path
+
+    remote, a, b = _two_runners(tmp_path)
+    state = EnvState(env="production")
+    state.remember("sentinel_analytic", "rule-a", sha="abc")
+    save_state(state, root=a)
+    assert push("production", state_path("production", root=a), repo=a).pushed_remote
+
+    pulled = b / "state" / "production" / "state.json"
+    pull("production", pulled, repo=b)
+    assert status("production", pulled, repo=b).in_sync
+    assert pulled.read_bytes() == state_path("production", root=a).read_bytes()
+
+
 def test_cli_push_stale_exits_1_and_force_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
 
@@ -390,3 +431,25 @@ def test_cli_push_exits_non_zero_when_remote_push_fails(
         cli, ["state", "sync", "push", "--env", "production", "--no-push"],
     )
     assert ok.exit_code == 0, ok.output
+
+
+def test_git_runs_with_english_messages(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``pull`` tells a missing state branch (first run) from a real failure
+    by git's message "couldn't find remote ref". A git that prints another
+    language turned every first run into an error, so state_sync runs git
+    with the C locale."""
+    import subprocess as sp
+
+    import contentops.state_sync as ss
+
+    seen: list[dict] = []
+    real_run = sp.run
+
+    def spy(*args, **kwargs):
+        seen.append(dict(kwargs.get("env") or {}))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setenv("LANGUAGE", "de")
+    monkeypatch.setattr(ss.subprocess, "run", spy)
+    pull("never-pushed", repo / "state.json", repo=repo, fetch_remote=False)
+    assert seen and all(env.get("LC_ALL") == "C" and env.get("LANGUAGE") == "C" for env in seen)

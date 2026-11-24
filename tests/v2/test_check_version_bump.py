@@ -131,3 +131,26 @@ def test_a_changed_sidecar_without_a_bump_fails(
     monkeypatch.chdir(_playbook_repo(tmp_path, envelope_name, "pb-one.workflow.json"))
     assert cvb.main("main") == 1
     assert f"sentinel_playbook/{envelope_name}" in capsys.readouterr().err
+
+
+def test_a_renamed_envelope_with_a_content_change_still_needs_a_bump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--name-only`` lists only the new path of a renamed file; the old one
+    had no base version, so a rename plus a query edit passed as a new file."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "test")
+    _git(tmp_path, "config", "commit.gpgsign", "false")
+    folder = tmp_path / "detections" / "sentinel_analytic"
+    folder.mkdir(parents=True)
+    (folder / "old-name.yml").write_text(_BASE, encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    _git(tmp_path, "switch", "-q", "-c", "change")
+    _git(tmp_path, "mv", "detections/sentinel_analytic/old-name.yml", "detections/sentinel_analytic/new-name.yml")
+    (folder / "new-name.yml").write_text(_BASE.replace("take 1", "take 2"), encoding="utf-8")
+    _git(tmp_path, "commit", "-q", "-am", "rename and edit")
+    monkeypatch.chdir(tmp_path)
+    assert cvb.main("main") == 1
+    assert "new-name.yml" in capsys.readouterr().err

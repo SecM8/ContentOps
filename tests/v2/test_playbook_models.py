@@ -157,10 +157,17 @@ def test_is_managed_workflow_by_tag() -> None:
     assert not is_managed_workflow({})
 
 
+_MSI = {"authentication": {"type": "ManagedServiceIdentity"}}
+
+
 def test_connections_from_remote_round_trips_defaults() -> None:
+    # A managed-identity connection is read back with its connectionProperties
+    # (seen on real Logic Apps); deploy writes the same block.
     remote = {"name": "pb", "properties": {"parameters": {"$connections": {"value": {
-        "azuresentinel": {"connectionId": "/c", "connectionName": "pb-azuresentinel", "id": "/x/managedApis/azuresentinel"},
-        "logs": {"connectionId": "/c2", "connectionName": "custom-name", "id": "/x/managedApis/azuremonitorlogs"},
+        "azuresentinel": {"connectionId": "/c", "connectionName": "pb-azuresentinel",
+                          "id": "/x/managedApis/azuresentinel", "connectionProperties": _MSI},
+        "logs": {"connectionId": "/c2", "connectionName": "custom-name",
+                 "id": "/x/managedApis/azuremonitorlogs", "connectionProperties": _MSI},
     }}}}}
     assert connections_from_remote(remote) == [
         {"name": "azuresentinel"},
@@ -168,6 +175,27 @@ def test_connections_from_remote_round_trips_defaults() -> None:
     ]
     assert connections_from_remote({"name": "pb", "properties": {}}) == []
     assert connections_from_remote({"name": "pb", "properties": {"parameters": {"$connections": {"value": {"x": "bad"}}}}}) is None
+
+
+@pytest.mark.parametrize(
+    "props",
+    [None, {}, {"authentication": {"type": "Raw"}}, {"authentication": {}}],
+    ids=["no-block", "empty", "other-type", "no-type"],
+)
+def test_connections_from_remote_refuses_a_connection_not_proven_managed_identity(props) -> None:
+    """An OAuth or key connection carries no managed-identity block. It was
+    imported as a managed-identity declaration, so the next apply would PUT
+    the connection with managed-identity settings and break its sign-in.
+    The docstring already promised None for this case."""
+    msi = {"connectionId": "/c", "connectionName": "pb-azuresentinel",
+           "id": "/x/managedApis/azuresentinel", "connectionProperties": _MSI}
+    other = {"connectionId": "/c2", "connectionName": "pb-office365", "id": "/x/managedApis/office365"}
+    if props is not None:
+        other["connectionProperties"] = props
+    remote = {"name": "pb", "properties": {"parameters": {"$connections": {"value": {
+        "azuresentinel": msi, "office365": other,
+    }}}}}
+    assert connections_from_remote(remote) is None
 
 
 def test_split_sidecars_moves_definition_to_stable_json() -> None:

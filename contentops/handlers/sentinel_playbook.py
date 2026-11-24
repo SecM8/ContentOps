@@ -25,11 +25,11 @@ outside ContentOps are invisible to drift and prune until an operator
 adopts them (``contentops collect --asset sentinel_playbook --adopt
 <name>``), which stamps the tag.
 
-Verification is structural (``_playbook_projection``): Logic Apps
-normalises definitions heavily on PUT, so ``verified=True`` means "the
-deployed workflow has the same triggers / actions / action types /
-connections / identity / state we sent", not byte equality — changes
-inside an action's ``inputs`` are not detected.
+Verification (``_playbook_projection``) compares triggers, actions,
+connections, identity, state and the whole definition, action inputs
+included: checked against a tenant, a definition comes back exactly as
+it was sent. Lists are compared as sets and resource ids
+case-insensitively (``canonical_for_verify``).
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from contentops.core.handler import LoadedAsset
 from contentops.core.result import ActionResult, PlanAction
 from contentops.handlers._verify import (
     ETAG_CONFLICT_MESSAGE,
+    canonical_for_verify,
     compute_projection_hash,
     extract_etag,
     hash_mismatch_error,
@@ -82,6 +83,9 @@ _SERVER_PROPERTY_FIELDS = (
     "integrationServiceEnvironment", "integrationAccount",
 )
 _SERVER_IDENTITY_FIELDS = ("principalId", "tenantId")
+# Workflow properties a file does not manage; apply sends the tenant's own
+# value back so a full PUT does not remove them.
+_TENANT_KEPT_PROPERTIES = ("accessControl", "integrationAccount")
 
 
 def _strip_server_fields(remote: dict) -> dict:
@@ -130,6 +134,10 @@ def _playbook_projection(body: dict) -> dict:
         "actionNames": sorted(str(k) for k in actions.keys()),
         "actionTypes": _action_types(actions),
         "connectionApis": _connection_apis(conns),
+        # The whole definition, trigger configuration and action inputs
+        # included: a Logic App's definition comes back as it was sent
+        # (checked against a tenant, Sentinel-trigger playbooks included).
+        "definition": canonical_for_verify(definition),
     }
 
 
@@ -208,10 +216,12 @@ class SentinelPlaybookHandler:
                 detail="experimental status — skipped",
             )
         if loaded.envelope.status == "deprecated":
+            # Switched off (``contentops disable`` sets this status); the
+            # Logic App stays, deleting it is ``prune``'s job.
             return ActionResult(
                 asset_id=loaded.envelope.id, asset_kind=self.asset.value,
-                action=PlanAction.SKIP, status="planned",
-                detail="deprecated playbooks are not deleted by deploy; use `prune`",
+                action=PlanAction.DISABLE, status="planned",
+                detail="deprecated — deployed with state: Disabled",
             )
         return ActionResult(
             asset_id=loaded.envelope.id, asset_kind=self.asset.value,
@@ -227,7 +237,11 @@ class SentinelPlaybookHandler:
                 action=plan.action, status="skipped", detail=plan.detail,
             )
 
-        payload = SentinelPlaybookPayload(**loaded.payload)
+        disabling = plan.action is PlanAction.DISABLE
+        raw_payload = dict(loaded.payload)
+        if disabling:
+            raw_payload["state"] = "Disabled"
+        payload = SentinelPlaybookPayload(**raw_payload)
         envelope_id = loaded.envelope.id
         if dry_run:
             click.echo(
@@ -250,7 +264,7 @@ class SentinelPlaybookHandler:
         connection_refs: dict[str, dict] = {}
         for conn in payload.connections:
             ref, failure = self._apply_connection(
-                provider, conn, envelope_id=envelope_id, location=location,
+                provider, conn, envelope_id=envelope_id, location=location, owner=workflow_name,
             )
             if failure is not None:
                 return failure
@@ -263,6 +277,14 @@ class SentinelPlaybookHandler:
         existing_resp = provider.request("GET", url)
         existing = existing_resp.json() if existing_resp.status_code == 200 else None
         etag = extract_etag(existing)
+        if existing is not None:
+            # A PUT replaces the whole workflow. Settings the file does not
+            # manage (trigger IP restrictions, the integration account) are
+            # sent back as the tenant holds them, or the PUT would remove them.
+            current = existing.get("properties") or {}
+            for key in _TENANT_KEPT_PROPERTIES:
+                if key in current and key not in body["properties"]:
+                    body["properties"][key] = current[key]
 
         sent_hash = compute_projection_hash(_playbook_projection(body))
         headers = {"If-Match": etag} if etag else None
@@ -286,7 +308,10 @@ class SentinelPlaybookHandler:
                 detail=response.text[:200], verified=False, error=response.text[:200],
             )
 
-        action = PlanAction.CREATE if existing is None else PlanAction.UPDATE
+        if disabling:
+            action = PlanAction.DISABLE
+        else:
+            action = PlanAction.CREATE if existing is None else PlanAction.UPDATE
         click.echo(f"  {action.value}: {envelope_id}")
 
         verify_resp = provider.request("GET", url)
@@ -343,8 +368,17 @@ class SentinelPlaybookHandler:
         *,
         envelope_id: str,
         location: str,
+        owner: str | None = None,
     ) -> tuple[dict | None, ActionResult | None]:
-        """PUT one API connection; return ``(ref, None)`` or ``(None, failure)``."""
+        """PUT one API connection; return ``(ref, None)`` or ``(None, failure)``.
+
+        ``owner`` (the workflow's ARM name, which prune looks connections up
+        by) goes into the ``contentops-playbook`` tag of a connection this
+        call creates. A connection that already exists and is not this
+        playbook's keeps its own tags: it may be shared with another Logic
+        App, and the tag is what prune deletes by.
+        """
+        owner = owner or envelope_id
         name = connection_arm_name(envelope_id, conn)
         url = self._connection_url(provider, name)
         body = to_connection_arm_body(
@@ -352,7 +386,16 @@ class SentinelPlaybookHandler:
             subscription_id=provider.config.subscriptionId,
         )
         existing_resp = provider.request("GET", url)
-        etag = extract_etag(existing_resp.json()) if existing_resp.status_code == 200 else None
+        existing = existing_resp.json() if existing_resp.status_code == 200 else None
+        etag = extract_etag(existing) if existing is not None else None
+        if existing is not None:
+            current_tags = dict(existing.get("tags") or {})
+            if current_tags.get(PLAYBOOK_TAG) in (owner, envelope_id):
+                body["tags"] = {**current_tags, **body["tags"], PLAYBOOK_TAG: owner}
+            else:
+                body["tags"] = current_tags
+        else:
+            body["tags"] = {**body["tags"], PLAYBOOK_TAG: owner}
         headers = {"If-Match": etag} if etag else None
         response = provider.request("PUT", url, json=body, headers=headers)
 
@@ -486,6 +529,38 @@ class SentinelPlaybookHandler:
             result.detail = f"{result.detail}; " + "; ".join(notes)
         return result
 
+    def disable_in_place(self, loaded: LoadedAsset) -> ActionResult:
+        """Switch the tenant's Logic App off as it is (a locked playbook set
+        to deprecated), through the workflow's ``disable`` action: its
+        definition and connections are not written."""
+        from contentops.handlers._disable_in_place import disable_existing
+
+        provider = self._provider_or_create()
+        if provider is None:
+            raise RuntimeError("sentinel_playbook disable_in_place requires a SentinelArmProvider")
+        workflow_name = loaded.envelope.arm_name or loaded.envelope.id
+        url = self._workflow_url(provider, workflow_name)
+
+        def read() -> dict | None:
+            response = provider.request("GET", url)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+
+        def switch_off(_existing: dict):
+            base, _, query = url.partition("?")
+            return provider.request("POST", f"{base}/disable?{query}")
+
+        result = disable_existing(
+            asset_kind=self.asset.value, envelope_id=loaded.envelope.id,
+            existing=read(),
+            is_off=lambda obj: (obj.get("properties") or {}).get("state") == "Disabled",
+            switch_off=switch_off, read_back=read,
+        )
+        click.echo(f"  {result.action.value}: {loaded.envelope.id} ({result.detail})")
+        return result
+
     # --- Adoption ---------------------------------------------------------
 
     def adopt(self, workflow_name: str) -> dict:
@@ -528,9 +603,15 @@ class SentinelPlaybookHandler:
         out: list[dict] = []
         for name in names:
             resp = provider.request("GET", self._workflow_url(provider, name))
-            if resp.status_code != 200:
-                logger.warning("playbook %s: GET returned %s", name, resp.status_code)
+            if resp.status_code == 404:
+                # Deleted between the tag listing and this read.
+                logger.info("playbook %s: gone since it was listed", name)
                 continue
+            if resp.status_code != 200:
+                # Not "absent": a playbook that cannot be read must fail the
+                # listing for this kind, or drift misses it, ``collect
+                # --clear`` deletes its file and a later prune its Logic App.
+                raise RuntimeError(f"playbook {name}: GET returned {resp.status_code}")
             out.append(resp.json())
         return out
 
@@ -542,6 +623,16 @@ class SentinelPlaybookHandler:
         properties: dict = dict(cleaned.get("properties") or {})
         definition = properties.get("definition")
         if not isinstance(definition, dict):
+            return None
+        identity_type = (cleaned.get("identity") or {}).get("type") if isinstance(cleaned.get("identity"), dict) else None
+        if identity_type not in (None, "SystemAssigned"):
+            # A playbook deploys with a system-assigned identity only; the
+            # file would fail validation, and a deploy would replace it.
+            logger.warning(
+                "Skipping playbook %r — its identity is %r; ContentOps deploys playbooks "
+                "with a system-assigned identity only",
+                name, identity_type,
+            )
             return None
         connections = connections_from_remote(remote)
         if connections is None:

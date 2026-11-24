@@ -374,7 +374,11 @@ def _check_legacy_graph_keys(
             + ", ".join(f"`{key.path}` (use `{key.replacement}`)" for key in sent)
             + ". Such a rule stops deploying when Microsoft removes the old properties."
         )
-    parts.append("Edit the new properties only; the next import from the tenant drops the old ones.")
+    parts.append(
+        "Edit the new properties only. An import from the tenant keeps both sets "
+        "(Graph returns the old properties next to the new ones), so this warning "
+        "stays on imported rules until the old properties are removed from the file."
+    )
     return [LintFinding("PAYLOAD015", "warning", " ".join(parts))]
 
 

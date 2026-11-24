@@ -26,7 +26,7 @@ see [Management modes](#management-modes).
 | api-version | `2025-09-01` (stable; pinned as `AUTOMATION_API_VERSION`, used by apply and collect) |
 | ARM name | `metadata.arm_name` when collected; otherwise `uuid5(NAMESPACE_URL, envelope.id)` — stable, idempotent |
 | ETag | yes (`If-Match` on PUT, 412 surfaces as a per-asset failure) |
-| Verification | projection hash: display name, order, trigger flags, expiry presence, action count + sorted action types, sorted playbook resource ids (lower-cased), sorted condition keys. **Not** detected: a changed action parameter (e.g. the severity a ModifyProperties action sets). |
+| Verification | projection hash: display name, order, trigger flags, expiry presence, every action's type and settings (close status, classification, severity, labels, playbook), every condition's keys and values (title match, analytic scope). Order-independent; ignores what ARM adds on the way back (null for fields left out, `labelType: User`, re-cased resource ids; checked against a workspace). |
 | RBAC | `Microsoft.SecurityInsights/automationRules/write` (Microsoft Sentinel Contributor). To *run* playbooks, the **Azure Security Insights** service principal needs **Microsoft Sentinel Automation Contributor** (`f4c81013-99ee-4d62-a7ee-b3f1f648599a`) on the playbook resource group — a one-time Owner-level grant the pipeline reports in `conformance` but never performs. |
 
 ## Envelope
@@ -125,6 +125,11 @@ applies to it; a wrong name surfaces as ARM's 400 at deploy.
   skips them with a clear detail; collect imports them as
   `status: deprecated` so the active set stays honest and `prune` can
   remove them behind its gates.
+- **Disabling.** A rule with `status: deprecated` (what `contentops
+  disable` and the emergency-disable workflow set) is deployed with
+  `isEnabled: false`, so it stops acting on incidents; drift reads that
+  as in sync. Deleting it stays with `prune`. An expired rule is left
+  alone either way.
 - **Defender portal.** Once the workspace is onboarded to the Defender
   portal, incident-created rules also fire for Defender XDR incidents;
   alert-created rules fire only for Sentinel analytics alerts.

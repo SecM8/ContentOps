@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 
@@ -42,6 +43,36 @@ def compute_content_hash(body: dict[str, Any], fields: list[str]) -> str:
     subset = {field: _get_path(body, field) for field in fields}
     canonical = json.dumps(subset, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+_GUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def canonical_for_verify(value: Any) -> Any:
+    """A form of ``value`` that ignores what ARM changes on the way back.
+
+    Checked against a workspace: ARM returns fields left out of a PUT as
+    ``null``, adds ``labelType: "User"`` to an automation rule's labels and
+    changes the casing of resource ids. So ``None`` / empty values and that
+    label default are dropped, resource ids and GUIDs are lower-cased, and
+    lists are compared as sets (ARM need not keep their order). Everything
+    else, values included, is kept.
+    """
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in sorted(value.items()):
+            if item is None or item == [] or item == {}:
+                continue
+            if key == "labelType" and item == "User":
+                continue
+            out[key] = canonical_for_verify(item)
+        return out
+    if isinstance(value, list):
+        items = [canonical_for_verify(v) for v in value]
+        return sorted(items, key=lambda v: json.dumps(v, sort_keys=True, default=str))
+    if isinstance(value, str) and (value.startswith("/subscriptions/") or _GUID_RE.fullmatch(value)):
+        return value.lower()
+    return value
 
 
 def compute_projection_hash(projection: dict[str, Any]) -> str:

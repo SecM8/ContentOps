@@ -174,10 +174,10 @@ def test_validate_ok_and_rejects_long_id_and_missing_definition() -> None:
         h.validate(_loaded(payload={"connections": []}))
 
 
-def test_plan_skips_non_production() -> None:
+def test_plan_skips_experimental_and_disables_deprecated() -> None:
     h = SentinelPlaybookHandler(lambda: None)
     assert h.plan(_loaded(status="experimental")).action is PlanAction.SKIP
-    assert h.plan(_loaded(status="deprecated")).action is PlanAction.SKIP
+    assert h.plan(_loaded(status="deprecated")).action is PlanAction.DISABLE
     assert h.plan(_loaded()).action is PlanAction.UPDATE
 
 
@@ -339,7 +339,7 @@ def test_apply_update_when_workflow_exists() -> None:
     assert r.action is PlanAction.UPDATE and r.verified is True
 
 
-def test_projection_detects_added_action_or_swapped_connector_but_ignores_inputs() -> None:
+def test_projection_detects_added_action_swapped_connector_and_changed_inputs() -> None:
     def body(definition: dict, conns: dict | None = None) -> dict:
         props = {"definition": definition, "state": "Enabled"}
         if conns is not None:
@@ -351,7 +351,9 @@ def test_projection_detects_added_action_or_swapped_connector_but_ignores_inputs
     assert _playbook_projection(base) != _playbook_projection(body(extra, {"azuresentinel": {"id": "/x/managedApis/azuresentinel"}}))
     assert _playbook_projection(base) != _playbook_projection(body(_definition(), {"azuresentinel": {"id": "/x/managedApis/office365"}}))
     mutated = _definition(); mutated["actions"]["Post"]["inputs"]["uri"] = "https://evil.example"
-    assert _playbook_projection(base) == _playbook_projection(body(mutated, {"azuresentinel": {"id": "/x/managedApis/azuresentinel"}}))
+    # Inputs are compared: a Logic App's definition comes back exactly as sent
+    # (checked against a tenant, Sentinel-trigger playbooks included).
+    assert _playbook_projection(base) != _playbook_projection(body(mutated, {"azuresentinel": {"id": "/x/managedApis/azuresentinel"}}))
     # Server-added parameters block with the same connections compares equal.
     assert _playbook_projection(body(_definition(), None)) == _playbook_projection(body(_definition(), {}))
 
@@ -425,7 +427,8 @@ def test_to_envelope_emits_connections_and_strips_canonical_param_and_server_fie
             "parameters": {
                 "$connections": {"value": {"azuresentinel": {
                     "connectionId": "/c", "connectionName": "notify-soc-azuresentinel",
-                    "id": "/x/managedApis/azuresentinel"}}},
+                    "id": "/x/managedApis/azuresentinel",
+                    "connectionProperties": {"authentication": {"type": "ManagedServiceIdentity"}}}}},
                 "webhook": {"value": "https://x"},
             },
         },
@@ -484,3 +487,121 @@ def test_list_remote_uses_tag_only_server_filter_and_type_client_side() -> None:
     assert "resourceType" not in seen["filter"]
     assert f"tagName eq '{MANAGED_TAG}'" in seen["filter"]
     assert [i["name"] for i in items] == ["pb-one"]
+
+
+def test_to_envelope_skips_a_playbook_with_a_connection_not_on_managed_identity(caplog) -> None:
+    """Seen on a real Logic App: one Sentinel connection on managed identity
+    and Office 365 connections on OAuth. Importing it would declare all of
+    them as managed identity, and the next apply would rewrite the OAuth
+    ones. It is skipped with a warning instead."""
+    import logging
+
+    msi = {"authentication": {"type": "ManagedServiceIdentity"}}
+    remote = {
+        "id": "/x", "name": "revoke-sessions", "type": "Microsoft.Logic/workflows",
+        "identity": {"type": "SystemAssigned"},
+        "tags": {MANAGED_TAG: "true"},
+        "properties": {
+            "definition": _definition(), "state": "Enabled",
+            "parameters": {"$connections": {"value": {
+                "azuresentinel": {"connectionId": "/c1", "connectionName": "revoke-sessions-azuresentinel",
+                                  "id": "/x/managedApis/azuresentinel", "connectionProperties": msi},
+                "office365": {"connectionId": "/c2", "connectionName": "revoke-sessions-office365",
+                              "id": "/x/managedApis/office365"},
+            }}},
+        },
+    }
+    with caplog.at_level(logging.WARNING):
+        assert SentinelPlaybookHandler(lambda: None).to_envelope(remote) is None
+    assert "not managed-identity shaped" in caplog.text
+
+
+_CONN_PATH = "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Web/connections/notify-soc-azuresentinel"
+
+
+def test_apply_does_not_claim_a_connection_it_did_not_create() -> None:
+    """Apply stamped every connection it PUT with ``contentops-playbook=<id>``,
+    also one that already existed (a collected ``connectionName``, possibly
+    shared with another Logic App). Pruning the playbook then deleted the
+    shared connection. An existing connection keeps its own tags."""
+    tenant = _Tenant()
+    tenant.store[_CONN_PATH] = {"name": "notify-soc-azuresentinel", "tags": {"team": "soc"}, "properties": {}}
+    _handler(tenant).apply(_loaded())
+    assert tenant.bodies[_CONN_PATH]["tags"] == {"team": "soc"}
+
+
+def test_apply_tags_a_new_connection_with_the_workflow_name_prune_looks_up() -> None:
+    """Prune deletes a playbook's connections by the tag value it is given
+    (the workflow's ARM name); apply tagged them with the envelope id, so a
+    collected ``Notify_SOC`` (envelope ``notify-soc``) left them behind."""
+    tenant = _Tenant()
+    env = EnvelopeV2(id="notify-soc", version="1.0.0", asset=Asset.SENTINEL_PLAYBOOK,
+                     status="production", arm_name="Notify_SOC")
+    _handler(tenant).apply(LoadedAsset(path=Path("test.yml"), envelope=env, payload=_payload()))
+    assert tenant.bodies[_CONN_PATH]["tags"][PLAYBOOK_TAG] == "Notify_SOC"
+
+
+def test_apply_switches_a_deprecated_playbook_off() -> None:
+    """A deprecated playbook was only skipped ("use prune"), so a disable
+    never reached the tenant and the Logic App kept running."""
+    tenant = _Tenant()
+    r = _handler(tenant).apply(_loaded(status="deprecated"))
+    assert r.action is PlanAction.DISABLE, r
+    wf = "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/notify-soc"
+    assert tenant.bodies[wf]["properties"]["state"] == "Disabled"
+
+
+_WF_PATH = "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/workflows/notify-soc"
+
+
+def test_apply_keeps_access_control_and_integration_account_the_file_does_not_set() -> None:
+    """A full PUT without them removed a Logic App's trigger IP restrictions
+    and its integration account, and drift stayed in sync."""
+    access = {"triggers": {"allowedCallerIpAddresses": [{"addressRange": "10.0.0.0/8"}]}}
+    account = {"id": "/subscriptions/sub/resourceGroups/rg-pb/providers/Microsoft.Logic/integrationAccounts/ia"}
+    tenant = _Tenant(existing_workflow={"name": "notify-soc", "properties": {
+        "definition": _definition(), "state": "Enabled",
+        "accessControl": access, "integrationAccount": account,
+    }})
+    _handler(tenant).apply(_loaded())
+    sent = tenant.bodies[_WF_PATH]["properties"]
+    assert sent["accessControl"] == access
+    assert sent["integrationAccount"] == account
+
+
+def test_to_envelope_skips_a_logic_app_with_a_user_assigned_identity(caplog) -> None:
+    """The payload accepts only a system-assigned identity, so the collected
+    file failed validation (and now stops every run that loads it)."""
+    import logging
+
+    remote = {
+        "id": "/x", "name": "uai-playbook", "type": "Microsoft.Logic/workflows",
+        "identity": {"type": "UserAssigned", "userAssignedIdentities": {"/x/uai": {}}},
+        "tags": {MANAGED_TAG: "true"},
+        "properties": {"definition": _definition(), "state": "Enabled", "parameters": {}},
+    }
+    with caplog.at_level(logging.WARNING):
+        assert SentinelPlaybookHandler(lambda: None).to_envelope(remote) is None
+    assert "identity" in caplog.text
+
+
+def test_a_workflow_that_cannot_be_read_fails_the_listing() -> None:
+    """A 403 or 5xx on one workflow was logged and skipped while the kind
+    counted as listed: drift missed that playbook, ``collect --clear``
+    deleted its file, and a later prune deleted the live Logic App."""
+    class Forbidden(_Tenant):
+        def __call__(self, request):
+            if request.method == "GET" and request.url.path.endswith("/workflows/locked"):
+                return httpx.Response(403, json={"error": {"code": "AuthorizationFailed"}})
+            return super().__call__(request)
+
+    tenant = Forbidden()
+    tenant.managed_workflows = [{"name": "locked"}]
+    with pytest.raises(RuntimeError, match="locked"):
+        _handler(tenant).list_remote()
+
+
+def test_a_workflow_deleted_between_list_and_read_is_skipped() -> None:
+    tenant = _Tenant()
+    tenant.managed_workflows = [{"name": "gone"}]
+    assert _handler(tenant).list_remote() == []

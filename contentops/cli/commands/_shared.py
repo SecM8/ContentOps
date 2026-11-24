@@ -194,11 +194,28 @@ def _format_summary_table(
     return lines
 
 
-def _load_all(detections_path: Path):
-    return list(iter_loaded_assets(
-        detections_path,
-        on_error=lambda p, exc: click.echo(f"  load error: {p}: {exc}", err=True),
-    ))
+def _load_all(detections_path: Path, *, strict: bool = False):
+    """Every envelope under ``detections_path``.
+
+    A file that fails to load is echoed. With ``strict`` (the commands that
+    write: plan, apply, rollback, retry-failed) the run then stops with
+    exit 1: leaving the file out would report "nothing to apply" while its
+    change never deploys.
+    """
+    errors: list[tuple[Path, Exception]] = []
+
+    def on_error(path: Path, exc: Exception) -> None:
+        errors.append((path, exc))
+        click.echo(f"  load error: {path}: {exc}", err=True)
+
+    loaded = list(iter_loaded_assets(detections_path, on_error=on_error))
+    if strict and errors:
+        names = ", ".join(str(p) for p, _ in errors)
+        raise click.ClickException(
+            f"{len(errors)} detection file(s) failed to load: {names}. Fix them "
+            "(the errors are above); nothing was applied."
+        )
+    return loaded
 
 
 def _filter_changed_since(loaded, ref: str):

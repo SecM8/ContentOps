@@ -24,6 +24,10 @@ from pathlib import Path
 
 from tests.integration import defender_shape_probe as probe
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("defender_custom_detection",)
+
 REPORT_FILE = "defender-shape-report.md"
 
 

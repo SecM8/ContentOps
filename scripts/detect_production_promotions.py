@@ -64,6 +64,10 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+class GitDiffFailed(RuntimeError):
+    """`git diff` failed, so the changed files are unknown."""
+
+
 def _changed_files(base: str, head: str, cwd: Path) -> list[tuple[str, str]]:
     """Return ``(head_path, base_path)`` pairs for changed detection files.
 
@@ -77,8 +81,9 @@ def _changed_files(base: str, head: str, cwd: Path) -> list[tuple[str, str]]:
         cwd=cwd,
     )
     if result.returncode != 0:
-        LOG.error("git diff failed: %s", result.stderr.strip())
-        return []
+        # Not "no changed files": an unknown base ref or a shallow clone
+        # must fail the check, not report "No production promotions".
+        raise GitDiffFailed(result.stderr.strip() or f"git diff exited {result.returncode}")
     files: list[tuple[str, str]] = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")
@@ -300,10 +305,26 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = _parse_args(argv)
     cwd = Path(args.repo).resolve()
-    promotions = detect_promotions(
-        args.base, args.head, cwd,
-        max_stamp_age_days=args.max_stamp_age_days,
-    )
+    try:
+        promotions = detect_promotions(
+            args.base, args.head, cwd,
+            max_stamp_age_days=args.max_stamp_age_days,
+        )
+    except GitDiffFailed as exc:
+        LOG.error("git diff failed, the changed files are unknown: %s", exc)
+        # Still write the report: the workflow posts it as the sticky PR
+        # comment, which would otherwise keep an older (green) verdict.
+        failed = (
+            "## Production promotions\n\n"
+            "Production promotions could not be checked: `git diff` between the "
+            "base and the head failed, so the changed files are unknown. See the "
+            "workflow log.\n"
+        )
+        if args.out == "-":
+            sys.stdout.write(failed)
+        else:
+            Path(args.out).write_text(failed, encoding="utf-8")
+        return 2
     markdown = render_markdown(promotions)
     if args.out == "-":
         sys.stdout.write(markdown)

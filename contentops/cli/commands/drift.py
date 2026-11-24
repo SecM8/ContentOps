@@ -109,7 +109,7 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
     if _skip_if_integration_role_absent(role, workspace_name, command="drift"):
         return
     _resolve_single_workspace_or_exit(role, workspace_name)
-    register_default_handlers()
+    register_default_handlers(detections_root=detections_path)
     target_asset = Asset(asset) if asset else None
 
     _print_run_banner(
@@ -160,6 +160,8 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
         expired_keys = {(s.asset, s.id) for s in filter_result.expired}
         unused_suppressions = filter_result.unused
 
+    undeployed = _changed_since_last_deploy(report)
+
     summary_extra = f", suppressed: {suppressed_count}" if suppressed_count else ""
     error_extra = f", errors: {len(report.errors)}" if report.has_errors() else ""
     click.echo(
@@ -168,12 +170,14 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
         + error_extra + summary_extra
     )
     for entry in report.errors:
-        # An error means we couldn't list remote state for this asset
-        # kind — the "changed/new/in-sync" numbers above exclude it
-        # entirely. Surface the reason so the operator doesn't read
-        # "0 changed" and assume it was actually compared.
+        # An error means drift could not compare: the remote listing failed
+        # for this asset kind ("*"), or a local file failed to load (its
+        # name). The "changed/new/in-sync" numbers above exclude it. Surface
+        # the reason so the operator doesn't read "0 changed" and assume it
+        # was actually compared.
+        what = "could not list remote" if entry.asset_id == "*" else "could not compare"
         click.echo(
-            f"  ERROR    {entry.asset.value:30} (could not list remote: {entry.error})",
+            f"  ERROR    {entry.asset.value:30} ({what}: {entry.error})",
             err=True,
         )
     for entry in report.new:
@@ -182,6 +186,8 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
         tag = ""
         if (entry.asset.value, entry.asset_id) in expired_keys:
             tag = "  [suppression-expired]"
+        if (entry.asset.value, entry.asset_id) in undeployed:
+            tag += "  [changed in the repository after its last deploy]"
         click.echo(
             f"  CHANGED  {entry.asset.value:30} {entry.asset_id}"
             f"  ({entry.local_path}){tag}"
@@ -210,6 +216,13 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
                     click.echo(f"    ~ {d.key}:")
                     click.echo(f"        local : {d.local_repr}")
                     click.echo(f"        remote: {d.remote_repr}")
+    if undeployed:
+        click.echo(
+            f"\n[drift] {len(undeployed)} changed rule(s) were changed in the "
+            "repository after their last deploy: the tenant may not have that "
+            "merge yet. Deploy main (changed_since covering that merge) rather "
+            "than accepting drift that undoes it."
+        )
     if unused_suppressions:
         click.echo(
             f"\n[suppression-unused] {len(unused_suppressions)} entry/entries in "
@@ -244,7 +257,8 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
             "workspace": workspace_name,
             "run_id": os.getenv("GITHUB_RUN_ID") or "",
             "entries": [
-                {"asset": e.asset.value, "id": e.asset_id, "kind": e.kind}
+                {"asset": e.asset.value, "id": e.asset_id, "kind": e.kind,
+                 **({"undeployed": True} if (e.asset.value, e.asset_id) in undeployed else {})}
                 for e in (report.new + report.changed)
             ],
             # Error entries surface separately so downstream consumers
@@ -282,6 +296,22 @@ def drift_cmd(detections_path: Path, asset: str | None, write: bool,
         sys.exit(2)
     if exit_on_drift and report.has_drift():
         sys.exit(2)
+
+
+def _changed_since_last_deploy(report) -> set[tuple[str, str]]:
+    """Changed entries whose file changed in git after the rule's last
+    deploy (per the state file). Empty when there is no tenant.yml or no
+    state; never fails the drift run."""
+    if not report.changed:
+        return set()
+    try:
+        from contentops.config import load_tenant_config
+        from contentops.state import load_state
+        from contentops.undeployed import changed_since_last_deploy
+        state = load_state(env=load_tenant_config().name)
+        return changed_since_last_deploy(report.changed, state, repo=Path.cwd())
+    except Exception:  # noqa: BLE001 — an advisory flag
+        return set()
 
 
 @click.command("drift-resolve")
@@ -335,7 +365,7 @@ def drift_resolve_cmd(
         find_entry_for, resolve_git, resolve_merge, resolve_remote,
     )
 
-    register_default_handlers()
+    register_default_handlers(detections_root=detections_path)
     target_asset = Asset(asset) if asset else None
     handlers = _collect_drift_handlers(target_asset)
 

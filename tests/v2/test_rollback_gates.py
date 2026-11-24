@@ -72,7 +72,7 @@ def fake(monkeypatch) -> _FakeHandler:
     handler = _FakeHandler()
     monkeypatch.setattr(
         "contentops.cli.commands.rollback.register_default_handlers",
-        lambda: default_registry.register(Asset.SENTINEL_ANALYTIC, lambda: handler),
+        lambda **_kw: default_registry.register(Asset.SENTINEL_ANALYTIC, lambda: handler),
     )
     monkeypatch.delenv("PIPELINE_WORKSPACE_NAME", raising=False)
     yield handler
@@ -132,6 +132,23 @@ def _invoke(args: list[str], cwd: Path):
         return CliRunner().invoke(cli, args)
     finally:
         os.chdir(prev)
+
+
+def test_rollback_records_what_it_applied_in_the_state_file(
+    tmp_path: Path, monkeypatch, fake: _FakeHandler,
+) -> None:
+    """Rollback wrote nothing to the state file the workflow then pushed;
+    status and explain kept showing the rolled-back-from version."""
+    import json
+
+    root, sha, _ = _repo(tmp_path)
+    _tenant(monkeypatch)
+    result = _invoke(["rollback", sha, "--role", "prod", "--no-dry-run", "--yes"], root)
+    assert result.exit_code == 0, result.output
+    state = json.loads((root / "state" / "test-tenant" / "state.json").read_text(encoding="utf-8"))
+    entry = state["managed_assets"]["sentinel_analytic"]["rule-a"]
+    assert entry["status"] == "success"
+    assert entry["last_applied_sha"] == sha
 
 
 def test_rollback_refuses_write_when_write_not_allowed(
@@ -211,3 +228,57 @@ def test_rollback_substitutes_snippets_before_put(
     query = fake.applied[0]["query"]
     assert "{{" not in query
     assert '| where Account !in ("svc-backup")' in query
+
+
+def test_rollback_applies_playbooks_before_the_rules_that_run_them(tmp_path: Path, monkeypatch) -> None:
+    """Rollback applied in discovery order, which puts
+    ``sentinel_automation_rule/`` before ``sentinel_playbook/``: restoring a
+    pruned playbook and the rule that calls it PUT the rule first (400)."""
+    from contentops.devex.scaffold import scaffold
+
+    order: list[str] = []
+
+    class Recorder(_FakeHandler):
+        def __init__(self, asset):
+            super().__init__()
+            self.asset = asset
+
+        def apply(self, loaded, *, dry_run: bool = False):
+            order.append(loaded.envelope.asset.value)
+            return super().apply(loaded, dry_run=dry_run)
+
+    saved = dict(default_registry._factories)
+    default_registry._factories.clear()
+    default_registry._instances.clear()
+    handlers = {a: Recorder(a) for a in (Asset.SENTINEL_AUTOMATION_RULE, Asset.SENTINEL_PLAYBOOK)}
+
+    def register(**_kw):
+        for asset, handler in handlers.items():
+            default_registry.register(asset, lambda h=handler: h)
+
+    monkeypatch.setattr("contentops.cli.commands.rollback.register_default_handlers", register)
+    monkeypatch.setattr("contentops.cli.commands.apply_support.asset_mode_for", lambda *a, **k: "managed", raising=False)
+    monkeypatch.setattr("contentops.cli.commands._shared.asset_mode_for", lambda *a, **k: "managed")
+    monkeypatch.delenv("PIPELINE_WORKSPACE_NAME", raising=False)
+    _tenant(monkeypatch)
+    try:
+        _git(tmp_path, "init", "-q", "-b", "main")
+        _git(tmp_path, "config", "user.email", "test@example.com")
+        _git(tmp_path, "config", "user.name", "test")
+        _git(tmp_path, "config", "commit.gpgsign", "false")
+        det = tmp_path / "detections"
+        for kind, rid in (("sentinel_automation_rule", "ar-one"), ("sentinel_playbook", "pb-one")):
+            out = det / kind / f"{rid}.yml"
+            scaffold(kind, rid, out=out)
+            out.write_text(out.read_text(encoding="utf-8").replace("status: experimental", "status: production", 1),
+                           encoding="utf-8")
+        _git(tmp_path, "add", "-A")
+        _git(tmp_path, "commit", "-q", "-m", "both")
+        sha = _git(tmp_path, "rev-parse", "HEAD")
+        result = _invoke(["rollback", sha, "--no-dry-run", "--yes", "--no-audit"], tmp_path)
+    finally:
+        default_registry._factories.clear()
+        default_registry._instances.clear()
+        default_registry._factories.update(saved)
+    assert result.exit_code == 0, result.output
+    assert order == ["sentinel_playbook", "sentinel_automation_rule"]

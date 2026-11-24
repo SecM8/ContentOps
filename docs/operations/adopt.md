@@ -12,10 +12,17 @@ That record is what lets:
 
 - the deployments status page (`docs/status/deployments.md`) mark a
   rule `in-sync` rather than `unmanaged`;
-- `prune` tell "we deployed this and it has since been deleted from
-  git" (orphan) apart from "someone else's rule" (leave alone);
 - `undeployed-rules` spot production rules that never reached the
-  tenant.
+  tenant;
+- `contentops explain` show when a rule was last applied, and from
+  which commit.
+
+`prune` does **not** read the state file. Every tenant object of a kind
+it lists that has no local file is an orphan, whether ContentOps
+deployed it or not; adopting does not protect a rule from prune. What
+limits a prune is `--asset`, `--max-deletes`, the workspace's
+`purgeAllowed` / `maxDelete` in tenant.yml, and the refusal to prune a
+kind with no local files at all (see [prune.md](prune.md)).
 
 A tenant whose content was deployed before ContentOps tracked state —
 or before the state branch was actually pushed (see the

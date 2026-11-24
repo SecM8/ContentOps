@@ -7,6 +7,17 @@ It opens a pull request that flips one detection envelope's `status:` to
 `deprecated`. A human must review and merge the PR. The regular
 `deploy.yml` workflow then deploys the change on push to `main`.
 
+> **Repositories that deploy by hand.** A deployment repo may have the
+> `push` trigger of `deploy.yml` switched off. There a merged disable
+> does **not** reach the tenant until someone runs **Deploy to
+> production** on `main`; until then the rule keeps alerting. Set
+> `changed_since` to the commit before the merge (`HEAD~1` when the merge
+> is the newest commit on main): an empty `changed_since` re-applies
+> every detection, mid-incident. The PR body
+> says which case applies (`scripts/deploys_on_push.py` reads the
+> trigger), and the next drift run flags the rule as changed in the
+> repository after its last deploy.
+
 ## When to use
 
 * A production detection is generating a flood of false positives that
@@ -54,7 +65,8 @@ This workflow is **not** for:
 
 * It does **not** auto-merge. A human must merge the PR.
 * It does **not** call `contentops apply` / talk to Azure / Microsoft Graph.
-  Deployment happens via the existing `deploy.yml` on push-to-main.
+  Deployment happens via the existing `deploy.yml`: on push-to-main, or
+  when started by hand in a repository that deploys by hand.
 * It does **not** modify anything outside `detections/`.
 * It does **not** require `id-token: write` — there is no OIDC step.
 * It reports which token opens the PR (`AUTO_PR_TOKEN`, or the
@@ -117,7 +129,9 @@ To re-enable a rule that was emergency-disabled:
 1. Open a normal PR that flips the YAML's `status:` back to its prior
    value (`production`, `test`, etc.) and removes `disableReason:`.
 2. Merge through the normal review process.
-3. `deploy.yml` re-deploys on push-to-main.
+3. `deploy.yml` re-deploys on push-to-main (or run it on `main` with
+   `changed_since` set to the commit before the merge, in a repository
+   that deploys by hand).
 
 The emergency workflow does **not** have a re-enable mode by design —
 re-enabling should never be a break-glass action.

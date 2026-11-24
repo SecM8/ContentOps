@@ -421,12 +421,14 @@ EnvState
 
 Read/written by:
 
-- **`apply`** — appends every applied (envelope_id, asset_kind,
-  remote_id, status) tuple after a successful run
-  ([`contentops/cli/commands/apply.py`](../../contentops/cli/commands/apply.py)).
-- **`prune`** — could consult state to scope orphan detection, but
-  today walks live `list_remote()` and compares to local YAML
-  directly. State is advisory.
+- **`apply`, `retry-failed` and `rollback`** — merge every
+  (envelope_id, asset_kind, status) they wrote after the run, through
+  `record_results_in_state` in
+  [`apply_support.py`](../../contentops/cli/commands/apply_support.py)
+  (rollback records the target commit as the applied SHA).
+- **`prune`** — removes every rule it deleted (`state.forget()`). It
+  finds orphans from live `list_remote()` against local YAML, not from
+  state. State is advisory.
 - **`drift`** — same; state is not strictly required because git is
   the truth.
 - **`contentops state show`** — print current state.
@@ -440,19 +442,25 @@ replaces the branch's single commit: the branch keeps no history.
 `promote-to-integration.yml`, `prune.yml`, `retry-failed.yml`,
 `rollback.yml` and `state-adopt.yml` call `state sync pull` before
 their mutation step and `state sync push` after (gated on non-dry-run).
+`pull` reads a missing state branch as empty state; any other pull
+failure (auth, network) fails the step, so the run stops before it
+writes to the tenant. `pull` writes the file byte for byte as the
+branch holds it, so `state sync status` reads an untouched pulled file
+as in sync.
 See [`contentops/state_sync.py`](../../contentops/state_sync.py) and
 the resolved G15 row in [`gap-assessment.md`](gap-assessment.md).
 
 Two runs never overwrite each other's state. The workflows that push
-the same state queue together (`deploy-prod` / `deploy-<env>`;
-`promote-to-integration.yml` pushes the integration tenant's state in
-its own queue), and `state sync push` uses `--force-with-lease`
+the same state queue together (`deploy-prod`, whatever the env input;
+`promote-to-integration.yml` pulls the integration state but does not
+push it, because state is keyed by tenant.yml's `name`, not by
+workspace role), and `state sync push` uses `--force-with-lease`
 against the commit the run pulled: a run that started from an older
 state has its push refused. `state sync push --force` replaces the
 remote state on purpose.
 
-State is best-effort. `apply` never fails because it couldn't write
-state; the pipeline keeps working without it. An unreadable state file
+State is best-effort. A write command never fails because it couldn't
+write state; the pipeline keeps working without it. An unreadable state file
 (invalid JSON, or JSON of the wrong shape) is reported and read as
 empty, and the next save keeps a copy of it as
 `state.json.corrupt-<time>` next to the new file. Rebuild the managed

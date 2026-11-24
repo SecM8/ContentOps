@@ -20,6 +20,10 @@ from pathlib import Path
 
 import yaml
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("sentinel_analytic",)
+
 
 def test_scaffolded_analytic_deploys_against_live_workspace(
     sentinel_client, integration_id, created_sentinel_rules, tmp_path,

@@ -36,13 +36,13 @@ portal GUID in ``metadata.arm_name``; an authored rule gets a stable
 
 Verification
 ------------
-``_automation_projection`` hashes a derived view (trigger flags, action
-count + sorted action types, condition keys, sorted playbook ids,
-expiration presence) rather than the raw arrays, because ARM is not
-contractually required to preserve positional order and injects
-default sub-fields. It does NOT detect mutation of an action's
-*parameters* (e.g. the severity a ModifyProperties action assigns);
-treat ``verified=True`` as "same shape", not semantic equality.
+``_automation_projection`` hashes a derived view: trigger flags, action
+types and settings, condition keys and values, playbook ids, expiration
+presence. It is order-independent and ignores what ARM adds on the way
+back (``canonical_for_verify``; checked against a workspace: null for
+fields left out, ``labelType: "User"``, re-cased resource ids), so a
+rule that closes with another status or matches another scope fails
+the check, while the rule that was sent passes it.
 
 Expired rules
 -------------
@@ -64,6 +64,7 @@ from contentops.core.handler import LoadedAsset
 from contentops.core.result import ActionResult, PlanAction
 from contentops.handlers._verify import (
     ETAG_CONFLICT_MESSAGE,
+    canonical_for_verify,
     compute_projection_hash,
     extract_etag,
     hash_mismatch_error,
@@ -80,7 +81,6 @@ from contentops.handlers.sentinel_automation_rule_models import (
     logic_app_name_from_resource_id,
     logic_app_resource_id,
     normalize_expiration,
-    playbook_id_from_resource_id,
     to_automation_rule_arm_body,
 )
 from contentops.providers.sentinel_arm import SentinelArmProvider
@@ -159,6 +159,16 @@ def _automation_projection(body: dict) -> dict:
         "playbookIds": _playbook_ids(actions),
         "conditionCount": len(conditions),
         "conditionKeys": _condition_keys(conditions),
+        # What the rule does, not only its shape: each action's settings
+        # (a close status, a classification, a severity, a playbook) and
+        # each condition's values (a title match, an analytic scope), in
+        # the form that ignores what ARM adds or re-cases on the way back.
+        "actions": canonical_for_verify([
+            {"order": (a or {}).get("order"), "actionType": (a or {}).get("actionType"),
+             "actionConfiguration": (a or {}).get("actionConfiguration")}
+            for a in actions
+        ]),
+        "conditions": canonical_for_verify(conditions),
     }
 
 
@@ -177,8 +187,7 @@ class SentinelAutomationRuleHandler:
         self._tenant_id = tenant_id
         self._detections_root = detections_root
         self._analytic_index: dict[str, str] | None = None
-        self._playbook_index: set[str] | None = None
-        self._managed_workflows: dict[str, bool] = {}
+        self._playbook_index: dict[str, str] | None = None
 
     def _provider_or_create(self) -> SentinelArmProvider | None:
         if self._provider is None:
@@ -199,50 +208,67 @@ class SentinelAutomationRuleHandler:
             self._analytic_index = index
         return self._analytic_index
 
-    def _playbooks(self) -> set[str]:
-        """Envelope ids of every local ``sentinel_playbook``."""
+    def _playbooks(self) -> dict[str, str]:
+        """``envelope id -> workflow name`` for every local ``sentinel_playbook``.
+
+        The workflow name is the one the playbook handler deploys under:
+        ``metadata.arm_name`` (a collected Logic App keeps its own name,
+        e.g. ``Notify_SOC`` for envelope ``notify-soc``), else the id.
+        """
         if self._playbook_index is None:
             from contentops.core.discovery import iter_loaded_assets
             root = self._detections_root or Path("detections")
             self._playbook_index = {
-                la.envelope.id for la in iter_loaded_assets(root)
+                la.envelope.id: la.envelope.arm_name or la.envelope.id
+                for la in iter_loaded_assets(root)
                 if la.envelope.asset is Asset.SENTINEL_PLAYBOOK
             }
         return self._playbook_index
 
-    def _is_managed_playbook(self, provider: SentinelArmProvider, envelope_id: str, name: str) -> bool:
-        """True when ``envelope_id`` is a playbook envelope in the repo, or
-        the workflow ``name`` carries the ContentOps managed tag (so the
-        same collect writes its envelope). Any read failure counts as not
-        managed: the rule then names the Logic App with ``logicApp:``,
-        which deploys the same way and needs no envelope."""
-        if envelope_id in self._playbooks():
-            return True
-        cache = self._managed_workflows
-        if name not in cache:
-            from contentops.handlers.sentinel_playbook_models import (
-                LOGIC_API_VERSION, LOGIC_NAMESPACE, WORKFLOWS, is_managed_workflow,
-            )
-            url = provider.resource_group_resource_url(
-                provider.config.effective_playbooks_resource_group,
-                LOGIC_NAMESPACE, WORKFLOWS, name, api_version=LOGIC_API_VERSION,
-            )
-            try:
-                resp = provider.request("GET", url)
-                cache[name] = resp.status_code == 200 and is_managed_workflow(resp.json())
-            except Exception as exc:  # noqa: BLE001 -- unreadable: not managed
-                logger.warning("could not read Logic App %s: %s", name, exc)
-                cache[name] = False
-        return cache[name]
+    def add_collected(self, *, analytics: dict[str, str], playbooks: dict[str, str]) -> None:
+        """Envelopes the same collect / drift run writes as new
+        (``envelope id -> ARM name`` / ``-> workflow name``), for the reverse
+        mapping: on a first collect the analytic and playbook files are not
+        on disk yet, and the rule would keep the raw resource id (with the
+        subscription GUID) and ``logicApp:``. A file on disk for the same
+        object wins; its id is the one the run keeps."""
+        index = self._analytics()
+        known = set(index.values())
+        for envelope_id, arm_name in analytics.items():
+            if arm_name not in known and envelope_id not in index:
+                index[envelope_id] = arm_name
+        pb_index = self._playbooks()
+        known_pb = {name.lower() for name in pb_index.values()}
+        for envelope_id, workflow_name in playbooks.items():
+            if workflow_name.lower() not in known_pb and envelope_id not in pb_index:
+                pb_index[envelope_id] = workflow_name
+
+    def _playbook_envelope_for(self, workflow_name: str) -> str | None:
+        """The local playbook envelope that deploys ``workflow_name`` (ARM
+        names are case-insensitive), or None.
+
+        ``playbook:`` names an envelope (lint and the dependency check hold
+        it to one), so collect writes it only when that envelope exists.
+        Otherwise the rule keeps ``logicApp: <name>``, which deploys the
+        same way and needs no envelope. The managed tag alone is not
+        enough: the playbook's own file may not be written (collect of
+        rules only, playbooks switched off, the playbook skipped).
+        """
+        wanted = workflow_name.lower()
+        for envelope_id, name in self._playbooks().items():
+            if name.lower() == wanted:
+                return envelope_id
+        return None
 
     def _resolve_playbook(self, playbook_id: str) -> tuple[str, str | None]:
         provider = self._provider_or_create()
         if provider is None:
             raise ValueError("resolving `playbook:` references requires a Sentinel provider")
         cfg = provider.config
+        workflow_name = self._playbooks().get(playbook_id, playbook_id)
         return (
             logic_app_resource_id(
-                cfg.subscriptionId, cfg.effective_playbooks_resource_group, playbook_id,
+                cfg.subscriptionId, cfg.effective_playbooks_resource_group, workflow_name,
             ),
             self._tenant_id,
         )
@@ -271,17 +297,22 @@ class SentinelAutomationRuleHandler:
                 action=PlanAction.SKIP, status="planned",
                 detail="experimental status — skipped",
             )
-        if loaded.envelope.status == "deprecated":
-            return ActionResult(
-                asset_id=loaded.envelope.id, asset_kind=self.asset.value,
-                action=PlanAction.SKIP, status="planned",
-                detail="deprecated automation rules are not deleted by deploy; use `prune`",
-            )
         logic = loaded.payload.get("triggeringLogic") or {}
         if is_expired(logic.get("expirationTimeUtc")):
+            # Also when deprecated: collect imports an expired rule as
+            # deprecated; it does nothing any more, and a PUT with an
+            # expiry in the past can be refused.
             return ActionResult(
                 asset_id=loaded.envelope.id, asset_kind=self.asset.value,
                 action=PlanAction.SKIP, status="planned", detail=EXPIRED_DETAIL,
+            )
+        if loaded.envelope.status == "deprecated":
+            # Switched off, like a deprecated analytic (``contentops
+            # disable`` sets this status). Deleting stays with ``prune``.
+            return ActionResult(
+                asset_id=loaded.envelope.id, asset_kind=self.asset.value,
+                action=PlanAction.DISABLE, status="planned",
+                detail="deprecated — deployed with isEnabled: false",
             )
         return ActionResult(
             asset_id=loaded.envelope.id, asset_kind=self.asset.value,
@@ -311,6 +342,11 @@ class SentinelAutomationRuleHandler:
             resolve_playbook=self._resolve_playbook,
             resolve_analytic=self._resolve_analytic,
         )
+        disabling = plan.action is PlanAction.DISABLE
+        if disabling:
+            body["properties"]["triggeringLogic"] = {
+                **(body["properties"].get("triggeringLogic") or {}), "isEnabled": False,
+            }
         guid = loaded.envelope.arm_name or envelope_id_to_guid(loaded.envelope.id)
         url = provider.resource_url(AUTOMATION_RULES, guid, api_version=AUTOMATION_API_VERSION)
 
@@ -344,7 +380,10 @@ class SentinelAutomationRuleHandler:
                 verified=False, error=response.text[:200],
             )
 
-        action = PlanAction.CREATE if response.status_code == 201 else PlanAction.UPDATE
+        if disabling:
+            action = PlanAction.DISABLE
+        else:
+            action = PlanAction.CREATE if response.status_code == 201 else PlanAction.UPDATE
         click.echo(f"  {action.value}: {loaded.envelope.id}")
 
         verified_remote = provider.get_resource(
@@ -395,6 +434,40 @@ class SentinelAutomationRuleHandler:
         except Exception as exc:  # pragma: no cover
             return delete_result_from_exception(remote_id, self.asset, exc)
         return delete_result_from_response(remote_id, self.asset, response)
+
+    def disable_in_place(self, loaded: LoadedAsset) -> ActionResult:
+        """Switch the tenant's rule off as it is (a locked rule set to
+        deprecated): its conditions and actions go back unchanged; only
+        ``isEnabled`` changes. An expired rule no longer runs: it counts as
+        off and is not written."""
+        from contentops.handlers._disable_in_place import disable_existing
+
+        provider = self._provider_or_create()
+        if provider is None:
+            raise RuntimeError("sentinel_automation_rule disable_in_place requires a SentinelArmProvider")
+        guid = loaded.envelope.arm_name or envelope_id_to_guid(loaded.envelope.id)
+        url = provider.resource_url(AUTOMATION_RULES, guid, api_version=AUTOMATION_API_VERSION)
+
+        def read() -> dict | None:
+            return provider.get_resource(AUTOMATION_RULES, guid, api_version=AUTOMATION_API_VERSION)
+
+        def is_off(obj: dict) -> bool:
+            logic = (obj.get("properties") or {}).get("triggeringLogic") or {}
+            return logic.get("isEnabled") is False or is_expired(logic.get("expirationTimeUtc"))
+
+        def switch_off(existing: dict):
+            props = dict(_strip_server_fields(existing).get("properties") or {})
+            props["triggeringLogic"] = {**(props.get("triggeringLogic") or {}), "isEnabled": False}
+            etag = extract_etag(existing)
+            headers = {"If-Match": etag} if etag else None
+            return provider.request("PUT", url, json={"properties": props}, headers=headers)
+
+        result = disable_existing(
+            asset_kind=self.asset.value, envelope_id=loaded.envelope.id,
+            existing=read(), is_off=is_off, switch_off=switch_off, read_back=read,
+        )
+        click.echo(f"  {result.action.value}: {loaded.envelope.id} ({result.detail})")
+        return result
 
     # --- Drift support -------------------------------------------------
 
@@ -463,9 +536,9 @@ class SentinelAutomationRuleHandler:
                 # check hold it to one); a Logic App ContentOps does not
                 # manage keeps its exact name under ``logicApp:``. Either
                 # way the subscription GUID stays out of the file.
-                pid = playbook_id_from_resource_id(str(rid), **where)
                 cfg.pop("logicAppResourceId", None)
-                if pid and self._is_managed_playbook(provider, pid, name):
+                pid = self._playbook_envelope_for(name)
+                if pid:
                     cfg["playbook"] = pid
                 else:
                     cfg["logicApp"] = name

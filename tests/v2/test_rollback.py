@@ -278,6 +278,44 @@ def test_cli_max_apply_fails_closed(tmp_path: Path) -> None:
     assert "exceeding --max-apply=1" in blocked.output
 
 
+def _repo_with_one_rule_and_one_broken_file(tmp_path: Path) -> tuple[Path, str]:
+    from contentops.devex.scaffold import scaffold
+
+    _init_repo(tmp_path)
+    det = tmp_path / "detections" / "sentinel_analytic"
+    det.mkdir(parents=True)
+    scaffold("sentinel_analytic", "rule-a", out=det / "rule-a.yml")
+    (det / "broken.yml").write_text("id: broken\nasset: sentinel_analytic\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "one rule and one broken file")
+    return tmp_path, _git(tmp_path, "rev-parse", "HEAD")
+
+
+def test_cli_full_rollback_refuses_when_a_file_fails_to_load(tmp_path: Path) -> None:
+    root, sha = _repo_with_one_rule_and_one_broken_file(tmp_path)
+    result = _invoke(["rollback", sha], root)
+    assert result.exit_code == 1, result.output
+    assert "failed to load" in result.output
+
+
+def test_cli_rule_id_rollback_is_not_blocked_by_other_broken_files(tmp_path: Path) -> None:
+    """An incident rollback of one rule must not be blocked because some other
+    file at that SHA no longer loads: the broken file is reported, the named
+    rule still enters the run (here it trips --max-apply=0)."""
+    root, sha = _repo_with_one_rule_and_one_broken_file(tmp_path)
+    result = _invoke(["rollback", sha, "--rule-id", "rule-a", "--max-apply", "0"], root)
+    assert "broken.yml" in result.output
+    assert "rollback scope is 1 asset(s)" in result.output, result.output
+
+
+def test_cli_rule_id_not_found_names_the_files_that_failed_to_load(tmp_path: Path) -> None:
+    root, sha = _repo_with_one_rule_and_one_broken_file(tmp_path)
+    result = _invoke(["rollback", sha, "--rule-id", "missing"], root)
+    assert result.exit_code == 1
+    assert "not found at SHA" in result.output
+    assert "1 file(s) at that SHA failed to load" in result.output
+
+
 def test_cli_max_apply_generous_cap_passes_the_brake(tmp_path: Path) -> None:
     """A cap that fits the scope does not trip the brake (the run proceeds
     past the count guard into the plan phase)."""

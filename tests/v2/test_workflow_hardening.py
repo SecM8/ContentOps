@@ -404,28 +404,121 @@ def test_retry_failed_is_a_dry_run_unless_confirmed() -> None:
     assert names.index("Refuse a real run without CONFIRM") < names.index("Run contentops retry-failed")
 
 
+_RERUN_ACTION = "./.github/actions/refuse-stale-rerun"
+
+
 def _rerun_guard() -> dict:
-    wf = _load(REPO_ROOT / ".github" / "workflows" / "deploy.yml")
-    steps = wf["jobs"]["deploy"]["steps"]
-    names = [s.get("name") for s in steps]
-    step = steps[names.index("Refuse a re-run of an older commit")]
-    assert names.index("Refuse a re-run of an older commit") < names.index(
-        "Apply changed detections to prod workspace(s)"
-    )
+    """The guard's script step, in its composite action."""
+    action = _load(REPO_ROOT / ".github" / "actions" / "refuse-stale-rerun" / "action.yml")
+    [step] = action["runs"]["steps"]
+    assert step["shell"] == "bash"
     return step
 
 
-def test_a_re_run_of_an_old_deploy_is_refused_by_the_workflow() -> None:
-    """A re-run of a deploy run applies that run's commit. Seen in a
-    deployment repo: re-running an older run put back a value that a later
-    merge had changed. A re-run (attempt 2 or more) now stops when its
-    commit is no longer the head of its branch. A first attempt is never
-    stopped: queued behind another push it must still deploy its own
-    changes."""
+@pytest.mark.parametrize(
+    ("workflow", "job"),
+    [("deploy.yml", "deploy"), ("prune.yml", "prune"), ("rollback.yml", "rollback"),
+     ("retry-failed.yml", "retry")],
+)
+def test_a_re_run_of_an_old_commit_is_refused_before_the_azure_login(workflow: str, job: str) -> None:
+    """A re-run of a run works from that run's commit. Seen in a deployment
+    repo: re-running an older deploy put back a value that a later merge had
+    changed. A prune re-run after main moved would take rules added since
+    for orphans and delete them; rollback and retry-failed re-send old
+    files. A re-run (attempt 2 or more) now stops when its commit is no
+    longer the head of its branch. A first attempt is never stopped: queued
+    behind another push it must still deploy its own changes."""
+    steps = _load(REPO_ROOT / ".github" / "workflows" / workflow)["jobs"][job]["steps"]
+    uses = [str(s.get("uses", "")) for s in steps]
+    assert _RERUN_ACTION in uses, f"{workflow} has no re-run guard"
+    setup = next(i for i, u in enumerate(uses) if u.endswith("/pipeline-setup"))
+    assert uses.index(_RERUN_ACTION) < setup
+
+
+def test_the_re_run_guard_reads_the_run_context() -> None:
     step = _rerun_guard()
     assert step["env"]["RUN_ATTEMPT"] == "${{ github.run_attempt }}"
     assert step["env"]["RUN_SHA"] == "${{ github.sha }}"
     assert step["env"]["BRANCH_REF"] == "${{ github.ref }}"
+
+
+def test_scheduled_drift_reads_the_state_and_the_history_it_compares_with() -> None:
+    """Drift names a changed rule whose file changed after its last deploy
+    (the commit the state file records). That needs the state branch and
+    that commit in the clone; a shallow checkout without state flags
+    nothing."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "drift.yml")
+    steps = wf["jobs"]["drift-write"]["steps"]
+    names = [s.get("name") for s in steps]
+    setup = next(s for s in steps if str(s.get("uses", "")).endswith("/pipeline-setup"))
+    assert str(setup["with"]["fetch-depth"]) == "0"
+    pull = next(i for i, s in enumerate(steps) if "contentops state sync pull" in str(s.get("run", "")))
+    assert pull < names.index("Run drift detection (write mode)")
+
+
+def _smoke_script() -> str:
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "deploy.yml")
+    step = next(s for s in wf["jobs"]["deploy"]["steps"] if s.get("name") == "Post-deploy smoke")
+    run = str(step["run"])
+    return run.split("python - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+
+def _row(status: str, result_status: str, verified=True) -> dict:
+    return {"asset": "sentinel_analytic", "id": result_status, "status": status,
+            "result_status": result_status, "verified": verified}
+
+
+@pytest.mark.parametrize(("rows", "fails"), [
+    # One rule the tenant rejects: tolerated, the rest deployed.
+    ([_row("success", "success"), _row("failed", "error-400", None)], False),
+    ([_row("success", "success"), _row("failed", "error-validate", None)], False),
+    # Not a content problem: an outage, throttling or lost access fails the deploy.
+    ([_row("success", "success"), _row("failed", "error-503", None)], True),
+    ([_row("success", "success"), _row("failed", "error-401", None)], True),
+    ([_row("success", "success"), _row("failed", "error-429", None)], True),
+    # Every write of a multi-rule deploy failed: nothing deployed.
+    ([_row("failed", "error-400", None), _row("failed", "error-apply", None)], True),
+    # Applied but not as authored.
+    ([_row("success", "success", False)], True),
+    ([_row("success", "success"), _row("skipped", "skipped", None)], False),
+])
+def test_the_post_deploy_smoke_tolerates_only_content_rejections(
+    tmp_path: Path, monkeypatch, rows: list[dict], fails: bool,
+) -> None:
+    """The smoke step tolerated every failure, so an expired credential or an
+    outage that failed every rule still gave a green deploy."""
+    import json as _json
+    import subprocess
+    import sys
+
+    failed = sum(1 for r in rows if r["status"] == "failed" or r["verified"] is False)
+    report = {"totals": {"total": len(rows), "failed": failed,
+                         "unverified": sum(1 for r in rows if r["verified"] is False)},
+              "results": rows}
+    (tmp_path / "apply-report.json").write_text(_json.dumps(report), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    result = subprocess.run([sys.executable, "-c", _smoke_script()], cwd=tmp_path,
+                            env={**__import__("os").environ, "GITHUB_STEP_SUMMARY": str(summary)},
+                            capture_output=True, text=True)
+    assert (result.returncode != 0) is fails, result.stdout + result.stderr
+
+
+_WRITE_WORKFLOWS = ("deploy.yml", "promote-to-integration.yml", "prune.yml", "retry-failed.yml",
+                    "rollback.yml", "state-adopt.yml")
+
+
+@pytest.mark.parametrize("workflow", _WRITE_WORKFLOWS)
+def test_a_write_workflow_stops_when_the_state_pull_fails(workflow: str) -> None:
+    """``state sync pull`` succeeds when there is no state branch yet; it
+    fails only when the branch cannot be read. ``|| notice`` turned that
+    failure into "starting from empty state", and the run wrote to the
+    tenant before its state push failed."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / workflow)
+    runs = [str(s.get("run", "")) for job in wf["jobs"].values() for s in job.get("steps") or []]
+    pulls = [r for r in runs if re.search(r"\bcontentops\s+state\s+sync\s+pull\b", r)]
+    assert pulls, f"{workflow} does not pull the state"
+    for run in pulls:
+        assert not re.search(r"state\s+sync\s+pull[^\n]*\|\|", run), run
 
 
 @pytest.mark.parametrize(
@@ -469,7 +562,20 @@ def test_the_re_run_guard_script(tmp_path: Path, attempt: str, moved: bool, refu
                             capture_output=True, text=True)
     assert (result.returncode != 0) is refused, result.stdout + result.stderr
     if refused:
-        assert "Nothing was applied" in result.stdout
+        assert "Nothing was changed" in result.stdout
+
+
+def test_integration_passes_the_kill_switch_override_only_when_asked() -> None:
+    """The live tests skip a switched-off kind unless the dispatch sets
+    ``ignore-kill-switch``; the label path never sets it."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "integration.yml")
+    on = wf.get("on") or wf.get(True)
+    option = on["workflow_dispatch"]["inputs"]["ignore-kill-switch"]
+    assert option["type"] == "boolean" and option["default"] is False
+    job = wf["jobs"]["integration"]
+    assert job["env"]["CONTENTOPS_LIVE_IGNORE_KILL_SWITCH"] == "${{ inputs.ignore-kill-switch && '1' || '' }}"
+    setup = next(s for s in job["steps"] if "pipeline-setup" in str(s.get("uses", "")))
+    assert setup["with"]["disabled-kinds"] == "${{ vars.CONTENTOPS_DISABLED_KINDS }}"
 
 
 # A real ``state sync push``, not its ``--help`` (CI smoke tests call that).
@@ -487,18 +593,35 @@ def test_workflows_that_push_the_tenant_state_queue_with_deploy(path: Path) -> N
     if path.name == "promote-to-integration.yml":
         return
     wf = _load(path)
-    pushes = any(
-        _STATE_PUSH.search(str(step.get("run", "")))
-        for job in (wf.get("jobs") or {}).values()
-        for step in (job.get("steps") or [])
-    )
-    if not pushes:
-        return
-    group = str((wf.get("concurrency") or {}).get("group", ""))
-    assert "deploy-prod" in group or group == "deploy-${{ inputs.env }}", (
-        f"{path.name} pushes the state branch but queues as {group!r}, "
-        "beside deploy.yml's deploy-prod"
-    )
+    for name, job in (wf.get("jobs") or {}).items():
+        pushes = any(_STATE_PUSH.search(str(step.get("run", ""))) for step in (job.get("steps") or []))
+        if not pushes:
+            continue
+        # The queue is the job's own group, else the workflow's.
+        group = str((job.get("concurrency") or wf.get("concurrency") or {}).get("group", ""))
+        # One queue, whatever the env input says: with a single tenant.yml an
+        # `env: integration` run pushes the same state ref as a prod deploy,
+        # so `deploy-<env>` let the two run side by side.
+        assert group == "deploy-prod", (
+            f"{path.name}:{name} pushes the state branch but queues as {group!r}, "
+            "not with deploy.yml in deploy-prod"
+        )
+
+
+def test_a_push_deploy_cancelled_in_the_queue_raises_the_alert() -> None:
+    """GitHub keeps one pending run per concurrency group: a newer queued run
+    cancels the one still waiting. A push deploy diffs only its own push, so
+    a cancelled one never deploys its changes. With the group on the whole
+    workflow the cancelled run started no job and nothing reported it. The
+    group sits on the deploy job, so the run starts and its alert job sees
+    the cancellation."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "deploy.yml")
+    assert "concurrency" not in wf
+    deploy = wf["jobs"]["deploy"]
+    assert deploy["concurrency"] == {"group": "deploy-prod", "cancel-in-progress": False}
+    condition = " ".join(str(wf["jobs"]["notify-failure"]["if"]).split())
+    assert "needs.deploy.result == 'failure'" in condition
+    assert "needs.deploy.result == 'cancelled'" in condition
 
 
 def _integration_step() -> tuple[dict, dict, str]:
@@ -540,3 +663,25 @@ def test_integration_passes_the_probe_device_group_and_keeps_the_report() -> Non
     assert upload["if"] == "always()"
     assert upload["with"]["path"] == "defender-shape-report.md"
     assert upload["with"]["if-no-files-found"] == "ignore"
+
+
+@pytest.mark.parametrize(("rows", "fails"), [
+    ([_row("success", "success"), _row("failed", "error-network", None)], True),
+    ([_row("success", "success"), _row("failed", "error-auth", None)], True),
+    # One rule rejected in each of two workspaces is one rule, not "every
+    # write of a multi-rule deploy failed".
+    ([{**_row("failed", "error-400", None), "id": "a"}, {**_row("failed", "error-400", None), "id": "a"}], False),
+])
+def test_the_post_deploy_smoke_reads_network_auth_and_rules(tmp_path: Path, rows: list[dict], fails: bool) -> None:
+    import json as _json
+    import os
+    import subprocess
+    import sys
+
+    failed = sum(1 for r in rows if r["status"] == "failed" or r["verified"] is False)
+    report = {"totals": {"total": len(rows), "failed": failed, "unverified": 0}, "results": rows}
+    (tmp_path / "apply-report.json").write_text(_json.dumps(report), encoding="utf-8")
+    result = subprocess.run([sys.executable, "-c", _smoke_script()], cwd=tmp_path,
+                            env={**os.environ, "GITHUB_STEP_SUMMARY": str(tmp_path / "s.md")},
+                            capture_output=True, text=True)
+    assert (result.returncode != 0) is fails, result.stdout + result.stderr

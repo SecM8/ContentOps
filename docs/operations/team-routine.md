@@ -28,6 +28,14 @@ it and decide per rule:
 - **The portal change is not wanted** — **revert it in the portal**
   and close the PR. Once the tenant matches git again, the next drift
   run no longer reports the rule.
+- **The PR lists the rule under "Changed in the repository after the
+  last deploy"** — the difference is most likely a merge the tenant has
+  not received (a repository that deploys by hand). Do not merge that
+  file: the repository wins over drift. Run **Deploy to production** on
+  `main` with `changed_since` set to the commit before that merge (an
+  empty `changed_since` re-applies every detection), and the next drift
+  run reports the rule in sync. After a rollback the tenant holds the
+  older version on purpose: revert the change in git instead.
 
 Merging a `drift/*` PR **never deploys**: `deploy.yml` skips any merge
 commit from a `drift/auto-*` or `collect/*` branch, because its content
@@ -76,6 +84,7 @@ run Monday morning UTC):
 | `could not add label: 'pipeline-alert' not found` | A job with an `upstream` remote sent `gh` to the public mirror instead of your repo (no `GH_REPO`). | Sync the tool from upstream; add `GH_REPO: ${{ github.repository }}` to any fork-local workflow that adds `upstream`. See [troubleshooting](../troubleshooting.md#could-not-add-label-pipeline-alert-not-found). |
 | `GitHub Actions is not permitted to create or approve pull requests` | The org disallows PR creation by the built-in `GITHUB_TOKEN`. | Allow it in the org settings, or set the `AUTO_PR_TOKEN` secret — the PR-opening workflows must use it when the setting stays off. Set it anyway when a ruleset on `main` requires a workflow to pass: `GITHUB_TOKEN`-opened PRs get their runs held for approval and stay unmergeable until someone approves them. See [`github-actions-setup.md`](github-actions-setup.md#common-failure-modes--fixes). |
 | `Could not locate all the workspaces in your query` when saving a rule | The rule's query (or a function it calls) reads another workspace by name, e.g. `workspace("law-other")`. The deploy identity cannot see that workspace, so Sentinel refuses the save. | Grant the deploy identity read on that workspace (Log Analytics Reader) **and** Reader on its subscription so the name resolves. If that is not possible, lock the rule (`contentops lock <id>`, i.e. `localCustomization: true`) so deploys leave it alone. |
+| Red deploy: `rule(s) failed with an access, throttling, server or network error`, or `Every one of the N rules failed` | Post-deploy smoke tolerates a rule the tenant rejects for its content (a warning), not lost access (401 / 403, or no token), throttling (429), a service or network error (5xx), on the write or the read before it, nor a deploy of several rules in which none landed. The rules that succeeded are deployed; the state branch is not advanced. | Read the items in the step summary. Fix access (role assignment, federated credential) or wait out the outage, then run **Deploy to production** on `main` with `changed_since` set to the same commit the failed run used (an empty `changed_since` re-applies every detection). |
 | Red deploy with `0 asset(s) selected` | An older tool version failed docs-only pushes to `main` that selected nothing to deploy. | Fixed in recent tool versions — sync the tool. Nothing was deployed and nothing needs re-running. |
 
 Anything else: [`troubleshooting.md`](../troubleshooting.md), then the

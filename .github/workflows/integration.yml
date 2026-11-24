@@ -33,6 +33,11 @@ on:
         required: false
         default: ""
         type: string
+      ignore-kill-switch:
+        description: "Run live tests of a kind CONTENTOPS_DISABLED_KINDS switches off (for example the Defender probe, to find out why it was switched off). Default false: those tests skip."
+        required: false
+        default: false
+        type: boolean
   pull_request:
     types: [labeled]
 
@@ -69,6 +74,10 @@ jobs:
       # rule; without it the probe copies one from an existing scoped rule
       # or skips the scope questions. Never written to the report.
       DEFENDER_PROBE_DEVICE_GROUP: ${{ vars.DEFENDER_PROBE_DEVICE_GROUP }}
+      # The kind kill switch applies to the live tests too: a test that
+      # writes a switched-off kind skips unless this is set
+      # (tests/integration/kill_switch.py). The label path never sets it.
+      CONTENTOPS_LIVE_IGNORE_KILL_SWITCH: ${{ inputs.ignore-kill-switch && '1' || '' }}
     steps:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

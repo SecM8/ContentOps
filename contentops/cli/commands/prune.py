@@ -22,7 +22,7 @@ from contentops.cli.commands._shared import (
     _resolve_single_workspace_or_exit,
     _skip_if_integration_role_absent,
 )
-from contentops.cli.commands.apply_support import _build_audit_record
+from contentops.cli.commands.apply_support import _build_audit_record, forget_in_state
 from contentops.core.asset import Asset
 from contentops.core.discovery import iter_loaded_assets
 from contentops.core.registry import default_registry
@@ -164,7 +164,23 @@ def prune_cmd(
         )
     max_deletes = effective_max_deletes
 
-    register_default_handlers()
+    # A detection file that fails to load is missing from the local side,
+    # so its live rule would count as an orphan and be deleted. Refuse,
+    # dry run included (the plan would be wrong), before touching Azure.
+    from contentops.core.drift import local_load_errors
+    unloadable = local_load_errors(detections_path)
+    if unloadable:
+        for path, exc in unloadable:
+            click.echo(f"  load error: {path}: {exc}", err=True)
+        click.echo(
+            f"\nerror: {len(unloadable)} detection file(s) failed to load "
+            f"({', '.join(p.name for p, _ in unloadable)}). Refusing to prune: their "
+            "live rules would count as orphans and be deleted. Fix the files and re-run.",
+            err=True,
+        )
+        sys.exit(2)
+
+    register_default_handlers(detections_root=detections_path)
     if not as_json:
         _print_run_banner(
             "prune",
@@ -483,6 +499,9 @@ def prune_cmd(
         path = write_records(Path.cwd(), records)
         if not as_json:
             click.echo(f"[audit] wrote {len(records)} prune records to {path}")
+    # What was deleted is no longer managed: drop it from the state file
+    # the workflow pushes next.
+    forget_in_state([(o["asset"], o["envelope_id"], str(o.get("remote_id") or "")) for o in deleted])
 
     if as_json:
         summary["deleted"] = deleted

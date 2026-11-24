@@ -430,8 +430,8 @@ _DEFENDER_SUB_HOURLY_LOOKBACK_LIMIT = timedelta(hours=48)  # exclusive
 _DEFENDER_SUB_DAILY_MAX_LOOKBACK = timedelta(days=14)
 _DEFENDER_MAX_LOOKBACK = timedelta(days=30)
 
-# Either the week form (``PnW``, which stands alone) or days and/or a time
-# part. A "T" must be followed by at least one time component: ``P1DT`` is
+# Either the week form (``PnW``, which stands alone; matched only so it can
+# be refused with a clear message) or days and/or a time part. A "T" must be followed by at least one time component: ``P1DT`` is
 # not a duration, and reading it as one day would let a malformed value
 # through. Digits are ASCII only (``\d`` would also match other scripts).
 # The pattern is applied with ``fullmatch`` to the value exactly as it would
@@ -447,12 +447,13 @@ _ISO_8601_DURATION_RE = re.compile(
 def _parse_schedule_duration(value: str, *, field: str) -> timedelta:
     """Parse an ISO 8601 duration as Graph writes it for a rule schedule.
 
-    Accepted: whole weeks alone (``P2W``), or days, hours, minutes and
-    whole seconds (``PT0S``, ``PT15M``, ``PT1H``, ``P1D``, ``P1DT12H``).
-    Months and years have no fixed length and are not schedule values.
-    Anything else is rejected, including a value with padding around it,
-    weeks combined with another unit, and a number too large to be a
-    duration.
+    Accepted: days, hours, minutes and whole seconds (``PT0S``, ``PT15M``,
+    ``PT1H``, ``P1D``, ``P1DT12H``). The week form (``P1W``, ``P2W``) is
+    recognised only to be refused with the day form to write instead:
+    Graph rejects weeks for a rule schedule. Months and years have no
+    fixed length and are not schedule values. Anything else is rejected,
+    including a value with padding around it, weeks combined with another
+    unit, and a number too large to be a duration.
     """
     error = ValueError(
         f"schedule.{field} must be an ISO 8601 duration such as PT1H or P1D, got {value!r}"

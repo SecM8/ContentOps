@@ -185,14 +185,14 @@ def test_iter_records_skips_malformed_lines(tmp_path: Path) -> None:
 def _setup_repo(tmp_path: Path) -> Path:
     """Build a synthetic detections + audit dir for CLI tests."""
     detections = tmp_path / "detections"
-    (detections / "sentinel").mkdir(parents=True)
-    (detections / "sentinel" / "rule.yml").write_text(
+    (detections / "sentinel_analytic").mkdir(parents=True)
+    (detections / "sentinel_analytic" / "rule.yml").write_text(
         """\
 id: sentinel-rule
 version: 1.0.0
-platform: sentinel
+asset: sentinel_analytic
 status: production
-sentinel:
+payload:
   kind: Scheduled
   displayName: x
   severity: Low

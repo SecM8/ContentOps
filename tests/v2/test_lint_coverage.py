@@ -461,3 +461,22 @@ def test_envelope001_emits_error(tmp_path) -> None:
     [finding] = linted.findings
     assert finding.rule_id == "ENVELOPE001"
     assert finding.severity == _EXPECTED_SEVERITIES["ENVELOPE001"]
+
+
+def test_payload015_does_not_promise_that_an_import_drops_the_old_keys() -> None:
+    """It said "the next import from the tenant drops the old ones"; an
+    import keeps both sets (Graph returns the old keys next to the new
+    ones), so the warning stayed on every collected rule and the advice
+    misled."""
+    from contentops.core.asset import Asset
+    from contentops.lint.payload import lint_payload
+
+    payload = {
+        "displayName": "x", "queryCondition": {"queryText": "DeviceEvents"},
+        "schedule": {"period": "1H", "frequency": "PT1H"},
+        "detectionAction": {"alertTemplate": {"title": "x", "severity": "low",
+                                              "category": "Discovery", "tactics": []}},
+    }
+    finding = next(f for f in lint_payload(payload, asset=Asset.DEFENDER_CUSTOM_DETECTION) if f.rule_id == "PAYLOAD015")
+    assert "drops the old" not in finding.message
+    assert "import" in finding.message

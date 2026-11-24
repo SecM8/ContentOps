@@ -132,11 +132,27 @@ def _classify_collected_drift(
     """
     from contentops.core.drift import (
         DriftEntry, DriftReport, _local_index, _local_names, _match_local, _payloads_match,
+        comparing_with_playbooks,
     )
 
     report = DriftReport()
+    with comparing_with_playbooks(detections_path):
+        return _classify_into(
+            report, drift_handlers, handler_results, detections_path, since_dt,
+            DriftEntry, _local_index, _local_names, _match_local, _payloads_match,
+        )
+
+
+def _classify_into(
+    report, drift_handlers, handler_results, detections_path, since_dt,
+    DriftEntry, _local_index, _local_names, _match_local, _payloads_match,  # noqa: N803
+):
+    """Body of ``_classify_collected_drift`` (run inside the playbook index)."""
+    from contentops.core.drift import record_new_id, references_last, seed_same_run_references
+
+    new_ids: dict = {}
     try:
-        for handler in drift_handlers:
+        for handler in references_last(drift_handlers):
             asset_value = handler.asset.value
             local = _local_index(detections_path, handler.asset)
             names = _local_names(detections_path, handler.asset)
@@ -144,6 +160,7 @@ def _classify_collected_drift(
                 str(r.get("name") or r.get("id") or "")
                 for r in handler_results.get(asset_value, [])
             }
+            seed_same_run_references(handler, new_ids)
             pairs: list[tuple[dict, dict]] = []
             for remote in handler_results.get(asset_value, []):
                 if since_dt is not None:
@@ -166,6 +183,7 @@ def _classify_collected_drift(
                         asset=handler.asset, asset_id=asset_id, kind="new",
                         envelope=envelope,
                     ))
+                    record_new_id(new_ids, handler.asset, asset_id, envelope)
                     continue
                 local_path, local_payload = match
                 if not stale_id and _payloads_match(local_payload, new_payload, handler.asset):

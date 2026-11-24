@@ -81,8 +81,15 @@ payload:
 4. Role verification (below).
 
 `delete` (prune) removes the workflow and then only the connections
-tagged `contentops-playbook=<id>`; untagged connections are never
-touched.
+tagged `contentops-playbook=<workflow name>`; untagged connections are
+never touched. Apply sets that tag only on a connection it creates: a
+connection that already existed (a collected `connectionName`, perhaps
+shared with another Logic App) keeps its own tags, so pruning one
+playbook never deletes a connection another one uses.
+
+A playbook with `status: deprecated` (what `contentops disable` sets)
+is deployed with `state: Disabled`; drift reads that as in sync.
+Deleting it stays with `prune`.
 
 ## Connections: declared, never pasted
 
@@ -149,9 +156,9 @@ Consumption Logic Apps bill per action execution and are subject to
 Logic Apps concurrency limits. A playbook attached to a broad
 incident-created automation rule can run thousands of times a day;
 prefer scoped conditions and `expirationTimeUtc` on the calling rule.
-Treat `verified=True` as "the deployed workflow has the triggers,
-actions and connectors we sent", not as byte equality — review the
-sidecar diff in the PR for what the actions actually do.
+`verified=True` means the deployed workflow holds the definition that
+was sent, action inputs included (lists compared as sets, resource ids
+case-insensitively), plus the same connectors, identity and state.
 
 ## Lint
 

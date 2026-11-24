@@ -9,6 +9,10 @@ Each test cleans up via the `created_sentinel_rules` fixture.
 
 from __future__ import annotations
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS = ("sentinel_analytic",)
+
 
 def _scheduled_rule_body(display_name: str) -> dict:
     """Minimal valid ScheduledAlertRule payload for the ARM upsert API.

@@ -46,7 +46,7 @@ def register(monkeypatch):
     default_registry._instances.clear()
 
     def _register(*handlers: _Handler) -> None:
-        def _install() -> None:
+        def _install(**_kw) -> None:
             for h in handlers:
                 default_registry.register(h.asset, lambda h=h: h)
         monkeypatch.setattr(

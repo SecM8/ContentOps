@@ -84,7 +84,7 @@ def _iso(monkeypatch):
     monkeypatch.setattr(A, "_compute_snippet_digest", lambda la, la_resolved: "digest-x")
     # The per-workspace re-register would otherwise install the REAL factories
     # (and need tenant config); the registry stays as the test set it.
-    monkeypatch.setattr(A, "register_default_handlers", lambda: None)
+    monkeypatch.setattr(A, "register_default_handlers", lambda **_kw: None)
     monkeypatch.delenv("PIPELINE_WORKSPACE_NAME", raising=False)
     yield
 

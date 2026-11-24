@@ -138,6 +138,18 @@ def find_entry_for(
     new/changed/in-sync classification logic. Returns None if the
     rule isn't found anywhere (neither remote nor local).
     """
+    from contentops.core.drift import comparing_with_playbooks
+
+    # Compare as drift does (``playbook:`` ids resolve to workflow names).
+    with comparing_with_playbooks(detections_root):
+        return _find_entry_for(handlers, detections_root, asset_id)
+
+
+def _find_entry_for(
+    handlers: list[DriftCapable],
+    detections_root: Path,
+    asset_id: str,
+) -> DriftEntry | None:
     from contentops.core.drift import (
         _payloads_match, disambiguate_envelope_ids,
     )

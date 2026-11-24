@@ -90,7 +90,7 @@ It is the gated counterpart to the CLI command:
   GitHub Environment, whose required-reviewer rule must approve before
   any write. `integration` / `dev` run without that gate.
 - **Serialised against deploys.** It shares `deploy.yml`'s concurrency
-  group (`deploy-<env>`), so a rollback queues behind — and never races
+  group (`deploy-prod`, whatever the env input), so a rollback queues behind — and never races
   — an in-flight deploy of the same env.
 - **OIDC, no secrets.** Same federated App Registration as the rest of
   the pipeline (via the `pipeline-setup` composite action).

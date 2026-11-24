@@ -19,8 +19,11 @@ state file. No live workspace query (that's `navigator` / `drift`).
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from contentops.core.discovery import iter_loaded_assets
 from contentops.state import EnvState
@@ -71,6 +74,68 @@ def find_undeployed(detections_root: Path, state: EnvState) -> UndeployedReport:
         total_managed=state.asset_count(),
         undeployed=undeployed,
     )
+
+
+def _file_id(path: Path) -> str | None:
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — an unreadable file is simply not flagged
+        return None
+    rid = raw.get("id") if isinstance(raw, dict) else None
+    return str(rid) if rid else None
+
+
+def _changed_between(repo: Path, sha: str, paths: list[Path]) -> bool:
+    """True when ``paths`` differ between commit ``sha`` and ``HEAD``.
+    Unknown (the commit is not in this clone, git fails) reads as False."""
+    rels: list[str] = []
+    for p in paths:
+        try:
+            rels.append(p.resolve().relative_to(repo.resolve()).as_posix())
+        except ValueError:
+            rels.append(p.as_posix())
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "diff", "--quiet", sha, "HEAD", "--", *rels],
+            capture_output=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 1
+
+
+def changed_since_last_deploy(entries, state: EnvState, *, repo: Path) -> set[tuple[str, str]]:
+    """``(asset kind, drift id)`` of the changed drift entries whose local
+    file (or playbook sidecar) changed in git after the commit the rule was
+    last applied from (its state entry's ``last_applied_sha``).
+
+    Such drift is usually a merged change the tenant has not received yet
+    (a repository that deploys by hand): merging the drift PR would undo
+    the merge. A rule whose last apply failed is named too (the tenant
+    kept an older version). No state entry, no recorded commit, or a
+    commit this clone does not have flags nothing.
+    """
+    flagged: set[tuple[str, str]] = set()
+    for entry in entries:
+        path = getattr(entry, "local_path", None)
+        if path is None:
+            continue
+        path = Path(path)
+        kind = entry.asset.value
+        local_id = _file_id(path) or entry.asset_id
+        recorded = (state.managed_assets.get(kind) or {}).get(local_id)
+        if recorded is not None and recorded.status == "failed":
+            # The last apply of this file was rejected: the tenant still
+            # holds an older version, whatever commit the state records.
+            flagged.add((kind, entry.asset_id))
+            continue
+        sha = recorded.last_applied_sha if recorded is not None else ""
+        if not sha:
+            continue
+        paths = [path, *sorted(path.parent.glob(f"{path.stem}.*.json"))]
+        if _changed_between(repo, sha, paths):
+            flagged.add((kind, entry.asset_id))
+    return flagged
 
 
 def render_markdown(report: UndeployedReport) -> str:
@@ -142,6 +207,7 @@ def render_json(report: UndeployedReport) -> str:
 __all__ = [
     "UndeployedRule",
     "UndeployedReport",
+    "changed_since_last_deploy",
     "find_undeployed",
     "render_markdown",
     "render_json",

@@ -532,3 +532,56 @@ def test_validation_checks_the_file_and_what_would_be_sent() -> None:
     blank["schedule"]["frequency"] = ""
     with pytest.raises(ValueError):
         handler.validate(_loaded(blank))
+
+
+def test_a_create_that_returns_no_rule_id_says_so() -> None:
+    """A 201 without a usable id went on to the post-apply check and was
+    reported as "post-apply GET returned 404", although no GET was made."""
+    from tests.v2.defender_shapes import FakeResponse
+
+    graph = FakeGraph()
+    graph.create_rule = lambda body: FakeResponse(201, {})  # type: ignore[method-assign]
+    result = _handler(graph).apply(_loaded(current_payload(displayName="Brand new")))
+    assert result.verified is False
+    assert "no rule id" in (result.error or "")
+    assert "404" not in (result.error or "")
+
+
+def test_a_status_only_change_sends_only_the_status() -> None:
+    """A disable (``status: deprecated``) re-sent the whole rule. A rule that
+    Graph's tightened check no longer accepts as written then failed with a
+    400, and kept running."""
+    graph, rule_id = _tenant_with(current_payload())
+    result = _handler(graph).apply(_loaded(current_payload(), status="deprecated", arm_name=rule_id))
+    patches = [body for method, _, body in graph.writes() if method == "PATCH"]
+    assert patches == [{"status": "disabled"}]
+    assert result.verified is True
+
+
+def test_an_auto_disabled_rule_is_not_switched_back_on() -> None:
+    """Defender switches a rule to autoDisabled after repeated failures;
+    re-enabling it is a deliberate act. A file saying ``enabled`` sent
+    ``status: enabled`` and re-enabled it on the next deploy."""
+    graph, rule_id = _tenant_with(current_payload())
+    graph._rules[rule_id]["status"] = "autoDisabled"
+    result = _handler(graph).apply(_loaded(current_payload(status="enabled"), arm_name=rule_id))
+    assert not any(method == "PATCH" and "status" in (body or {}) for method, _, body in graph.writes())
+    assert graph.rule(rule_id)["status"] == "autoDisabled"
+    assert "auto-disabled" in (result.detail or "")
+
+
+def test_the_dry_run_of_an_auto_disabled_rule_agrees_with_the_deploy() -> None:
+    """Deploy leaves an auto-disabled tenant rule alone when the file says
+    ``enabled`` (re-enabling is a portal decision); the dry run said
+    "Would update (status)", so plan comments over-counted."""
+    payload = current_payload()
+    payload["status"] = "enabled"
+    tenant_rule = copy.deepcopy(payload)
+    tenant_rule["status"] = "autoDisabled"
+    graph, graph_id = _tenant_with(tenant_rule)
+    handler = _handler(graph)
+    dry = handler.apply(_loaded(payload, arm_name=graph_id), dry_run=True)
+    real = _handler(graph).apply(_loaded(payload, arm_name=graph_id))
+    assert real.action is PlanAction.NOOP
+    assert dry.action is PlanAction.NOOP, dry.detail
+    assert "auto-disabled" in dry.detail

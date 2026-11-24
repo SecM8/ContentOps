@@ -19,6 +19,10 @@ import os
 
 import pytest
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS: tuple[str, ...] = ()  # doctor matrix, read-only
+
 
 # ---------------------------------------------------------------------------
 # Doctor matrix — runs as part of the live suite

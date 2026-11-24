@@ -102,11 +102,13 @@ class _Echo:
         self.put_status = put_status
         self.mutate = mutate
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.headers: list[httpx.Headers] = []
         self.stored: dict | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content) if request.content else None
         self.calls.append((request.method, str(request.url), body))
+        self.headers.append(request.headers)
         if request.method == "GET":
             current = self.stored or self.existing
             if current is None:
@@ -132,10 +134,10 @@ def test_validate_ok_and_rejects_bad_payload() -> None:
         h.validate(_loaded(payload={"displayName": "x", "order": 1, "triggeringLogic": {}, "actions": []}))
 
 
-def test_plan_skips_experimental_deprecated_and_expired() -> None:
+def test_plan_skips_experimental_and_expired_and_disables_deprecated() -> None:
     h = SentinelAutomationRuleHandler(lambda: None)
     assert h.plan(_loaded(status="experimental")).action is PlanAction.SKIP
-    assert h.plan(_loaded(status="deprecated")).action is PlanAction.SKIP
+    assert h.plan(_loaded(status="deprecated")).action is PlanAction.DISABLE
     expired = _payload(triggeringLogic={"expirationTimeUtc": "2020-01-01T00:00:00Z", "conditions": []})
     r = h.plan(_loaded(payload=expired))
     assert r.action is PlanAction.SKIP and r.detail == EXPIRED_DETAIL
@@ -164,7 +166,8 @@ def test_apply_create_uses_uuid5_guid_and_stable_api_version() -> None:
     guid = envelope_id_to_guid("auto-close-info")
     assert f"Microsoft.SecurityInsights/automationRules/{guid}" in put_url
     assert f"api-version={AUTOMATION_API_VERSION}" in put_url
-    assert "If-Match" not in {k for k in []}  # first create: no etag header (checked below)
+    # First create: the GET found nothing, so the PUT carries no etag.
+    assert "If-Match" not in echo.headers[1]
     assert r.extra["arm_name"] == guid
     h.close()
 
@@ -295,11 +298,47 @@ def test_projection_detects_swapped_playbook_but_tolerates_casing_and_reordering
                 {"order": 2, "actionType": "ModifyProperties", "actionConfiguration": {"severity": "Low"}}])
     two_rev = body(list(reversed(two["properties"]["actions"])))
     assert _automation_projection(two) == _automation_projection(two_rev)
-    # Known limitation: a mutated action parameter is not detected.
+    # An action's settings are compared: a suppression that closes with
+    # another status or classification is not the rule that was sent.
     sev = body([{"order": 1, "actionType": "ModifyProperties", "actionConfiguration": {"severity": "High"}}])
-    assert _automation_projection(sev) == _automation_projection(
+    assert _automation_projection(sev) != _automation_projection(
         body([{"order": 1, "actionType": "ModifyProperties", "actionConfiguration": {"severity": "Low"}}]))
 
+
+def test_projection_compares_settings_but_tolerates_what_arm_adds() -> None:
+    """Seen against a workspace: ARM returns every ModifyProperties field
+    we left out as null, adds ``labelType: "User"`` to labels, and changes
+    the casing of an analytic resource id in a scope condition. None of that
+    is a different rule; another close status or another scope is."""
+    rid = "/subscriptions/S/resourceGroups/RG/providers/Microsoft.OperationalInsights/workspaces/WS/providers/Microsoft.SecurityInsights/alertRules/abc"
+
+    def body(cfg: dict, scope: str, title: str = "zz-a") -> dict:
+        return {"properties": {**_payload(), "triggeringLogic": {
+            "isEnabled": True, "triggersOn": "Incidents", "triggersWhen": "Created",
+            "conditions": [
+                {"conditionType": "Property", "conditionProperties": {
+                    "propertyName": "IncidentTitle", "operator": "Contains", "propertyValues": [title, "zz-b"]}},
+                {"conditionType": "Property", "conditionProperties": {
+                    "propertyName": "IncidentRelatedAnalyticRuleIds", "operator": "Contains", "propertyValues": [scope]}},
+            ]}, "actions": [{"order": 1, "actionType": "ModifyProperties", "actionConfiguration": cfg}]}}
+
+    sent = body({"status": "Closed", "classification": "BenignPositive",
+                 "classificationReason": "SuspiciousButExpected", "labels": [{"labelName": "zz"}]}, rid)
+    returned = body({"status": "Closed", "classification": "BenignPositive",
+                     "classificationReason": "SuspiciousButExpected", "classificationComment": None,
+                     "owner": None, "severity": None, "labels": [{"labelName": "zz", "labelType": "User"}]},
+                    rid.lower())
+    assert _automation_projection(sent) == _automation_projection(returned)
+    other_status = body({"status": "Active", "labels": [{"labelName": "zz"}]}, rid)
+    assert _automation_projection(sent) != _automation_projection(other_status)
+    other_scope = body({"status": "Closed", "classification": "BenignPositive",
+                        "classificationReason": "SuspiciousButExpected", "labels": [{"labelName": "zz"}]},
+                       rid.replace("/abc", "/xyz"))
+    assert _automation_projection(sent) != _automation_projection(other_scope)
+    other_title = body({"status": "Closed", "classification": "BenignPositive",
+                        "classificationReason": "SuspiciousButExpected", "labels": [{"labelName": "zz"}]},
+                       rid, title="zz-other")
+    assert _automation_projection(sent) != _automation_projection(other_title)
 
 def test_delete_passes_api_version_and_treats_404_as_success() -> None:
     seen: dict = {}
@@ -456,3 +495,87 @@ def test_apply_resolves_an_unmanaged_logic_app_into_playbooks_rg_and_tenant() ->
 
 def test_handler_satisfies_drift_protocol() -> None:
     assert isinstance(SentinelAutomationRuleHandler(lambda: None), DriftCapable)
+
+
+def _write_named_playbook(root: Path, envelope_id: str, arm_name: str) -> None:
+    (root / "sentinel_playbook").mkdir(exist_ok=True)
+    (root / "sentinel_playbook" / f"{envelope_id}.yml").write_text(yaml.safe_dump({
+        "id": envelope_id, "version": "1.0.0", "asset": "sentinel_playbook", "status": "production",
+        "metadata": {"arm_name": arm_name},
+        "payload": {"definition": {"triggers": {}, "actions": {}}},
+    }), encoding="utf-8")
+
+
+def test_apply_resolves_playbook_to_its_workflow_name_not_its_envelope_id(tmp_path: Path) -> None:
+    """A collected Logic App ``Notify_SOC`` becomes envelope ``notify-soc``
+    with ``arm_name: Notify_SOC``, and the playbook handler deploys it under
+    that name. ``playbook: notify-soc`` was resolved to
+    ``.../workflows/notify-soc``, a Logic App that does not exist."""
+    _write_named_playbook(tmp_path, "notify-soc", "Notify_SOC")
+    echo = _Echo()
+    payload = _payload(actions=[{
+        "order": 1, "actionType": "RunPlaybook", "actionConfiguration": {"playbook": "notify-soc"},
+    }])
+    h = SentinelAutomationRuleHandler(
+        lambda: _provider_with(httpx.MockTransport(echo)), tenant_id="tenant-guid", detections_root=tmp_path,
+    )
+    r = h.apply(_loaded(payload=payload))
+    assert r.verified is True
+    cfg = echo.calls[1][2]["properties"]["actions"][0]["actionConfiguration"]
+    assert cfg["logicAppResourceId"].endswith("/providers/Microsoft.Logic/workflows/Notify_SOC")
+    h.close()
+
+
+def test_to_envelope_names_a_playbook_by_the_envelope_that_deploys_it(tmp_path: Path) -> None:
+    _write_named_playbook(tmp_path, "notify-soc", "Notify_SOC")
+    provider = _provider_with(httpx.MockTransport(lambda r: httpx.Response(404)))
+    h = SentinelAutomationRuleHandler(lambda: provider, tenant_id="TENANT-GUID", detections_root=tmp_path)
+    remote = _remote(actions=[{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {
+        "logicAppResourceId": "/subscriptions/SUB/resourceGroups/RG-PB/providers/Microsoft.Logic/workflows/Notify_SOC",
+        "tenantId": "tenant-guid"}}])
+    env = h.to_envelope(remote)
+    assert env["payload"]["actions"][0]["actionConfiguration"] == {"playbook": "notify-soc"}
+    h.close()
+
+
+def test_to_envelope_writes_playbook_only_when_its_envelope_exists(tmp_path: Path) -> None:
+    """The managed tag alone used to be enough. When no playbook file comes
+    with it (collect of rules only, playbooks switched off, the playbook
+    skipped), the rule named an envelope that does not exist: PAYLOAD007
+    and the dependency check failed every later run. ``logicApp:`` deploys
+    the same way and needs no envelope."""
+    tagged = {"name": "Notify_SOC", "tags": {"contentops-managed": "true"}, "properties": {}}
+    provider = _provider_with(httpx.MockTransport(lambda r: httpx.Response(200, json=tagged)))
+    h = SentinelAutomationRuleHandler(lambda: provider, tenant_id="TENANT-GUID", detections_root=tmp_path)
+    remote = _remote(actions=[{"order": 1, "actionType": "RunPlaybook", "actionConfiguration": {
+        "logicAppResourceId": "/subscriptions/SUB/resourceGroups/RG-PB/providers/Microsoft.Logic/workflows/Notify_SOC",
+        "tenantId": "tenant-guid"}}])
+    env = h.to_envelope(remote)
+    assert env["payload"]["actions"][0]["actionConfiguration"] == {"logicApp": "Notify_SOC"}
+    h.close()
+
+
+def test_apply_switches_a_deprecated_rule_off() -> None:
+    """``contentops disable`` (emergency disable) sets ``status: deprecated``.
+    The handler only skipped it ("use prune"), and prune never deletes a rule
+    whose file still exists, so a suppression rule kept closing incidents.
+    It is now PUT with ``isEnabled: false``, like a deprecated analytic."""
+    echo = _Echo()
+    h = SentinelAutomationRuleHandler(lambda: _provider_with(httpx.MockTransport(echo)))
+    r = h.apply(_loaded(status="deprecated"))
+    assert r.action is PlanAction.DISABLE and r.verified is True
+    put = next(body for method, _, body in echo.calls if method == "PUT")
+    assert put["properties"]["triggeringLogic"]["isEnabled"] is False
+    h.close()
+
+
+def test_a_deprecated_rule_that_already_expired_is_left_alone() -> None:
+    """Collect imports an expired rule as deprecated; it does nothing any
+    more, and a PUT with an expiry in the past can be refused."""
+    echo = _Echo()
+    expired = _payload(triggeringLogic={"expirationTimeUtc": "2020-01-01T00:00:00Z", "conditions": []})
+    h = SentinelAutomationRuleHandler(lambda: _provider_with(httpx.MockTransport(echo)))
+    r = h.apply(_loaded(status="deprecated", payload=expired))
+    assert r.action is PlanAction.SKIP
+    assert not any(method == "PUT" for method, _, _ in echo.calls)
+    h.close()

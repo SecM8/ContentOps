@@ -60,12 +60,13 @@ permissions:
   # removed via state.forget()).
   contents: write
 
-# Share deploy.yml's concurrency group (deploy-prod / deploy-<env>), like
-# rollback.yml: both push the same state branch, so a prune queues behind
-# a deploy instead of overwriting its state (or the deploy overwriting the
-# prune's). GitHub keeps one pending run per group: dispatch one at a time.
+# One queue for every workflow that pushes the tenant state (deploy, retry-failed,
+# rollback, prune, state-adopt), whatever the env input: the state branch is
+# named after tenant.yml's name, so with a single tenant.yml an env=integration
+# run pushes the same branch as a prod deploy. Behind the queue, state sync push
+# refuses a stale push. GitHub keeps one pending run per group: dispatch one at a time.
 concurrency:
-  group: deploy-${{ inputs.env }}
+  group: deploy-prod
   cancel-in-progress: false
 
 jobs:
@@ -88,6 +89,13 @@ jobs:
     steps:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Refuse a re-run of an older commit
+        # A re-run prunes against its own run's checkout: rules added on
+        # the branch since would count as orphans and be deleted.
+        uses: ./.github/actions/refuse-stale-rerun
+        with:
+          run-kind: prune
 
       - name: Pipeline setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml.
@@ -112,13 +120,12 @@ jobs:
           exit 1
 
       - name: Pull state before prune
-        # Best-effort: starting from an empty local state.json is fine
-        # — prune re-derives orphans from (git, remote) and writes
-        # state.forget() for each deletion.
+        # No state branch yet is fine: prune re-derives orphans from
+        # (git, remote) and removes each deleted one from the state file
+        # (state.forget()). Any other pull failure stops the run here,
+        # before anything is deleted.
         run: |
-          contentops state sync pull || {
-            echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
-          }
+          contentops state sync pull
 
       - name: Run prune
         id: prune

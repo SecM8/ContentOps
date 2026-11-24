@@ -180,12 +180,25 @@ jobs:
 
       - name: Drift setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml
+        # Full history: drift compares each changed file with the commit
+        # its rule was last deployed from (recorded in the state file).
         uses: ./.github/actions/pipeline-setup
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           disabled-kinds: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
           tenant-config-yaml: ${{ secrets.TENANT_CONFIG_YAML }}
+          fetch-depth: '0'
+
+      - name: Pull durable state (read-only)
+        # Lets drift name the changed rules whose file changed in main
+        # after their last deploy: a merge the tenant has not received yet,
+        # which this PR would otherwise undo. Drift itself does not need
+        # the state, so a pull that fails only warns.
+        run: |
+          contentops state sync pull || {
+            echo "::warning::Could not read the state branch; drift cannot tell undeployed merges apart this run."
+          }
 
       - name: Run drift detection (write mode)
         id: drift

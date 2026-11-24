@@ -18,6 +18,10 @@ from pathlib import Path
 
 import pytest
 
+# Kinds this module writes; the kind kill switch skips it when one is switched off
+# (tests/integration/kill_switch.py).
+LIVE_KINDS: tuple[str, ...] = ()  # collect reads the tenant, writes to a temp folder
+
 
 def test_live_collect_roundtrip_zero_drift(tmp_path: Path) -> None:
     """First collect snapshots the tenant; second collect must be 100%
@@ -27,77 +31,51 @@ def test_live_collect_roundtrip_zero_drift(tmp_path: Path) -> None:
     """
     import concurrent.futures
 
-    from contentops.cli.handler_factories import register_default_handlers
-    from contentops.core.drift import (
-        DriftCapable, DriftEntry, DriftReport, _local_index, _payloads_match,
-    )
+    from contentops.cli import handler_factories
+    from contentops.cli.commands.collect_support import _classify_collected_drift
+    from contentops.core.drift import DriftCapable, DriftReport, write_drift
     from contentops.core.registry import default_registry
 
     target = tmp_path / "snapshot"
     target.mkdir(parents=True, exist_ok=True)
-    register_default_handlers()
+    # References (`analytic:`, `playbook:`) resolve against the snapshot,
+    # as collect's do against its --path.
+    handler_factories.register_default_handlers(detections_root=target)
 
-    # All 6 surviving asset kinds run by default; the per-handler skip
-    # list is empty after the asset-taxonomy reduction (the kinds that
-    # required permissions our SP doesn't hold — playbook, defender TI —
-    # were removed entirely).
-    skip_handlers: set[str] = set()
-
-    # Fan-out handlers respect --full (we want full).
-    drift_handlers: list[DriftCapable] = [
-        default_registry.get(a) for a in default_registry.assets()
-        if a.value not in skip_handlers
-        and isinstance(default_registry.get(a), DriftCapable)
-    ]
+    def _drift_handlers() -> list[DriftCapable]:
+        return [
+            default_registry.get(a) for a in default_registry.assets()
+            if isinstance(default_registry.get(a), DriftCapable)
+        ]
 
     def _list_one(handler):
         try:
             return handler.asset.value, handler.list_remote()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — reported below
             return handler.asset.value, exc
 
     def _do_collect_pass() -> DriftReport:
+        handlers = _drift_handlers()
         results: dict[str, list[dict]] = {}
+        failures: dict[str, Exception] = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            for value, res in pool.map(_list_one, drift_handlers):
+            for value, res in pool.map(_list_one, handlers):
                 if isinstance(res, Exception):
-                    results[value] = []
+                    failures[value] = res
                 else:
                     results[value] = res
-        report = DriftReport()
-        for handler in drift_handlers:
-            asset_value = handler.asset.value
-            local = _local_index(target, handler.asset)
-            for remote in results.get(asset_value, []):
-                envelope = handler.to_envelope(remote)
-                if envelope is None:
-                    continue
-                rid = envelope.get("id")
-                if not rid:
-                    continue
-                payload = envelope.get("payload", {})
-                if rid not in local:
-                    report.entries.append(DriftEntry(
-                        asset=handler.asset, asset_id=rid, kind="new",
-                        envelope=envelope,
-                    ))
-                    continue
-                _, local_payload = local[rid]
-                if _payloads_match(local_payload, payload):
-                    report.entries.append(DriftEntry(
-                        asset=handler.asset, asset_id=rid, kind="in-sync",
-                    ))
-                else:
-                    report.entries.append(DriftEntry(
-                        asset=handler.asset, asset_id=rid, kind="changed",
-                        envelope=envelope,
-                    ))
-        return report
+        if failures:
+            # A kind the tenant could not list was never round-tripped.
+            pytest.fail("list_remote failed, so these kinds were not round-tripped: " + "; ".join(
+                f"{kind}: {exc}" for kind, exc in sorted(failures.items())
+            ))
+        # Collect's own classifier: remote-name matching, slug
+        # disambiguation, per-kind comparison and same-run references.
+        return _classify_collected_drift(handlers, results, target)
 
     try:
         # Pass 1: write everything.
         first = _do_collect_pass()
-        from contentops.core.drift import write_drift
         write_drift(first, target)
         assert first.entries, "live tenant returned zero items — credentials wrong?"
 

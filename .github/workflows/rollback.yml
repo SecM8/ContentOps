@@ -7,7 +7,7 @@ name: Rollback detection content to a SHA
 # must uncheck dry-run AND type CONFIRM to actually write. Environment
 # protection on the `production` env adds reviewer-gated approval before
 # any prod rollback, and the concurrency group is shared with deploy.yml
-# (`deploy-<env>`) so a rollback can never race a deploy of the same env.
+# (`deploy-prod`) so a rollback can never race a deploy.
 #
 # Posts the rollback plan as the run summary and uploads the audit JSONL so
 # every replayed write is traceable to a commit + reviewer.
@@ -68,10 +68,13 @@ permissions:
   # the next workflow starts from the rolled-back state.
   contents: write
 
-# Share deploy.yml's concurrency group (deploy-prod / deploy-<env>) so a
-# rollback queues behind — and never races — a deploy of the same env.
+# One queue for every workflow that pushes the tenant state (deploy, retry-failed,
+# rollback, prune, state-adopt), whatever the env input: the state branch is
+# named after tenant.yml's name, so with a single tenant.yml an env=integration
+# run pushes the same branch as a prod deploy. Behind the queue, state sync push
+# refuses a stale push. GitHub keeps one pending run per group: dispatch one at a time.
 concurrency:
-  group: deploy-${{ inputs.env }}
+  group: deploy-prod
   cancel-in-progress: false
 
 jobs:
@@ -96,6 +99,13 @@ jobs:
           # the detection content at the target SHA.
           fetch-depth: 0
 
+      - name: Refuse a re-run of an older commit
+        # A re-run reads the locks from its own run's checkout and applies
+        # the rollback again over everything merged since.
+        uses: ./.github/actions/refuse-stale-rerun
+        with:
+          run-kind: rollback
+
       - name: Pipeline setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml.
         uses: ./.github/actions/pipeline-setup
@@ -115,10 +125,10 @@ jobs:
           exit 1
 
       - name: Pull state before rollback
+        # No state branch yet is fine. Any other pull failure stops the
+        # run here, before anything is applied.
         run: |
-          contentops state sync pull || {
-            echo "::notice::No remote state/${PIPELINE_ENV} branch yet; starting from empty local state."
-          }
+          contentops state sync pull
 
       - name: Run rollback
         id: rollback

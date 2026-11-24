@@ -78,13 +78,12 @@ jobs:
 
       - name: Pull durable state
         # Start from the current state branch so adopt only adds to it
-        # (already-managed entries are kept as-is). Best-effort: no
-        # branch yet means a first adoption from empty state.
+        # (already-managed entries are kept as-is). No branch yet means a
+        # first adoption from empty state; any other pull failure stops
+        # the run.
         run: |
           set -euo pipefail
-          contentops state sync pull || {
-            echo "::notice::No remote state branch yet; adopting into empty state."
-          }
+          contentops state sync pull
 
       - name: Run contentops state adopt
         # Free-text inputs go through env vars, never inline template

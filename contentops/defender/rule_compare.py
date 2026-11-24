@@ -216,6 +216,31 @@ def diff_rule(body: dict[str, Any], remote: dict[str, Any]) -> RuleDiff:
     return RuleDiff(changed=tuple(changed), not_cleared=tuple(not_cleared))
 
 
+def added_in_tenant(body: dict[str, Any], remote: dict[str, Any]) -> tuple[str, ...]:
+    """Fields the tenant holds a value for that the file leaves out entirely.
+
+    :func:`diff_rule` compares only the fields a body carries, which is right
+    for a deploy: a field the file leaves out is not sent, so the tenant keeps
+    it. Drift must still see a value added in the portal (a response action,
+    a description, custom details). A missing field counts only when no key of
+    its old/new group is in the file either (Graph fills the old key next to
+    the new one: ``category`` next to ``tactics``, ``impactedAssets`` next to
+    ``entityMappings``), and not where the service fills a value in itself.
+    """
+    added: list[str] = []
+    for path, _kind, service_fills_in in _FIELDS:
+        if service_fills_in or _get(body, path) is not _MISSING:
+            continue
+        group = next((g for g in _MOVES_WITH if path in g), frozenset({path}))
+        if any(_get(body, other) is not _MISSING for other in group):
+            continue
+        if path.startswith(_SCOPE + ".") and _get(body, _SCOPE) is not _MISSING:
+            continue  # a scope written as a whole is compared by diff_rule
+        if not _empty(_get(remote, path)):
+            added.append(path)
+    return tuple(added)
+
+
 def _set(node: dict[str, Any], path: str, value: Any) -> None:
     keys = path.split(".")
     for key in keys[:-1]:
