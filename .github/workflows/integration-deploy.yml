@@ -82,6 +82,10 @@ jobs:
     # credential subject `repo:KustoKing/SIEMContent:environment:integration`
     # on the App Registration. See deploy.yml for the full rationale.
     environment: integration
+    env:
+      # The kind kill switch. pipeline-setup exports it for the other
+      # workflows; this job does not use that action.
+      CONTENTOPS_DISABLED_KINDS: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:

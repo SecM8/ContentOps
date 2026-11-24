@@ -37,10 +37,17 @@ on:
         default: ""
         type: string
       dry_run:
-        description: "Dry-run: list the retry set without re-applying."
+        # Default true, like prune and rollback: a retry writes to the
+        # tenant, so a real run is a deliberate choice (with confirm).
+        description: "Dry-run (default true): list the retry set without re-applying. Uncheck plus type CONFIRM to re-apply."
         required: true
-        default: false
+        default: true
         type: boolean
+      confirm:
+        description: "Type CONFIRM to allow a real (non-dry-run) retry. Anything else aborts."
+        required: false
+        default: ""
+        type: string
       deploy_run_id:
         description: "Deploy run id whose audit trail to retry from. Empty = the newest completed deploy run on this ref."
         required: false
@@ -79,6 +86,14 @@ jobs:
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
     steps:
+      - name: Refuse a real run without CONFIRM
+        # Before anything logs in: a real retry re-applies to the tenant.
+        if: ${{ inputs.dry_run == false && inputs.confirm != 'CONFIRM' }}
+        run: |
+          echo "::error::Refusing a real retry: dry_run is off but confirm is not CONFIRM. Nothing was applied."
+          echo "Run the workflow again with confirm=CONFIRM to re-apply, or leave dry_run on to list the retry set."
+          exit 1
+
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 

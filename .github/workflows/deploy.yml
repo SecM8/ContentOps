@@ -147,6 +147,33 @@ jobs:
       - name: Checkout (loads the local composite action below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
+      - name: Refuse a re-run of an older commit
+        # A re-run of a run deploys that run's commit. Once a later commit
+        # has landed on the branch, that puts old content back over the
+        # newer merge. A first attempt always proceeds: queued behind
+        # another push it must still deploy its own change. Runs before
+        # the Azure login, so a refused run touches nothing.
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_SHA: ${{ github.sha }}
+          BRANCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${RUN_ATTEMPT:-1}" -le 1 ]; then
+            exit 0
+          fi
+          if ! REMOTE="$(git ls-remote --exit-code origin "$BRANCH_REF")"; then
+            echo "::error::Could not read the head of $BRANCH_REF. Nothing was applied."
+            exit 1
+          fi
+          HEAD_SHA="${REMOTE%%[[:space:]]*}"
+          if [ "$HEAD_SHA" != "$RUN_SHA" ]; then
+            echo "::error::This is re-run attempt $RUN_ATTEMPT of a deploy of $RUN_SHA, but $BRANCH_REF is now at $HEAD_SHA. Nothing was applied."
+            echo "Re-running would put this older commit's content back over the changes merged since. Start a new run instead."
+            exit 1
+          fi
+          echo "Re-run attempt $RUN_ATTEMPT: $RUN_SHA is still the head of $BRANCH_REF; proceeding."
+
       - name: Pipeline setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml.
         # fetch-depth: 2 keeps the prior commit available for

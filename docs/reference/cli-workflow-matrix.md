@@ -26,7 +26,7 @@ single source of truth for "what's automatable."
 | `contentops prune` | `prune.yml` | manual only | Environment-protected; defaults to dry-run; audit artefact uploaded. |
 | `contentops bootstrap` | (called from `promote-to-integration.yml`) | manual | Idempotent first-run setup for a new env. |
 | `contentops lock` / `contentops unlock` | `lock-unlock.yml` | manual | Mutates YAML on disk → opens a PR for review. |
-| `contentops retry-failed` | `retry-failed.yml` | manual | Re-applies failed audit records; dry-run option. |
+| `contentops retry-failed` | `retry-failed.yml` | manual | Re-applies failed audit records. Defaults to dry-run; a real run needs `confirm=CONFIRM`. |
 | `contentops disable` | `emergency-disable.yml` | manual | Gated, breakglass workflow. |
 | `contentops enable` | _none — purely local_ | n/a | Inverse of `disable`; selectors mirror `disable` (positional id, `--pattern`, `--cohort`). |
 | `contentops portfolio` | `portfolio.yml` | nightly + manual | Renders CSV + JSON; uploaded as artefact. With `--with-telemetry`: F20 columns from LA workspace. |
@@ -82,8 +82,14 @@ Every destructive workflow follows these rules (verified by
 2. **`environment:` input** so the GitHub Environment matches the
    tenant slug — production gets reviewer-gated approval.
 3. **Dry-run default** for any workflow that can mutate state.
-   `contentops prune` and `promote-to-integration` both default to
-   dry-run.
+   `contentops prune`, `promote-to-integration` and `retry-failed`
+   default to dry-run; a dry run of `promote-to-integration` is a dry
+   run of its bootstrap step too.
+7. **Kind kill switch**: every job that writes to a tenant honours
+   `CONTENTOPS_DISABLED_KINDS` (exported by `pipeline-setup`, or set on
+   the job for workflows that do not use it).
+8. **No stale re-runs**: a re-run of a `deploy.yml` run stops before the
+   Azure login when its commit is no longer the head of the branch.
 4. **Audit artefact upload** on every workflow that writes records:
    `actions/upload-artifact@<sha>`, 90-day retention.
 5. **Structured `$GITHUB_STEP_SUMMARY`** with the inputs used and

@@ -347,6 +347,131 @@ def test_retry_failed_fetches_the_deploy_audit_artefact() -> None:
 
 
 
+def test_promote_dry_run_never_bootstraps_for_real() -> None:
+    """``promote-to-integration.yml`` ran ``contentops bootstrap`` (creates
+    a resource group and a workspace, onboards Sentinel) even when
+    ``apply-dry-run`` was true, so a dry run was not one. Bootstrap now
+    takes ``--dry-run`` whenever the apply does."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "promote-to-integration.yml")
+    step = next(s for s in wf["jobs"]["promote"]["steps"] if s.get("name") == "bootstrap integration")
+    assert step["env"]["INPUT_APPLY_DRY_RUN"] == "${{ github.event.inputs.apply-dry-run }}"
+    script = str(step["run"])
+    guard = script.index('if [ "$INPUT_APPLY_DRY_RUN" = "true" ]')
+    assert "--dry-run" in script[guard:]
+    assert script.index("contentops bootstrap") > guard
+
+
+# A tenant command, not its ``--help`` (CI smoke tests call those).
+_TENANT_COMMANDS = re.compile(
+    r"\bcontentops\s+(apply|prune|rollback|collect|retry-failed|drift)(?![\w-])(?![^\n]*--help)"
+)
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_every_job_that_touches_the_tenant_honours_the_kind_kill_switch(path: Path) -> None:
+    """``CONTENTOPS_DISABLED_KINDS`` switches asset kinds off. The
+    pipeline-setup action exports it; ``integration-deploy.yml`` and
+    ``promote-to-integration.yml`` do not use that action, so they ignored
+    the switch. A job that runs a tenant command either uses the action or
+    sets the variable itself."""
+    for name, job in (_load(path).get("jobs") or {}).items():
+        steps = job.get("steps") or []
+        if not any(_TENANT_COMMANDS.search(str(s.get("run", ""))) for s in steps):
+            continue
+        if any("pipeline-setup" in str(s.get("uses", "")) for s in steps):
+            continue
+        env = job.get("env") or {}
+        assert env.get("CONTENTOPS_DISABLED_KINDS") == "${{ vars.CONTENTOPS_DISABLED_KINDS }}", (
+            f"{path.name}/{name} runs a tenant command without pipeline-setup and "
+            "does not pass CONTENTOPS_DISABLED_KINDS"
+        )
+
+
+def test_retry_failed_is_a_dry_run_unless_confirmed() -> None:
+    """``retry-failed.yml`` re-applies what failed. It ran for real by
+    default and had no confirmation, unlike prune and rollback. It now
+    defaults to a dry run, and a real run needs ``confirm=CONFIRM``."""
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "retry-failed.yml")
+    inputs = wf.get("on", wf.get(True))["workflow_dispatch"]["inputs"]
+    assert inputs["dry_run"]["default"] is True
+    assert inputs["confirm"]["default"] == ""
+    steps = wf["jobs"]["retry"]["steps"]
+    names = [s.get("name") for s in steps]
+    refuse = steps[names.index("Refuse a real run without CONFIRM")]
+    condition = " ".join(str(refuse["if"]).split())
+    assert "inputs.dry_run == false" in condition and "inputs.confirm != 'CONFIRM'" in condition
+    assert "exit 1" in refuse["run"]
+    assert names.index("Refuse a real run without CONFIRM") < names.index("Run contentops retry-failed")
+
+
+def _rerun_guard() -> dict:
+    wf = _load(REPO_ROOT / ".github" / "workflows" / "deploy.yml")
+    steps = wf["jobs"]["deploy"]["steps"]
+    names = [s.get("name") for s in steps]
+    step = steps[names.index("Refuse a re-run of an older commit")]
+    assert names.index("Refuse a re-run of an older commit") < names.index(
+        "Apply changed detections to prod workspace(s)"
+    )
+    return step
+
+
+def test_a_re_run_of_an_old_deploy_is_refused_by_the_workflow() -> None:
+    """A re-run of a deploy run applies that run's commit. Seen in a
+    deployment repo: re-running an older run put back a value that a later
+    merge had changed. A re-run (attempt 2 or more) now stops when its
+    commit is no longer the head of its branch. A first attempt is never
+    stopped: queued behind another push it must still deploy its own
+    changes."""
+    step = _rerun_guard()
+    assert step["env"]["RUN_ATTEMPT"] == "${{ github.run_attempt }}"
+    assert step["env"]["RUN_SHA"] == "${{ github.sha }}"
+    assert step["env"]["BRANCH_REF"] == "${{ github.ref }}"
+
+
+@pytest.mark.parametrize(
+    ("attempt", "moved", "refused"),
+    [("1", True, False), ("2", False, False), ("2", True, True)],
+)
+def test_the_re_run_guard_script(tmp_path: Path, attempt: str, moved: bool, refused: bool) -> None:
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None or shutil.which("git") is None:
+        pytest.skip("bash and git are needed")
+    try:
+        subprocess.run([bash, "-c", "true"], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        # e.g. the WSL bash stub on a Windows machine without WSL.
+        pytest.skip(f"{bash} cannot run here")
+
+    def git(*args: str, cwd: Path) -> str:
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    git("init", "-q", "-b", "main", cwd=origin)
+    git("config", "user.email", "t@example.com", cwd=origin)
+    git("config", "user.name", "t", cwd=origin)
+    (origin / "f").write_text("1")
+    git("add", ".", cwd=origin)
+    git("commit", "-q", "-m", "one", cwd=origin)
+    run_sha = git("rev-parse", "HEAD", cwd=origin)
+    if moved:
+        (origin / "f").write_text("2")
+        git("commit", "-q", "-am", "two", cwd=origin)
+    clone = tmp_path / "clone"
+    git("clone", "-q", str(origin), str(clone), cwd=tmp_path)
+
+    env = {**os.environ, "RUN_ATTEMPT": attempt, "RUN_SHA": run_sha, "BRANCH_REF": "refs/heads/main"}
+    result = subprocess.run([bash, "-c", _rerun_guard()["run"]], cwd=clone, env=env,
+                            capture_output=True, text=True)
+    assert (result.returncode != 0) is refused, result.stdout + result.stderr
+    if refused:
+        assert "Nothing was applied" in result.stdout
+
+
 def _integration_step() -> tuple[dict, dict, str]:
     wf = _load(REPO_ROOT / ".github" / "workflows" / "integration.yml")
     job = wf["jobs"]["integration"]

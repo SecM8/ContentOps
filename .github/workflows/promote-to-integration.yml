@@ -21,7 +21,9 @@ name: Promote to integration
 #   * The `confirm` input must equal the literal string PROMOTE — anything
 #     else short-circuits the apply.
 #   * `--dry-run` defaults to true. Drop it via the ``apply-dry-run``
-#     input checkbox.
+#     input checkbox. A dry run is also a dry run of the bootstrap step:
+#     nothing is created in the integration tenant.
+#   * The kind kill switch (CONTENTOPS_DISABLED_KINDS) applies here too.
 
 on:
   workflow_dispatch:
@@ -93,6 +95,9 @@ jobs:
       PIPELINE_LOG_LEVEL: INFO
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      # The kind kill switch. pipeline-setup exports it for the other
+      # workflows; this job does not use that action.
+      CONTENTOPS_DISABLED_KINDS: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -208,19 +213,22 @@ jobs:
         # Route step outputs through env vars rather than interpolating
         # ${{ steps.* }} directly in the shell, matching the
         # expression-injection-avoidance pattern used elsewhere.
+        # A dry run of the apply is a dry run of bootstrap too: it creates
+        # a resource group and a workspace and onboards Sentinel, and used
+        # to do so even when apply-dry-run was true.
         env:
           PIPELINE_ENV: integration
           INT_SUB: ${{ steps.int-cfg.outputs.sub }}
           INT_RG: ${{ steps.int-cfg.outputs.rg }}
           INT_WS: ${{ steps.int-cfg.outputs.ws }}
           INT_LOC: ${{ steps.int-cfg.outputs.loc }}
+          INPUT_APPLY_DRY_RUN: ${{ github.event.inputs.apply-dry-run }}
         run: |
-          contentops bootstrap \
-            --subscription "$INT_SUB" \
-            --resource-group "$INT_RG" \
-            --workspace "$INT_WS" \
-            --location "$INT_LOC" \
-            --env integration
+          ARGS=( --subscription "$INT_SUB" --resource-group "$INT_RG" --workspace "$INT_WS" --location "$INT_LOC" --env integration )
+          if [ "$INPUT_APPLY_DRY_RUN" = "true" ]; then
+            ARGS+=( --dry-run )
+          fi
+          contentops bootstrap "${ARGS[@]}"
 
       - name: Step 2 — collect from production
         env:

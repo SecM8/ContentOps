@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **202** files, **2474** test functions. Integration: **13** files, **18** test functions.
+Unit: **202** files, **2479** test functions. Integration: **13** files, **18** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -502,7 +502,7 @@ Unit: **202** files, **2474** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
 | `tests/v2/test_url_path_safety.py` | 8 |
 | `tests/v2/test_watchlist_model.py` | 10 |
-| `tests/v2/test_workflow_hardening.py` | 20 |
+| `tests/v2/test_workflow_hardening.py` | 25 |
 | `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
 | `tests/v2/test_workspace_kql.py` | 30 |
 | `tests/v2/test_workspace_kql_emulator.py` | 3 |
