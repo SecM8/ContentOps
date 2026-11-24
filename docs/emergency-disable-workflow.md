@@ -51,7 +51,10 @@ This workflow is **not** for:
 3. Creates branch `emergency-disable/<rule_id>-<run_number>`.
 4. Runs `contentops disable <rule_id> --reason "<reason>"`,
    which rewrites exactly one detection YAML's `status:` to
-   `deprecated` and appends `disableReason:`.
+   `deprecated`, appends `disableReason:` and bumps the patch
+   `version` (the version check in `validate` refuses a changed file
+   whose version did not move; `enable`, `lock`, `unlock` and
+   `lifecycle promote` bump it the same way).
 5. Asserts:
    * a diff was produced under `detections/`,
    * **no** files outside `detections/` were modified,

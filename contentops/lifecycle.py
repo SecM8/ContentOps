@@ -655,7 +655,10 @@ def promote(
         forced=force and not report.all_passed(),
     )
     if new_text != text:
-        path.write_text(new_text, encoding="utf-8")
+        # validate's version check refuses a changed file whose version
+        # did not move.
+        from contentops.utils.version_text import bump_patch_in_text
+        path.write_text(bump_patch_in_text(new_text), encoding="utf-8")
         report.promoted = True
     return report
 

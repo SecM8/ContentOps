@@ -38,6 +38,7 @@ from contentops.core.discovery import discover_assets, load_asset
 from contentops.core.handler import LoadedAsset
 from contentops.core.registry import default_registry
 from contentops.core.result import ActionResult, PlanAction
+from contentops.utils.version_text import bump_patch_in_text
 
 
 @click.command("disable")
@@ -317,7 +318,7 @@ def lock_cmd(rule_id: str, detections_path: Path) -> None:
         if not text.endswith("\n"):
             text += "\n"
         new_text = text + "localCustomization: true\n"
-    target.write_text(new_text, encoding="utf-8")
+    target.write_text(bump_patch_in_text(new_text), encoding="utf-8")
     write_lifecycle_audit("lock", rule_id, target)
     click.echo(f"locked: {rule_id} ({target})")
 
@@ -338,7 +339,7 @@ def unlock_cmd(rule_id: str, detections_path: Path) -> None:
         click.echo(f"not locked: {rule_id} ({target})")
         return
     new_text = _LOCK_TOPLEVEL_RE.sub("", text, count=1)
-    target.write_text(new_text, encoding="utf-8")
+    target.write_text(bump_patch_in_text(new_text), encoding="utf-8")
     write_lifecycle_audit("unlock", rule_id, target)
     click.echo(f"unlocked: {rule_id} ({target})")
 

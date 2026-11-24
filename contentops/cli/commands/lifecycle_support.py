@@ -22,6 +22,7 @@ import yaml
 
 from contentops.audit import AuditRecord, _resolve_actor, _resolve_sha, write_records
 from contentops.core.discovery import iter_loaded_assets
+from contentops.utils.version_text import bump_patch_in_text
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,9 @@ def _disable_one(target: Path, rule_id: str, reason: str | None) -> bool:
     if not new_text.endswith("\n"):
         new_text += "\n"
     new_text += addition
+    # The version check in validate refuses a changed file whose version
+    # did not move: without the bump an emergency-disable PR failed it.
+    new_text = bump_patch_in_text(new_text)
     target.write_text(new_text, encoding="utf-8")
     click.echo(f"disabled {rule_id}: status -> deprecated ({target})")
     return True
@@ -266,6 +270,7 @@ def _enable_one(
             promoted_by=_resolve_promoter_actor(),
             forced=True,
         )
+    new_text = bump_patch_in_text(new_text)
     target.write_text(new_text, encoding="utf-8")
     suffix = " (stamped forcedPromotion)" if to_status == "production" else ""
     click.echo(f"enabled {rule_id}: status -> {to_status}{suffix} ({target})")
