@@ -60,8 +60,12 @@ permissions:
   # removed via state.forget()).
   contents: write
 
+# Share deploy.yml's concurrency group (deploy-prod / deploy-<env>), like
+# rollback.yml: both push the same state branch, so a prune queues behind
+# a deploy instead of overwriting its state (or the deploy overwriting the
+# prune's). GitHub keeps one pending run per group: dispatch one at a time.
 concurrency:
-  group: prune-${{ inputs.env }}
+  group: deploy-${{ inputs.env }}
   cancel-in-progress: false
 
 jobs:

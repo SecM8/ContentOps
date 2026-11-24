@@ -180,7 +180,7 @@ def coverage_cmd(
             )
             techniques, source_label = load_d3fend_techniques(d3fend_file)
             d3fend_report = compute_d3fend_report(
-                detections_path, techniques, source_label=source_label,
+                detections_path, techniques, source_label=source_label, corpus=corpus,
             )
             if want_md:
                 _emit(render_d3fend_markdown(d3fend_report), out_md, "markdown D3FEND report")

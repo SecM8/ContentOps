@@ -434,16 +434,29 @@ Read/written by:
   (e.g. after a manual portal cleanup).
 
 Storage convention in CI is an orphan branch named `state/<env>`
-(per DESIGN §13) so the state's own history is auditable but
-doesn't pollute `main`. **F19 (`contentops state sync`) wired
-this**: `deploy.yml`, `promote-to-integration.yml`, `prune.yml`, and
-`retry-failed.yml` all call `state sync pull` before their mutation
-step and `state sync push` after (gated on non-dry-run). See
-[`contentops/state_sync.py`](../../contentops/state_sync.py) and
+(per DESIGN §13) so the state doesn't pollute `main`. Each push
+replaces the branch's single commit: the branch keeps no history.
+**F19 (`contentops state sync`) wired this**: `deploy.yml`,
+`promote-to-integration.yml`, `prune.yml`, `retry-failed.yml`,
+`rollback.yml` and `state-adopt.yml` call `state sync pull` before
+their mutation step and `state sync push` after (gated on non-dry-run).
+See [`contentops/state_sync.py`](../../contentops/state_sync.py) and
 the resolved G15 row in [`gap-assessment.md`](gap-assessment.md).
 
+Two runs never overwrite each other's state. The workflows that push
+the same state queue together (`deploy-prod` / `deploy-<env>`;
+`promote-to-integration.yml` pushes the integration tenant's state in
+its own queue), and `state sync push` uses `--force-with-lease`
+against the commit the run pulled: a run that started from an older
+state has its push refused. `state sync push --force` replaces the
+remote state on purpose.
+
 State is best-effort. `apply` never fails because it couldn't write
-state; the pipeline keeps working without it.
+state; the pipeline keeps working without it. An unreadable state file
+(invalid JSON, or JSON of the wrong shape) is reported and read as
+empty, and the next save keeps a copy of it as
+`state.json.corrupt-<time>` next to the new file. Rebuild the managed
+inventory with `contentops state adopt`.
 
 ---
 

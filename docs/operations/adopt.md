@@ -103,8 +103,11 @@ snapshot: collect again, or settle each item per the list below. In a
 fork's first day this is step 6 of
 [`deployment-fork-walkthrough.md`](deployment-fork-walkthrough.md#6-adopt-the-state-10-min).
 
-Avoid running it while a deploy is in progress: both pull, modify and
-force-push the same state branch, and `state sync` does not lock.
+`state-adopt.yml` queues with `deploy.yml` (group `deploy-prod`): both
+pull, change and push the same state branch. GitHub keeps only one
+pending run per group, so dispatch one at a time. If a state was pushed
+after this run pulled (for example from a local `state sync push`), the
+push is refused instead of overwriting it; pull and run again.
 
 ## What to do with the leftovers
 

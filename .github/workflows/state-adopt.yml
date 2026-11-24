@@ -43,11 +43,12 @@ permissions:
   contents: write   # push refs/heads/state/<env>
 
 concurrency:
-  # Serialise adopt runs: each one pulls, mutates and force-pushes the
-  # state branch, so two in parallel would race. `state sync` does not
-  # lock (see contentops/state_sync.py); avoid dispatching this while a
-  # deploy is running.
-  group: state-adopt
+  # Queue with deploy.yml: adopt pulls, changes and pushes the same state
+  # branch (named after tenant.yml's `name`, whatever the role input), so it
+  # must not run beside a deploy, retry, rollback or prune. Behind the queue,
+  # `state sync push` refuses to overwrite a state pushed after the pull.
+  # GitHub keeps one pending run per group: dispatch one at a time.
+  group: deploy-prod
   cancel-in-progress: false
 
 jobs:

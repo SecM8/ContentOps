@@ -472,6 +472,35 @@ def test_the_re_run_guard_script(tmp_path: Path, attempt: str, moved: bool, refu
         assert "Nothing was applied" in result.stdout
 
 
+# A real ``state sync push``, not its ``--help`` (CI smoke tests call that).
+_STATE_PUSH = re.compile(r"\bcontentops\s+state\s+sync\s+push\b(?![^\n]*--help)")
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_workflows_that_push_the_tenant_state_queue_with_deploy(path: Path) -> None:
+    """The state branch is named after tenant.yml's ``name``, so deploy,
+    retry-failed, rollback, prune and state-adopt all push the same ref.
+    prune (``prune-<env>``) and state-adopt (``state-adopt``) had their own
+    queues, so one of them could run beside a deploy and overwrite its
+    state. promote-to-integration pushes the separate integration tenant's
+    state and keeps its own queue."""
+    if path.name == "promote-to-integration.yml":
+        return
+    wf = _load(path)
+    pushes = any(
+        _STATE_PUSH.search(str(step.get("run", "")))
+        for job in (wf.get("jobs") or {}).values()
+        for step in (job.get("steps") or [])
+    )
+    if not pushes:
+        return
+    group = str((wf.get("concurrency") or {}).get("group", ""))
+    assert "deploy-prod" in group or group == "deploy-${{ inputs.env }}", (
+        f"{path.name} pushes the state branch but queues as {group!r}, "
+        "beside deploy.yml's deploy-prod"
+    )
+
+
 def _integration_step() -> tuple[dict, dict, str]:
     wf = _load(REPO_ROOT / ".github" / "workflows" / "integration.yml")
     job = wf["jobs"]["integration"]

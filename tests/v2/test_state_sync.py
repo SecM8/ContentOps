@@ -232,6 +232,97 @@ def test_push_keeps_configured_identity(repo: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# push against a real remote: two runners
+# ---------------------------------------------------------------------------
+
+
+def _two_runners(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A bare remote and two clones of it, standing in for two CI runners."""
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True, capture_output=True)
+    runners = []
+    for name in ("a", "b"):
+        clone = tmp_path / name
+        clone.mkdir()
+        _git(clone, "init", "-q", "-b", "main")
+        _git(clone, "config", "user.email", "test@example.com")
+        _git(clone, "config", "user.name", "test")
+        _git(clone, "config", "commit.gpgsign", "false")
+        _git(clone, "remote", "add", "origin", str(remote))
+        runners.append(clone)
+    return remote, runners[0], runners[1]
+
+
+def _state(clone: Path, body: dict) -> Path:
+    f = clone / "state" / "production" / "state.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(body), encoding="utf-8")
+    return f
+
+
+def _remote_state(remote: Path) -> dict:
+    return json.loads(_git(remote, "show", "refs/heads/state/production:state.json"))
+
+
+def test_push_refuses_to_overwrite_a_state_pushed_after_the_pull(tmp_path: Path) -> None:
+    """Every push was ``--force``: a runner that pulled before another
+    runner pushed overwrote that push, and its entries were lost."""
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    pull("production", b / "state" / "production" / "state.json", repo=b)
+    assert push("production", _state(a, {"v": 2}), repo=a).pushed_remote
+
+    stale = push("production", _state(b, {"v": 3}), repo=b)
+    assert stale.pushed_remote is False
+    assert "changed since" in stale.detail
+    assert _remote_state(remote) == {"v": 2}
+
+
+def test_push_refuses_when_another_runner_created_the_state_first(tmp_path: Path) -> None:
+    remote, a, b = _two_runners(tmp_path)
+    pull("production", b / "state" / "production" / "state.json", repo=b)  # nothing there yet
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+
+    late = push("production", _state(b, {"v": 9}), repo=b)
+    assert late.pushed_remote is False
+    assert _remote_state(remote) == {"v": 1}
+
+
+def test_push_after_a_fresh_pull_succeeds(tmp_path: Path) -> None:
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    pull("production", b / "state" / "production" / "state.json", repo=b)
+    assert push("production", _state(b, {"v": 2}), repo=b).pushed_remote
+    assert _remote_state(remote) == {"v": 2}
+
+
+def test_push_force_overwrites_on_purpose(tmp_path: Path) -> None:
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    assert push("production", _state(b, {"v": 5}), repo=b, force=True).pushed_remote
+    assert _remote_state(remote) == {"v": 5}
+
+
+def test_cli_push_stale_exits_1_and_force_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from click.testing import CliRunner
+
+    from contentops.cli import cli
+
+    remote, a, b = _two_runners(tmp_path)
+    assert push("production", _state(a, {"v": 1}), repo=a).pushed_remote
+    _state(b, {"v": 2})
+    monkeypatch.chdir(b)
+    stale = CliRunner().invoke(cli, ["state", "sync", "push", "--env", "production"])
+    assert stale.exit_code == 1, stale.output
+    assert "state sync pull" in stale.output
+    assert _remote_state(remote) == {"v": 1}
+
+    forced = CliRunner().invoke(cli, ["state", "sync", "push", "--env", "production", "--force"])
+    assert forced.exit_code == 0, forced.output
+    assert _remote_state(remote) == {"v": 2}
+
+
 def test_cli_push_exits_non_zero_when_remote_push_fails(
     repo: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

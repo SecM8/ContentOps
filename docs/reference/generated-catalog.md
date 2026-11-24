@@ -302,7 +302,7 @@ Total: **8** asset kinds (detection-engineering taxonomy plus support assets).
 
 ## Tests
 
-Unit: **202** files, **2482** test functions. Integration: **13** files, **18** test functions.
+Unit: **202** files, **2494** test functions. Integration: **13** files, **18** test functions.
 
 ### Unit tests (`tests/v2/`)
 
@@ -361,7 +361,7 @@ Unit: **202** files, **2482** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_conformance_layers.py` | 52 |
 | `tests/v2/test_coverage.py` | 25 |
 | `tests/v2/test_coverage_corpus.py` | 11 |
-| `tests/v2/test_coverage_d3fend.py` | 12 |
+| `tests/v2/test_coverage_d3fend.py` | 13 |
 | `tests/v2/test_coverage_extract.py` | 27 |
 | `tests/v2/test_coverage_gaps.py` | 23 |
 | `tests/v2/test_coverage_matrix.py` | 6 |
@@ -478,8 +478,8 @@ Unit: **202** files, **2482** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_snapshot_diff.py` | 16 |
 | `tests/v2/test_snippets.py` | 39 |
 | `tests/v2/test_state_adopt.py` | 10 |
-| `tests/v2/test_state_file.py` | 10 |
-| `tests/v2/test_state_sync.py` | 13 |
+| `tests/v2/test_state_file.py` | 15 |
+| `tests/v2/test_state_sync.py` | 18 |
 | `tests/v2/test_status_configuration.py` | 9 |
 | `tests/v2/test_status_deployments.py` | 13 |
 | `tests/v2/test_status_redact.py` | 13 |
@@ -502,7 +502,7 @@ Unit: **202** files, **2482** test functions. Integration: **13** files, **18** 
 | `tests/v2/test_upstream_whatsnew.py` | 9 |
 | `tests/v2/test_url_path_safety.py` | 8 |
 | `tests/v2/test_watchlist_model.py` | 10 |
-| `tests/v2/test_workflow_hardening.py` | 25 |
+| `tests/v2/test_workflow_hardening.py` | 26 |
 | `tests/v2/test_workflow_state_and_telemetry.py` | 6 |
 | `tests/v2/test_workspace_kql.py` | 30 |
 | `tests/v2/test_workspace_kql_emulator.py` | 3 |

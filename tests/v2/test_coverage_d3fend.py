@@ -220,3 +220,39 @@ def test_cli_coverage_d3fend_renders(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "D3FEND" in result.output
     assert "D3-NTA" in result.output
+
+
+def _analytic(rule_id: str, status: str, d3fend_id: str) -> dict:
+    return {
+        "id": rule_id,
+        "version": "0.1.0",
+        "asset": "sentinel_analytic",
+        "status": status,
+        "metadata": _base_meta(defensiveTechniques=[d3fend_id]),
+        "payload": {"query": "T", "displayName": rule_id, "queryFrequency": "PT5M",
+                    "queryPeriod": "PT5M", "triggerOperator": "GreaterThan",
+                    "triggerThreshold": 0, "severity": "Medium", "enabled": True,
+                    "tactics": [], "subTechniques": []},
+    }
+
+
+def test_cli_coverage_d3fend_honours_the_scope(tmp_path: Path) -> None:
+    """The D3FEND view read every file itself, so an experimental rule
+    counted as coverage although the default scope (and every other view
+    of the same command) leaves it out."""
+    detections = _fake_detections(
+        tmp_path,
+        _analytic("rule-prod", "production", "D3-PSA"),
+        _analytic("rule-exp", "experimental", "D3-NTA"),
+    )
+
+    def covered(*flags: str) -> set[str]:
+        result = CliRunner().invoke(
+            cli, ["coverage", "--path", str(detections), "--d3fend", "--format", "json", *flags],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        return {t["id"] for tactic in payload["tactics"] for t in tactic["covered"]}
+
+    assert covered() == {"D3-PSA"}
+    assert covered("--include-non-production") == {"D3-PSA", "D3-NTA"}

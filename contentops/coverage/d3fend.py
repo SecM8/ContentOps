@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Iterable
 
 from contentops.core.discovery import iter_loaded_assets
+from contentops.coverage.corpus import Corpus
 
 
 # ---------------------------------------------------------------------------
@@ -108,14 +109,23 @@ def load_d3fend_techniques(
 # ---------------------------------------------------------------------------
 
 
-def covered_d3fend_ids(detections_root: Path) -> set[str]:
-    """Return the set of D3FEND ids referenced by any envelope's metadata."""
+def covered_d3fend_ids(detections_root: Path, *, corpus: Corpus | None = None) -> set[str]:
+    """Return the D3FEND ids referenced by the envelopes' metadata.
+
+    With ``corpus``, only its in-scope entries count (the scope the other
+    coverage views use). Without it, every envelope under
+    ``detections_root`` counts.
+    """
+    if corpus is not None:
+        envelopes = [entry.envelope for entry in corpus.in_scope()]
+    else:
+        envelopes = [loaded.envelope for loaded in iter_loaded_assets(detections_root)]
     out: set[str] = set()
-    for loaded in iter_loaded_assets(detections_root):
-        meta = loaded.envelope.metadata
+    for envelope in envelopes:
+        meta = envelope.metadata
         if meta is None:
             continue
-        for tech in meta.defensiveTechniques or []:
+        for tech in getattr(meta, "defensiveTechniques", None) or []:
             if isinstance(tech, str) and tech:
                 out.add(tech)
     return out
@@ -126,9 +136,10 @@ def compute_d3fend_report(
     techniques: Iterable[D3fendTechniqueRef],
     *,
     source_label: str,
+    corpus: Corpus | None = None,
 ) -> D3fendReport:
-    """Build the D3FEND coverage / gap report."""
-    covered = covered_d3fend_ids(detections_root)
+    """Build the D3FEND coverage / gap report (scoped by ``corpus`` when given)."""
+    covered = covered_d3fend_ids(detections_root, corpus=corpus)
     by_tactic: dict[str, D3fendTacticGaps] = {}
     total = 0
     total_covered = 0

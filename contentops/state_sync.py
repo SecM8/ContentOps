@@ -17,16 +17,20 @@ Pure git plumbing (no working-tree side effects):
 * ``push``  — stages the local state/state.json onto an orphan
   commit on ``refs/heads/state/<env>``, then pushes to remote.
   Uses ``git hash-object`` + ``git mktree`` + ``git commit-tree``
-  so the working tree stays clean.
+  so the working tree stays clean. Each push replaces the branch's
+  single commit, so the branch keeps no history.
 * ``pull``  — fetches ``refs/heads/state/<env>`` from remote,
   reads the JSON blob via ``git show``, writes to local
   state/state.json.
 * ``status`` — compares the local state hash against the remote
   ref's tree hash and prints divergence.
 
-Concurrency is the operator's responsibility — pair this with a
-``concurrency:`` group on the workflow that calls it so two
-parallel applies queue rather than race. The CLI doesn't lock.
+Concurrency: the workflows that push the same state queue together
+(``deploy-prod`` / ``deploy-<env>``). Behind that, ``push`` uses
+``--force-with-lease`` against the commit the clone pulled, so a run
+that started from an older state cannot overwrite a newer one: its
+push fails instead. ``state sync push --force`` overrides that on
+purpose. There is no merge of two states.
 """
 
 from __future__ import annotations
@@ -163,6 +167,14 @@ def _identity_args(repo: Path) -> list[str]:
     return args
 
 
+def _local_ref_sha(ref: str, repo: Path) -> str:
+    """The commit the local ref points at, or "" when it does not exist."""
+    try:
+        return _run(["rev-parse", "--verify", "--quiet", ref], cwd=repo)
+    except StateSyncError:
+        return ""
+
+
 def push(
     env: str,
     state_file: Path,
@@ -171,17 +183,27 @@ def push(
     remote: str = "origin",
     push_remote: bool = True,
     actor: str = "pipeline",
+    force: bool = False,
 ) -> PushResult:
     """Push the local state file onto ``refs/heads/state/<env>``.
 
     The orphan commit has no parent (each push replaces the ref
     head). The local ref is updated even when ``push_remote=False``,
     so unit tests can exercise the plumbing without a real remote.
+
+    The remote ref is replaced only if it still points at the commit this
+    clone last pulled or pushed (``--force-with-lease``), or does not exist
+    when this clone has none. A state another run pushed in the meantime is
+    therefore never overwritten: the push fails and says so. ``force=True``
+    replaces the remote ref whatever it holds.
     """
     if not state_file.is_file():
         raise StateSyncError(f"state file not found: {state_file}")
 
     ref = _ref_name(env)
+    # What this clone believes the remote holds: the commit `pull` fetched
+    # into the local ref, or the commit of this clone's last push.
+    expected = _local_ref_sha(ref, repo)
 
     # 1. Stage the file as a blob in git's object store.
     blob_sha = _run([
@@ -210,11 +232,20 @@ def push(
     pushed = False
     detail = ""
     if push_remote:
+        mode = "--force" if force else f"--force-with-lease={ref}:{expected}"
         try:
-            _run(["push", "--force", remote, f"{ref}:{ref}"], cwd=repo)
+            _run(["push", mode, remote, f"{ref}:{ref}"], cwd=repo)
             pushed = True
         except StateSyncError as exc:
-            detail = f"local ref updated; remote push failed: {exc}"
+            if not force and "stale info" in str(exc):
+                detail = (
+                    f"local ref updated; remote push refused: {remote} {ref} changed "
+                    "since this clone pulled it (another run pushed state). Nothing "
+                    "was overwritten. Run `contentops state sync pull`, then repeat "
+                    "the change, or push with --force to replace it on purpose."
+                )
+            else:
+                detail = f"local ref updated; remote push failed: {exc}"
             # Local update succeeded, so don't re-raise — let caller
             # decide whether to fail.
     return PushResult(

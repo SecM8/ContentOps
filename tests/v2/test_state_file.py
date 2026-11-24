@@ -10,8 +10,10 @@ classify_remote contract that drift / prune use to distinguish
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from contentops.cli import cli
@@ -63,6 +65,84 @@ def test_load_state_corrupt_returns_empty(tmp_path: Path) -> None:
     # Corrupt state must never crash the pipeline.
     assert s.env == "prod"
     assert s.asset_count() == 0
+
+
+def _write_raw_state(tmp_path: Path, text: str) -> Path:
+    p = state_path(env="prod", root=tmp_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not-valid-json",
+        "[]",
+        '{"managed_assets": []}',
+        '{"managed_assets": {"sentinel_analytic": ["rule-1"]}}',
+        '{"managed_assets": {"sentinel_analytic": {"rule-1": "success"}}}',
+    ],
+    ids=["invalid-json", "top-level-list", "assets-list", "entries-list", "entry-string"],
+)
+def test_unreadable_state_is_reported_and_treated_as_empty(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, text: str,
+) -> None:
+    """Invalid JSON used to become an empty state without a word, and valid
+    JSON of the wrong shape crashed instead. Both now load as empty and
+    say which file and how to rebuild it."""
+    _write_raw_state(tmp_path, text)
+    with caplog.at_level(logging.WARNING, logger="contentops.state"):
+        s = load_state(env="prod", root=tmp_path)
+    assert s.env == "prod"
+    assert s.asset_count() == 0
+    assert "state.json" in caplog.text
+    assert "state adopt" in caplog.text
+
+
+def test_state_entry_with_an_unknown_field_still_loads(tmp_path: Path) -> None:
+    """A newer tool may add a field; an older one reads the known ones
+    (it used to stop with a TypeError)."""
+    _write_raw_state(
+        tmp_path,
+        '{"managed_assets": {"sentinel_analytic": {"rule-1": '
+        '{"remote_id": "r1", "status": "success", "added_later": 1}}}}',
+    )
+    s = load_state(env="prod", root=tmp_path)
+    assert s.is_managed("sentinel_analytic", "rule-1")
+    assert s.managed_assets["sentinel_analytic"]["rule-1"].remote_id == "r1"
+
+
+def test_saving_over_an_unreadable_state_keeps_a_copy(tmp_path: Path) -> None:
+    """Saving used to replace an unreadable file with only the current
+    batch, so the inventory it held was gone for good."""
+    p = _write_raw_state(tmp_path, "not-valid-json")
+    s = load_state(env="prod", root=tmp_path)
+    s.remember("sentinel_analytic", "rule-1", status="success")
+    save_state(s, root=tmp_path)
+    copies = list(p.parent.glob("state.json.corrupt-*"))
+    assert len(copies) == 1
+    assert copies[0].read_text(encoding="utf-8") == "not-valid-json"
+    assert load_state(env="prod", root=tmp_path).is_managed("sentinel_analytic", "rule-1")
+
+
+def test_saving_over_a_readable_state_keeps_no_copy(tmp_path: Path) -> None:
+    s = EnvState(env="prod")
+    save_state(s, root=tmp_path)
+    save_state(s, root=tmp_path)
+    assert not list(state_path(env="prod", root=tmp_path).parent.glob("*corrupt*"))
+
+
+def test_save_does_not_share_a_temporary_file_with_another_writer(tmp_path: Path) -> None:
+    """Every save wrote ``state.tmp`` and renamed it, so two writers could
+    swap each other's half-written files."""
+    p = state_path(env="prod", root=tmp_path)
+    p.parent.mkdir(parents=True)
+    other = p.with_suffix(".tmp")
+    other.write_text("another writer", encoding="utf-8")
+    save_state(EnvState(env="prod"), root=tmp_path)
+    assert other.read_text(encoding="utf-8") == "another writer"
+    assert sorted(x.name for x in p.parent.iterdir()) == ["state.json", "state.tmp"]
 
 
 def test_remember_and_forget() -> None:

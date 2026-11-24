@@ -311,7 +311,7 @@ def _state_env_default() -> str:
         return ""
 
 
-def _push_state_or_exit(env_name: str, *, remote: str, no_push: bool) -> None:
+def _push_state_or_exit(env_name: str, *, remote: str, no_push: bool, force: bool = False) -> None:
     """Push state/<env>/state.json onto refs/heads/state/<env>.
 
     Shared by ``state sync push`` and ``state adopt --push`` so both
@@ -327,7 +327,7 @@ def _push_state_or_exit(env_name: str, *, remote: str, no_push: bool) -> None:
     try:
         result = _push(
             env_name, state_file, repo=Path.cwd(),
-            remote=remote, push_remote=not no_push,
+            remote=remote, push_remote=not no_push, force=force,
         )
     except StateSyncError as exc:
         click.echo(f"error: {exc}", err=True)
@@ -354,13 +354,20 @@ def _push_state_or_exit(env_name: str, *, remote: str, no_push: bool) -> None:
               help="Git remote (default: origin).")
 @click.option("--no-push", is_flag=True, default=False,
               help="Update the local ref but skip the network push (CI debugging).")
-def state_sync_push(env_name: str | None, remote: str, no_push: bool) -> None:
-    """Push state/<env>/state.json onto refs/heads/state/<env> (orphan)."""
+@click.option("--force", is_flag=True, default=False,
+              help="Replace the remote state even if another run pushed after this "
+                   "clone pulled. Without it such a push is refused.")
+def state_sync_push(env_name: str | None, remote: str, no_push: bool, force: bool) -> None:
+    """Push state/<env>/state.json onto refs/heads/state/<env> (orphan).
+
+    Refused when the remote state changed since this clone pulled it;
+    pull again, or pass --force to replace it on purpose.
+    """
     env_name = env_name or _state_env_default()
     if not env_name:
         click.echo("error: no env (pass --env or set tenant.yml's name)", err=True)
         sys.exit(2)
-    _push_state_or_exit(env_name, remote=remote, no_push=no_push)
+    _push_state_or_exit(env_name, remote=remote, no_push=no_push, force=force)
 
 
 @state_sync_group.command("pull")
