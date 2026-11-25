@@ -53,7 +53,7 @@ jobs:
     outputs:
       proceed: ${{ steps.check.outputs.proceed }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 2
       - id: check
@@ -152,7 +152,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout (loads the local composite action below)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Refuse a re-run of an older commit
         # A re-run of a run deploys that run's commit. Once a later commit
@@ -418,7 +418,7 @@ jobs:
 
       - name: Upload apply JSON report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: apply-report-${{ github.run_id }}
           path: apply-report.json
@@ -427,7 +427,7 @@ jobs:
 
       - name: Upload audit JSONL artefact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: audit-${{ github.run_id }}
           path: audit/
@@ -447,7 +447,7 @@ jobs:
 
       - name: Upload audit head summary
         if: success() && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: audit-head-${{ github.run_id }}
           path: audit-head.json
@@ -519,7 +519,7 @@ jobs:
       attestations: write    # record the attestation
     steps:
       - name: Download audit head summary
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: audit-head-${{ github.run_id }}
         continue-on-error: true
@@ -545,7 +545,7 @@ jobs:
         # provenance, not a deploy gate — it records automatically once the
         # repo is org-owned or public. See SECURITY.md.
         continue-on-error: true
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: audit-head.json
 

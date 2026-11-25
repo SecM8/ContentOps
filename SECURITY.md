@@ -229,11 +229,14 @@ choice (`grype`, `trivy`, etc.).
 ## Supply-chain hardening
 
 - All third-party GitHub Actions are pinned by **commit SHA**, not by
-  tag, with the human-readable tag retained as a comment. Renovate
-  (`.github/renovate.json`) keeps these digests current.
+  tag, with the human-readable tag retained as a comment. Dependabot
+  (`.github/dependabot.yml`) keeps these digests and comments current,
+  for the workflows and the composite actions under `.github/actions/`.
 - Runtime dependencies in `requirements.txt` and `pyproject.toml` are
-  **pinned to exact versions**. Renovate opens weekly PRs to bump
-  them; security advisories are picked up immediately by `pip-audit`.
+  **pinned to exact versions**. Dependabot opens one grouped PR a week
+  to bump them (and the pre-commit hooks), only for releases at least
+  seven days old; security advisories are picked up immediately by
+  `pip-audit`.
 - Commits to `main` must be GPG- or SSH-signed and verified by
   GitHub. The Developer Certificate of Origin (`Signed-off-by:`
   trailer) is enforced by `.github/workflows/dco.yml`. See

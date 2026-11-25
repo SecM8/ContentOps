@@ -87,12 +87,12 @@ jobs:
       # workflows; this job does not use that action.
       CONTENTOPS_DISABLED_KINDS: ${{ vars.CONTENTOPS_DISABLED_KINDS }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0  # need merge-base for --changed-since
           persist-credentials: false
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -135,7 +135,7 @@ jobs:
           echo "## Integration deploy: skipped" >> "$GITHUB_STEP_SUMMARY"
           echo "tenant.yml has no \`role: integration\` workspace." >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43  # v3.0.0
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
         if: steps.detect.outputs.present == 'true'
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -221,7 +221,7 @@ jobs:
 
       - name: Upload audit JSONL artefact
         if: always() && steps.detect.outputs.present == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: integration-audit-${{ github.run_id }}
           path: audit/

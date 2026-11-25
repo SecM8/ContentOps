@@ -238,9 +238,9 @@ When updating a runtime dependency by hand:
 2. Update `requirements.txt` to the same pin.
 3. Commit both in the same change.
 
-Renovate keeps the two in lockstep automatically via the config in
-`.github/renovate.json`; the manual policy above only matters for
-ad-hoc edits between Renovate runs. `pip-audit` in CI fails the
+Dependabot (`.github/dependabot.yml`) bumps both files in the same
+pull request; the manual policy above only matters for ad-hoc edits
+between its weekly runs. `pip-audit` in CI fails the
 build if either file carries an unsuppressed advisory, so the worst
 case of drift is a noisy CI rather than a silent supply-chain risk.
 

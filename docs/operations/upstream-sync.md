@@ -175,6 +175,8 @@ rule, not by judgement:
 | `config/tenant.yml`, `.contentops-conformance.yml`, `catalog-info.yaml`, `docs/status/*`, `reports/*` | **fork** |
 | `.gitleaks.toml` | upstream's content, with your uncommented `config/tenant\.yml$` allowlist line kept |
 | `.github/CODEOWNERS` | your default line, upstream's block appended |
+| `.github/dependabot.yml` | **upstream**, unless you switched the pull requests off on purpose ([below](#dependabot-pull-requests)): then keep yours, or keep it deleted |
+| a version pin both sides bumped (`requirements.txt`, `pyproject.toml`, an action's `@<sha>  # vX.Y.Z`) | the **newer** version, in every file it appears in |
 
 Then:
 
@@ -211,6 +213,26 @@ shared ancestor and the next sync conflicts on everything.
   entry you pulled asked for a new variable or secret.
 - Walk the [validation runbook](protected-fork-validation.md) again only
   when the sync changed a landing workflow, the token or the ruleset.
+
+### Dependabot pull requests
+
+`.github/dependabot.yml` reaches your fork with the sync, so Dependabot
+opens the same weekly pull requests in your repository as upstream. There
+is one for the Python pins, one for the GitHub Actions pins (workflows and
+composite actions) and one for the pre-commit hooks. Each covers only
+releases at least seven days old.
+
+- **Merging one is optional.** Upstream gets the same bumps, tests them,
+  and the next sync brings them. If you merged one and the sync brings a
+  different version of the same pin, keep the newer one (table above).
+- **Expected checks.** GitHub runs Dependabot pull requests without the
+  repository's secrets, so the jobs that need Azure (the live tests, the
+  drift report) skip. `dco` skips Dependabot commits, and `deploy.yml`
+  never deploys a commit a bot authored.
+- **Switching them off.** Set `open-pull-requests-limit: 0` on an entry,
+  or delete the file. Either way the file is then yours in the conflict
+  table. Dependabot security alerts are a separate repository setting and
+  need no config file.
 
 ---
 

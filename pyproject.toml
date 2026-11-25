@@ -10,25 +10,25 @@ dependencies = [
     # SOURCE OF TRUTH for runtime dependencies. ``requirements.txt`` is
     # a mirror used by GitHub Actions for `pip install -r` and CI pip
     # cache reuse; it MUST carry the same pinned versions as this list.
-    # Renovate updates both files together. When editing by hand, edit
+    # Dependabot updates both files together. When editing by hand, edit
     # both — a CONTRIBUTING.md note + the requirements.txt banner spell
     # out the policy. The duplication is intentional (pyproject vs
     # requirements is two ecosystems' conventions); the canonicality
     # lives here.
-    "azure-identity==1.25.3",
+    "azure-identity==1.27.0",
     "httpx==0.28.1",
-    "pydantic==2.13.3",
+    "pydantic==2.14.3",
     "pyyaml==6.0.3",
-    "click==8.3.3",
-    "python-dotenv==1.2.2",
+    "click==8.5.1",
+    "python-dotenv==1.2.4",
 ]
 
 [project.optional-dependencies]
 dev = [
     # Dev tools are pinned to floor versions ("X or newer") rather than
     # to exact versions: contributors with newer pytest / mypy / ruff
-    # checkouts should not be forced to downgrade. Renovate still
-    # surfaces majors.
+    # checkouts should not be forced to downgrade. Dependabot leaves
+    # these floors alone (`versioning-strategy: increase-if-necessary`).
     "pytest>=8.0",
     "pytest-mock>=3.14",
     "respx>=0.21",

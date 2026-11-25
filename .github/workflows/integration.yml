@@ -80,7 +80,7 @@ jobs:
       CONTENTOPS_LIVE_IGNORE_KILL_SWITCH: ${{ inputs.ignore-kill-switch && '1' || '' }}
     steps:
       - name: Checkout (loads the local composite action below)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Pipeline setup (checkout / python / deps / azure-login)
         # Composite action — see .github/actions/pipeline-setup/action.yml.
@@ -123,7 +123,7 @@ jobs:
         # Written by the Defender shape probe: synthetic values and yes/no
         # answers only, never a value read from the tenant.
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: defender-shape-report-${{ github.run_id }}
           path: defender-shape-report.md

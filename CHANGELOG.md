@@ -26,6 +26,12 @@ from the commit history.
   [`docs/operations/upgrading-to-support-assets.md`](docs/operations/upgrading-to-support-assets.md).
 - **`prune` refuses a kind with zero local envelopes** but remote
   items unless `--allow-empty-kind` (all kinds, not only the new ones).
+- **Dependabot pull requests in your fork.** `.github/dependabot.yml`
+  arrives with this sync, so Dependabot opens up to three grouped pull
+  requests a week: Python pins, GitHub Actions pins, pre-commit hooks.
+  Merging them is optional, because the next sync brings the same bumps.
+  To switch them off, set `open-pull-requests-limit: 0` or delete the
+  file: [`docs/operations/upstream-sync.md`](docs/operations/upstream-sync.md#dependabot-pull-requests).
 
 ### Added
 
@@ -181,6 +187,21 @@ from the commit history.
 
 ### Changed
 
+- **Dependabot replaces Renovate for the tool's own pins.** Renovate
+  never ran (no Renovate pull request was ever opened), so the action
+  digests and the Python pins fell behind while `SECURITY.md` said they
+  were kept current. `.github/dependabot.yml` updates three ecosystems:
+  - pip: the exact pins in `requirements.txt` and `pyproject.toml`
+    together; the `>=` dev and build floors stay
+    (`versioning-strategy: increase-if-necessary`);
+  - GitHub Actions: the workflows **and** every composite action under
+    `.github/actions/`, which the ecosystem's default directory does not
+    read;
+  - pre-commit hooks.
+
+  Each gets one grouped pull request a week, only for releases at least
+  seven days old. `.github/renovate.json` is removed and the mirror
+  ships the new file (`tests/v2/test_dependabot_config.py`).
 - **Defender deploy sends and compares the current Graph properties.**
   Graph deprecated `schedule.period`, `alertTemplate.category`,
   `mitreTechniques`, `impactedAssets`, `responseActions` and

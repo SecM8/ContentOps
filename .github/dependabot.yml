@@ -1,0 +1,65 @@
+# Dependabot version updates for the tool's own pins: the Python
+# dependencies (requirements.txt + pyproject.toml), the GitHub Actions
+# (workflows and the composite actions under .github/actions/), and the
+# pre-commit hooks. One grouped pull request a week per ecosystem, for
+# releases at least seven days old.
+#
+# Deployments get this file through the upstream sync, and with it the
+# same weekly pull requests. Merging one is optional: the upstream sync
+# brings the same bumps after they are tested upstream. To switch the
+# pull requests off in a deployment, set `open-pull-requests-limit: 0`
+# on an entry or delete this file. See docs/operations/upstream-sync.md.
+#
+# Composite actions: the github-actions ecosystem reads .github/workflows
+# and a root action.yml only, so every .github/actions/<name> folder is
+# listed (tests/v2/test_dependabot_config.py checks it).
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    # Runtime dependencies are exact pins and move; the dev and build
+    # dependencies in pyproject.toml are `>=` floors on purpose and stay.
+    versioning-strategy: increase-if-necessary
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/auto-pr"
+      - "/.github/actions/lint-strict"
+      - "/.github/actions/notify-workflow-failure"
+      - "/.github/actions/pipeline-setup"
+      - "/.github/actions/refuse-stale-rerun"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    groups:
+      pre-commit:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
